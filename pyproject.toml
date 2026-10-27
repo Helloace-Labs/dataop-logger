@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dataop-logger"
+version = "0.1.0"
+authors = [{ name = "Helloace Labs" }]
+description = "Record base-policy, expert and sent actions, control mode and outcomes alongside a LeRobot dataset"
+readme = "README.md"
+license = { text = "Apache-2.0" }
+requires-python = ">=3.10"
+dependencies = ["numpy", "pyarrow"]
+
+[project.urls]
+Homepage = "https://github.com/Helloace-Labs/dataop-logger"
+
+[project.optional-dependencies]
+lerobot = ["lerobot>=0.6"]
+torch = ["torch"]
+test = ["pytest"]
+
+[project.scripts]
+dataop-logger = "dataop_logger.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
