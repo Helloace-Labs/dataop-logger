@@ -171,13 +171,24 @@ def _check_run(run_path: Path, m: dict, episodes: dict, errors: list) -> bool:
     from .logger import derive_takeovers
     if derive_takeovers(rows) != m["takeovers"]:
         err("takeovers summary does not match the per-tick control modes")
-    from .logger import derive_subgoals
-    from .schema import SUBGOAL_STATUSES
+    from .logger import derive_subgoals, subgoal_problem
+    problem = subgoal_problem(m["events"])
+    if problem:
+        err(problem)
     if "subgoals" in m and derive_subgoals(m["events"], n) != m["subgoals"]:
         err("subgoals summary does not match the subgoal events")
+    if m.get("failure_mode") is not None and m["termination_reason"] == "success":
+        err("a successful run has a failure_mode")
+    import re
+    if not re.fullmatch(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", str(m["run_id"])) \
+            or run_path.name != m["run_id"]:
+        err("run_id is not a UUID matching its directory name")
+    from . import review as rv
+    try:
+        rv.load(run_path)
+    except rv.ReviewError as e:
+        err(f"review.json: {e}")
     for ev_ in m["events"]:
-        if ev_.get("kind") == "subgoal" and (not ev_.get("source") or ev_.get("text") not in SUBGOAL_STATUSES):
-            err(f"event {ev_.get('event_id')} is a subgoal without a name or a valid status")
         if not -1 <= ev_.get("frame_index", -2) < n:
             err(f"event {ev_.get('event_id')} frame_index out of range")
         if not isinstance(ev_.get("ns"), int) or ev_["ns"] < 0:
@@ -346,12 +357,24 @@ def inspect(root: Path) -> dict:
     root = Path(root)
     outcomes, minutes, takeovers, runs = defaultdict(int), defaultdict(float), 0, 0
     failure_modes, failed_subgoals = defaultdict(int), defaultdict(int)
+    from . import review as rv
+    eff_outcomes, eff_modes, reviewed, pending, rejected = defaultdict(int), defaultdict(int), 0, 0, 0
     for run_path, m in store.iter_manifests(root, "committed"):
         runs += 1
         outcomes[m["termination_reason"]] += 1
         takeovers += len(m.get("takeovers", []))
         if m.get("failure_mode"):
             failure_modes[m["failure_mode"]] += 1
+        r = rv.load(run_path)
+        eff = rv.effective(m, r)
+        reviewed += bool(r["reviewed"])
+        pending += sum(e["status"] == "proposed" for e in r["edits"])
+        if eff["rejected"]:
+            rejected += 1
+        else:
+            eff_outcomes[eff["termination_reason"]] += 1
+            if eff["failure_mode"]:
+                eff_modes[eff["failure_mode"]] += 1
         for sg in m.get("subgoals", []):
             if sg["status"] == "failed":
                 failed_subgoals[sg["name"]] += 1
@@ -361,6 +384,8 @@ def inspect(root: Path) -> dict:
             minutes[mode] += 1 / rate / 60
     return {"runs": runs, "outcomes": dict(outcomes), "takeovers": takeovers,
             "failure_modes": dict(failure_modes), "failed_subgoals": dict(failed_subgoals),
+            "after_review": {"outcomes": dict(eff_outcomes), "failure_modes": dict(eff_modes), "rejected_runs": rejected,
+                             "reviewed_runs": reviewed, "open_proposals": pending},
             "minutes_by_control_mode": {k: round(v, 2) for k, v in minutes.items()}}
 
 

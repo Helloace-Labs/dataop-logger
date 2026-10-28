@@ -154,6 +154,31 @@ A local, read-only page: every run with its outcome and a strip showing who drov
 
 When runs carry `failure_mode` and `subgoals`, the run list opens with failed runs grouped by failure mode. Click a group to filter the list.
 
+## Review
+
+Automatic labels get some runs wrong. The viewer's **Review** tab is a queue of failed runs and runs with open agent proposals:
+
+```bash
+dataop-logger propose <dataset_root>   # agent proposals: where each failure started, idle trims, empty runs
+dataop-logger view <dataset_root>      # Review tab: accept, adjust or dismiss, then mark reviewed
+```
+
+For each run you can:
+- accept or drag the proposed failure start;
+- fix the outcome and failure mode;
+- leave a span out (`[` then `]` at the playhead);
+- drag the boundary between two steps;
+- reject the whole run.
+
+Every change saves at once and can be undone. Keys: Space, arrows, J/K, F, [ ], R, A, Enter.
+
+Corrections never touch the recorded frames, manifest or checksums. They live in `dataop/runs/<run_id>/review.json` and travel with the dataset. The reader turns them into `item["dataop.train_mask"]`, and every target mask is gated on it. `train_mask` is False for:
+- rejected runs;
+- left-out spans;
+- on failed runs, frames from the accepted failure start up to the next takeover.
+
+`inspect` reports outcomes both as recorded and after review. Edits are also available from Python: `dataop_logger.review.add_edit`, `decide`, `set_reviewed`.
+
 ## Training with the extra fields
 
 ```python

@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>dataop runs</title>
 <link rel="icon" href="data:,">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-__NONCE__'; style-src 'unsafe-inline'; img-src data:; media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
 <style>
 /* Layout: run list on the left, the selected run's videos and control timeline on the right. */
 :root {
@@ -137,6 +138,7 @@ kbd { font-family: var(--mono); font-size: 10px; border: 1px solid var(--line); 
 .btn.primary kbd { color: inherit; background: transparent; border-color: currentColor; }
 .rvfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
 .rvstatus { font-size: 12px; color: var(--ink-3); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
 .rvstatus.bad { color: var(--bad); }
 .keys { font-size: 11px; color: var(--ink-3); }
 </style>

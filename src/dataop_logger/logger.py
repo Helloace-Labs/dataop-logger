@@ -255,6 +255,11 @@ class Run:
             raise ValueError("subgoal name must be a non-empty string")
         if status not in SUBGOAL_STATUSES:
             raise ValueError(f"subgoal status must be one of {SUBGOAL_STATUSES}")
+        if reason is not None and not isinstance(reason, str):
+            raise ValueError("reason must be a string or None")
+        problem = subgoal_problem(self._events + [{"kind": "subgoal", "source": name, "text": status}])
+        if problem:
+            raise ValueError(problem)
         self.event("subgoal", source=name, reason=reason, text=status)
 
     def predictions(self, inference_id: int, action_chunk, obs_frame_index: int, infer_start_ns: int,
@@ -307,6 +312,8 @@ class Run:
         self.ended_at = _now_iso()
         if failure_mode is not None and (not isinstance(failure_mode, str) or not failure_mode):
             raise ValueError("failure_mode must be a non-empty string or None")
+        if failure_mode is not None and termination_reason == "success":
+            raise ValueError("a successful run has no failure_mode")
         self._end = {"termination_reason": termination_reason, "task_success": task_success,
                      "failure_mode": failure_mode,
                      "labels": sorted(set(labels or [])),
@@ -436,9 +443,16 @@ class Run:
             self.state = "save_failed"
             self.logger.broken = msg
             raise RunError(f"LeRobot saved an unexpected episode index ({msg}); run validate --repair")
-        em = adapter.saved_episode(self.dataset, self.episode_index)
-        if em is not None and (em["length"] != len(self._rows) or em["to"] - em["from"] != len(self._rows)):
-            msg = f"LeRobot registered episode {self.episode_index} with length {em['length']}, run has {len(self._rows)}"
+        try:
+            em = adapter.saved_episode(self.dataset, self.episode_index)
+        except Exception as e:                          # malformed in-memory record
+            em, bad = None, f"{type(e).__name__}: {e}"
+        else:
+            bad = None
+        if em is None or em["length"] != len(self._rows) or em["to"] - em["from"] != len(self._rows):
+            msg = (f"could not confirm LeRobot saved episode {self.episode_index} ({bad or 'no saved-episode record'})"
+                   if em is None else
+                   f"LeRobot registered episode {self.episode_index} with length {em['length']}, run has {len(self._rows)}")
             store.atomic_write_json(self.run_path / "manifest.json", self._manifest("staged", save_error=msg))
             self.state = "save_failed"
             self.logger.broken = msg
@@ -460,6 +474,27 @@ def derive_takeovers(rows) -> list[dict]:
                             "expert_source": r0["expert_source"]})
             start = i
     return out
+
+
+def subgoal_problem(events) -> str | None:
+    """Steps run one at a time: "started" needs no open step; "completed"/"failed" closes the open step of that name,
+    or, with no step open, a step that began where the previous one ended. Returns the first violation."""
+    open_ = None
+    for e in events:
+        if e.get("kind") != "subgoal":
+            continue
+        name, status = e.get("source"), e.get("text")
+        if not isinstance(name, str) or not name or status not in SUBGOAL_STATUSES:
+            return f"subgoal event {e.get('event_id')} has no name or an invalid status"
+        if status == "started":
+            if open_ is not None:
+                return f"step {name!r} started while step {open_!r} is still open"
+            open_ = name
+        elif open_ is not None and open_ != name:
+            return f"step {name!r} {status} while step {open_!r} is open"
+        else:
+            open_ = None
+    return None
 
 
 def derive_subgoals(events, length: int) -> list[dict]:

@@ -618,48 +618,186 @@ def _failed_run_with_steps(log, n=40, take=30):
     return run
 
 
-def test_review_edits_effective_and_train_mask(tmp_path):
-    from dataop_logger import review as rv
+def _review_fixture(tmp_path):
     ds = make_ds(tmp_path)
     with RunLogger(ds, SCHEMA) as log:
         run = _failed_run_with_steps(log)
     ds.finalize()
-    m = store.read_manifest(run.run_path)
+    return ds, run, store.read_manifest(run.run_path)
+
+
+def test_review_edits_effective_and_train_mask(tmp_path):
+    from dataop_logger import review as rv
+    ds, run, m = _review_fixture(tmp_path)
     modes = ["base"] * 30 + ["expert"] * 10
-    # agent proposal waits; accepting an adjusted payload applies the adjustment
     p = rv.add_edit(run.run_path, m, "failure_start", {"frame": 12}, source="agent", reason="test")
     assert rv.add_edit(run.run_path, m, "failure_start", {"frame": 12}, source="agent")["id"] == p["id"]
     assert rv.effective(m, rv.load(run.run_path))["failure_start"] is None
     rv.decide(run.run_path, m, p["id"], True, {"frame": 20})
-    eff = rv.effective(m, rv.load(run.run_path))
-    assert eff["failure_start"] == 20
+    assert rv.effective(m, rv.load(run.run_path))["failure_start"] == 20
     mask = rv.train_mask(m, rv.load(run.run_path), modes)
     assert mask[:20].all() and not mask[20:30].any() and mask[30:].all()
-    # human edits apply at once; a new outcome replaces the old one
     rv.add_edit(run.run_path, m, "exclude", {"start": 0, "end": 3})
-    rv.add_edit(run.run_path, m, "outcome", {"termination_reason": "failure", "failure_mode": "dropped"})
-    rv.add_edit(run.run_path, m, "outcome", {"termination_reason": "failure", "failure_mode": "no_grasp"})
-    rv.add_edit(run.run_path, m, "step_boundary", {"before": "grasp", "after": "lift", "frame": 8})
+    rv.add_edit(run.run_path, m, "step_boundary", {"index": 0, "frame": 8})
     r = rv.load(run.run_path)
     eff = rv.effective(m, r)
-    assert eff["failure_mode"] == "no_grasp" and eff["excludes"] == [{"start": 0, "end": 3}]
+    assert eff["excludes"] == [{"start": 0, "end": 3}]
     assert [(s["name"], s["start_frame"], s["end_frame"]) for s in eff["subgoals"]] == [("grasp", 0, 8), ("lift", 8, 30)]
     assert not rv.train_mask(m, r, modes)[:3].any()
     for bad in [("exclude", {"start": 5, "end": 5}), ("failure_start", {"frame": 40}), ("failure_start", {"frame": True}),
-                ("outcome", {"termination_reason": "success", "failure_mode": "x"}), ("step_boundary",
-                {"before": "grasp", "after": "nope", "frame": 3}), ("bogus", {})]:
+                ("outcome", {"termination_reason": "success", "failure_mode": "x"}),
+                ("step_boundary", {"index": 1, "frame": 3}), ("step_boundary", {"index": 0, "frame": 35}),
+                ("step_boundary", {"index": 0, "before": "lift", "frame": 5}), ("bogus", {})]:
         with pytest.raises(rv.ReviewError):
             rv.add_edit(run.run_path, m, *bad)
     rv.add_edit(run.run_path, m, "reject_run", {})
     assert not rv.train_mask(m, rv.load(run.run_path), modes).any()
-    # the recorded run is untouched and still validates; the reader applies the mask
-    assert V.validate(ds.root)["ok"]
+    assert V.validate(ds.root)["ok"]                    # the recorded run is untouched
     item = DataopDataset(lerobot_dataset.LeRobotDataset("test/ds", root=ds.root))[35]
     assert not bool(item["dataop.train_mask"]) and not bool(item["dataop.dagger_mask"])
 
 
+@pytest.mark.parametrize("modes,fs,masked", [
+    (["base", "none", "base", "expert"], 0, [0, 1, 2]),          # a pause does not end the bad stretch
+    (["base", "blend", "expert"], 0, [0]),                       # blend is a takeover; keep its labels
+    (["base", "base", "base"], 1, [1, 2]),                       # no takeover: to the end
+    (["expert", "base", "expert"], 0, []),                       # starting on a takeover frame masks nothing
+    (["none", "base", "expert"], 0, [0, 1]),
+])
+def test_train_mask_failure_start_across_modes(modes, fs, masked):
+    from dataop_logger import review as rv
+    m = {"length": len(modes), "termination_reason": "failure", "failure_mode": None, "subgoals": []}
+    r = rv.empty()
+    r["edits"].append({"id": "a" * 12, "kind": "failure_start", "payload": {"frame": fs}, "source": "human",
+                       "status": "accepted", "accepted_seq": 1})
+    mask = rv.train_mask(m, r, modes)
+    assert [i for i in range(len(modes)) if not mask[i]] == masked
+    m["termination_reason"] = "success"                          # an effective success ignores failure_start
+    assert rv.train_mask(m, r, modes).all()
+
+
+def test_review_undo_chain_and_reviewed_rules(tmp_path):
+    from dataop_logger import review as rv
+    ds, run, m = _review_fixture(tmp_path)
+    a = rv.add_edit(run.run_path, m, "outcome", {"termination_reason": "failure", "failure_mode": "first"})
+    b = rv.add_edit(run.run_path, m, "outcome", {"termination_reason": "failure", "failure_mode": "second"})
+    assert rv.effective(m, rv.load(run.run_path))["failure_mode"] == "second"
+    rv.decide(run.run_path, m, b["id"], False)                    # undo B brings A back
+    assert rv.effective(m, rv.load(run.run_path))["failure_mode"] == "first"
+    rv.decide(run.run_path, m, a["id"], False)
+    assert rv.effective(m, rv.load(run.run_path))["failure_mode"] == "no_lift"
+    # an outcome corrected to success retires the failure start
+    rv.add_edit(run.run_path, m, "failure_start", {"frame": 5})
+    rv.add_edit(run.run_path, m, "outcome", {"termination_reason": "success", "failure_mode": None})
+    assert rv.effective(m, rv.load(run.run_path))["failure_start"] is None
+    # pending proposals block "reviewed"; a new proposal reopens a reviewed run
+    p = rv.add_edit(run.run_path, m, "exclude", {"start": 0, "end": 2}, source="agent")
+    with pytest.raises(rv.ReviewError):
+        rv.set_reviewed(run.run_path, True)
+    rv.decide(run.run_path, m, p["id"], False)
+    rv.set_reviewed(run.run_path, True)
+    assert not rv.needs_review(m, rv.load(run.run_path))
+    rv.add_edit(run.run_path, m, "exclude", {"start": 3, "end": 4}, source="agent")
+    r = rv.load(run.run_path)
+    assert r["reviewed"] is False and rv.needs_review(m, r)
+    with pytest.raises(rv.ReviewError):
+        rv.decide(run.run_path, m, p["id"], "false")
+    with pytest.raises(rv.ReviewConflict):
+        rv.add_edit(run.run_path, m, "note", {"frame": 1, "text": "x"}, expect_rev=0)
+
+
+def _add_notes(run_path, m, k):
+    from dataop_logger import review as rv
+    for i in range(k):
+        rv.add_edit(run_path, m, "note", {"frame": 1, "text": f"{run_path.name}-{i}"})
+
+
+@pytest.mark.filterwarnings("ignore::DeprecationWarning")
+def test_review_concurrent_writers_lose_nothing(tmp_path):
+    import multiprocessing as mp
+    from dataop_logger import review as rv
+    ds, run, m = _review_fixture(tmp_path)
+    ctx = mp.get_context("fork")
+    ps = [ctx.Process(target=_add_notes, args=(run.run_path, m, 15)) for _ in range(4)]
+    for p in ps:
+        p.start()
+    for p in ps:
+        p.join()
+    r = rv.load(run.run_path)
+    assert len(r["edits"]) == 60 and r["rev"] == 60
+
+
+def test_propose_uses_corrections_and_handles_edge_cases(tmp_path):
+    from dataop_logger import review as rv
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        for _ in range(3):
+            record(log, 20)
+        failed = _failed_run_with_steps(log)
+        with log.run(task=TASK) as still:                          # nothing moves
+            for i in range(10):
+                run_frame = np.zeros(6, np.float32)
+                still.add_frame(frame(i), sent_action=run_frame, base_action=run_frame, control_mode="base",
+                                inference_id=i, chunk_offset=0, **ts())
+            still.end(termination_reason="failure")
+        corrected = _failed_run_with_steps(log)
+    ds.finalize()
+    mc = store.read_manifest(corrected.run_path)
+    rv.add_edit(corrected.run_path, mc, "outcome", {"termination_reason": "success", "failure_mode": None})
+    lines = rv.propose(ds.root)
+    assert any(failed.run_id in x and "failure_start 10" in x for x in lines)
+    assert any(still.run_id in x and "reject_run" in x for x in lines)
+    assert not any(corrected.run_id in x and "failure_start" in x for x in lines)
+    assert rv.propose(ds.root) == []
+    info = V.inspect(ds.root)
+    assert info["after_review"]["open_proposals"] >= 2 and info["after_review"]["outcomes"]["success"] == 4
+
+
+def test_logger_rejects_bad_step_order_and_success_failure_mode(tmp_path):
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        with log.run(task=TASK) as run:
+            run.subgoal("a", "started")
+            with pytest.raises(ValueError):
+                run.subgoal("b", "started")
+            with pytest.raises(ValueError):
+                run.subgoal("b", "completed")
+            run.subgoal("a", "completed")
+            run.subgoal("b", "completed")                         # implicit start after a
+            none_frame(run, 0)
+            with pytest.raises(ValueError):
+                run.end(termination_reason="success", failure_mode="dropped")
+            run.end(termination_reason="success")
+    ds.finalize()
+    assert V.validate(ds.root)["ok"]
+
+
+def test_save_check_fails_closed_without_saved_record(tmp_path, monkeypatch):
+    from dataop_logger import adapter
+    ds = make_ds(tmp_path)
+    monkeypatch.setattr(adapter, "saved_episode", lambda *_: None)
+    with RunLogger(ds, SCHEMA) as log:
+        with pytest.raises(RunError):
+            record(log, 3)
+        assert log.broken
+    run_dirs = list(store.runs_dir(ds.root).iterdir())
+    assert store.read_manifest(run_dirs[0])["status"] == "staged"
+
+
+def test_range_parsing():
+    from dataop_logger.viewer import _parse_range
+    assert _parse_range("bytes=0-99", 1000) == (0, 99)
+    assert _parse_range("bytes=900-", 1000) == (900, 999)
+    assert _parse_range("bytes=-500", 1000) == (500, 999)
+    assert _parse_range("bytes=-5000", 1000) == (0, 999)
+    for bad in ("bytes=5-1", "bytes=1000-", "bytes=a-b", "bytes=0-1,5-9", "bytes=-", "bytes=-0", "items=0-1"):
+        assert _parse_range(bad, 1000) is None
+
+
 def test_propose_and_review_api(tmp_path):
+    import functools
     import http.client
+    import http.server
     import threading
     from dataop_logger import review as rv, viewer
     ds = make_ds(tmp_path)
@@ -668,32 +806,64 @@ def test_propose_and_review_api(tmp_path):
             record(log, 20)
         run = _failed_run_with_steps(log)
     ds.finalize()
-    lines = rv.propose(ds.root)
-    assert any("failure_start" in line for line in lines) and rv.propose(ds.root) == []
-    handler = type("H", (viewer._RangeHandler,), {"dataset_root": Path(ds.root), "editable": True})
-    import functools
-    import http.server
-    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(handler, directory=str(ds.root)))
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    assert any("failure_start" in line for line in rv.propose(ds.root))
+
+    def start(editable):
+        h = type("H", (viewer._RangeHandler,), {"dataset_root": Path(ds.root), "editable": editable})
+        if not editable:
+            h.do_POST = lambda self: self._json(403, {"error": "read-only"})
+        srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(h, directory=str(ds.root)))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        return srv
+
+    srv, ro = start(True), start(False)
     port = srv.server_address[1]
 
-    def post(body, **hdr):
+    def post(body, port=port, **hdr):
         c = http.client.HTTPConnection("127.0.0.1", port)
         h = {"Content-Type": "application/json", "X-Dataop": "1", **hdr}
         c.request("POST", viewer.API, json.dumps(body), h)
         r = c.getresponse()
         return r.status, json.loads(r.read())
+
+    rid = run.run_id
     try:
-        assert post({"run_id": run.run_id, "op": "reviewed"}, **{"X-Dataop": "0"})[0] == 403
-        assert post({"run_id": run.run_id, "op": "reviewed"}, Origin="http://evil.example")[0] == 403
-        assert post({"run_id": "nope", "op": "reviewed"})[0] == 400
-        code, state = post({"run_id": run.run_id, "op": "add", "kind": "exclude", "payload": {"start": 1, "end": 4}})
-        assert code == 200 and state["effective"]["excludes"] == [{"start": 1, "end": 4}]
-        code, state = post({"run_id": run.run_id, "op": "reviewed", "reviewed": True})
-        assert code == 200 and state["reviewed"] is True
+        rev = rv.load(run.run_path)["rev"]
+        base = {"run_id": rid, "rev": rev}
+        assert post({**base, "op": "add", "kind": "note", "payload": {"frame": 1, "text": "x"}}, **{"X-Dataop": "0"})[0] == 403
+        for origin in ("http://evil.example", "null"):
+            assert post({**base, "op": "add", "kind": "note", "payload": {"frame": 1, "text": "x"}}, Origin=origin)[0] == 403
+        assert post({**base, "op": "add", "kind": "note", "payload": {"frame": 1, "text": "x"}},
+                    Host=f"evil.example:{port}")[0] == 403
+        assert post({**base, "op": "add", "kind": "note", "payload": {"frame": 1, "text": "x"}},
+                    port=ro.server_address[1])[0] == 403
+        assert post({"run_id": "nope", "rev": 0, "op": "reviewed", "reviewed": True})[0] == 400
+        assert post({"run_id": rid, "op": "reviewed", "reviewed": True})[0] == 400           # rev missing
+        code, state = post({**base, "op": "add", "kind": "exclude", "payload": {"start": 1, "end": 4}})
+        assert code == 200 and state["effective"]["excludes"] == [{"start": 1, "end": 4}] and state["rev"] == rev + 1
+        code, out = post({**base, "op": "add", "kind": "exclude", "payload": {"start": 5, "end": 6}})      # stale rev
+        assert code == 409 and out["state"]["rev"] == rev + 1
+        prop = next(e for e in state["edits"] if e["status"] == "proposed")
+        for bad in ("false", 0, None):
+            assert post({"run_id": rid, "rev": rev + 1, "op": "decide", "edit_id": prop["id"], "accept": bad})[0] == 400
+        assert post({"run_id": rid, "rev": rev + 1, "op": "reviewed", "reviewed": True})[0] == 400        # pending
+        code, state = post({"run_id": rid, "rev": rev + 1, "op": "decide", "edit_id": prop["id"], "accept": True})
+        code, state = post({"run_id": rid, "rev": state["rev"], "op": "reviewed", "reviewed": True})
+        assert code == 200 and state["reviewed"] is True and state["needs_review"] is False
         c = http.client.HTTPConnection("127.0.0.1", port)
         c.request("GET", "/dataop/view/")
         page = c.getresponse().read().decode()
-        assert '"editable": true' in page and "/*__DATA__*/null" not in page and '"reviewed": true' in page
+        assert '"editable": true' in page and "/*__DATA__*/null" not in page and "__NONCE__" not in page
+        assert "Content-Security-Policy" in page and '"reviewed": true' in page
     finally:
         srv.shutdown()
+        ro.shutdown()
+
+
+def test_viewer_skips_runs_with_unexpected_ids(tmp_path):
+    from dataop_logger import viewer
+    ds, run, m = _review_fixture(tmp_path)
+    bad = dict(m, run_id='x" onmouseover="alert(1)')
+    store.atomic_write_json(run.run_path / "manifest.json", bad)
+    assert viewer.collect(ds.root)["runs"] == []
+    assert not V.validate(ds.root)["ok"]

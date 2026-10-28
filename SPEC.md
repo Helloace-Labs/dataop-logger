@@ -82,6 +82,10 @@ v0 cannot separate the arbitration output from a safety-filter correction, and d
 
 `dataop/index.jsonl` is a derived cache rebuilt from manifests.
 
+## Review layer: `dataop/runs/<run_id>/review.json`
+
+Mutable and separate from the manifest and its digests: `{version, rev, seq, reviewed, reviewed_at, edits[]}`. Each edit is `{id, kind, payload, source (agent|human), reason, status (proposed|accepted|rejected), accepted_seq}`. Kinds: `outcome`, `failure_start`, `exclude`, `step_boundary` (by step index), `reject_run`, `note`. Human edits are accepted at once. Agent edits wait as proposals, and a new proposal reopens a reviewed run. A run cannot be marked reviewed with open proposals. For single-valued kinds the latest accepted edit is in effect, and undoing it restores the previous one. All writes hold an `fcntl` lock and bump `rev`; the viewer API rejects stale revisions with 409. `train_mask` is False for rejected runs, excluded spans, and on failed runs `[failure_start, next expert/blend frame)`.
+
 ## API
 
 The logger owns ordering so it cannot drift:

@@ -15,8 +15,15 @@ let exStart = null;             // pending "leave out from here" frame
 const adjust = {};              // edit id -> payload dragged before accepting
 
 const eff = r => r.review.effective;
+function activeEdits(r) {
+  const acc = r.review.edits.filter(e => e.status === "accepted").sort((a, b) => (a.accepted_seq || 0) - (b.accepted_seq || 0));
+  const slot = e => e.kind === "step_boundary" ? "sb" + e.payload.index : e.kind;
+  const latest = {};
+  acc.forEach(e => { if (e.kind !== "exclude" && e.kind !== "note") latest[slot(e)] = e; });
+  return acc.filter(e => e.kind === "exclude" || e.kind === "note" || latest[slot(e)] === e);
+}
 const pending = r => r.review.edits.filter(e => e.status === "proposed");
-function needsReview(r) { return !r.review.reviewed && (r.review.effective.termination_reason !== "success" || pending(r).length > 0); }
+function needsReview(r) { return r.review.needs_review; }
 function inQueue(r) { return r.review.effective.termination_reason !== "success" || r.review.edits.some(e => e.source === "agent"); }
 const runNo = r => esc(r.env.run ?? r.episode + 1);
 const frameOf = r => Math.min(r.length - 1, Math.floor(player.t * r.fps + 1e-6));
@@ -35,7 +42,7 @@ function drawStats() {
   const n = runs.length, ok = runs.filter(r => eff(r).termination_reason === "success").length;
   const take = runs.reduce((a, r) => a + r.takeovers.length, 0);
   const min = m => runs.reduce((a, r) => a + r.segments.filter(s => s[2] === m).reduce((b, s) => b + s[1] - s[0], 0) / r.fps, 0) / 60;
-  const q = runs.filter(inQueue), done = q.filter(r => r.review.reviewed).length;
+  const q = runs.filter(inQueue), done = q.filter(r => !needsReview(r)).length;
   document.getElementById("stats").innerHTML = [
     [n, "runs"], [n ? Math.round(100 * ok / n) + "%" : "–", "policy success"], [take, "takeovers"],
     [min("base").toFixed(1), "min policy"], [min("expert").toFixed(1), "min expert"]
@@ -90,7 +97,7 @@ document.getElementById("filters").onclick = e => {
 function visible() {
   if (view === "review") {
     const q = runs.filter(inQueue);
-    return filter === "done" ? q.filter(r => r.review.reviewed) : q.filter(r => !r.review.reviewed);
+    return filter === "done" ? q.filter(r => !needsReview(r)) : q.filter(needsReview);
   }
   return runs.filter(r => filter === "all" ? true : filter.startsWith("fm:") ? eff(r).failure_mode === filter.slice(3)
     : filter === "success" ? eff(r).termination_reason === "success" : eff(r).termination_reason !== "success");
@@ -99,7 +106,7 @@ function drawRows() {
   const third = view === "review" ? "Open" : "Length";
   document.getElementById("head3").textContent = third;
   document.getElementById("rows").innerHTML = visible().map(r => `
-    <tr class="row" tabindex="0" data-id="${r.run_id}" aria-selected="${current && current.run_id === r.run_id}">
+    <tr class="row" tabindex="0" data-id="${esc(r.run_id)}" aria-selected="${current && current.run_id === r.run_id}">
       <td><b>${runNo(r)}</b>${r.review.reviewed ? ` <span class="done" title="Reviewed">✓</span>` : ""}</td>
       <td>${outcomePill(r)}${eff(r).failure_mode ? `<span class="sub">${human(eff(r).failure_mode)}</span>` : ""}</td>
       <td><div class="mini" title="${r.segments.map(s => MODE[s[2]] + " " + s[0] + "–" + s[1]).join(", ")}">
@@ -119,17 +126,21 @@ function step(dir) {
 
 // ── review API ────────────────────────────────────────────────────────────────
 async function send(r, body) {
-  const st = document.getElementById("rvstatus");
   try {
     const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1" },
-                                   body: JSON.stringify({ run_id: r.run_id, ...body }) });
+                                   body: JSON.stringify({ run_id: r.run_id, rev: r.review.rev, ...body }) });
     const out = await res.json();
+    if (res.status === 409 && out.state) {
+      r.review = out.state; redrawList(); if (current === r) render(r, player ? player.t : 0);
+      throw new Error("this run changed in another window or by the agent; review the latest version and try again");
+    }
     if (!res.ok) throw new Error(out.error || res.statusText);
     r.review = out;
     redrawList();
     if (current === r) render(r, player ? player.t : 0);
     return true;
   } catch (err) {
+    const st = document.getElementById("rvstatus");
     if (st) { st.textContent = `Not saved: ${err.message}`; st.className = "rvstatus bad"; }
     return false;
   }
@@ -154,7 +165,7 @@ const goFrame = e => { const p = adjust[e.id] || e.payload; return p.frame ?? p.
 function reviewCard(r) {
   if (!editable) return "";
   const e = eff(r), props = pending(r);
-  const acc = r.review.edits.filter(x => x.status === "accepted");
+  const acc = activeEdits(r);
   const tr = e.termination_reason;
   const modes = DATA.failure_modes;
   return `<div class="card review"><h3>Review</h3>
@@ -162,7 +173,7 @@ function reviewCard(r) {
     ${props.map(x => `<div class="prow"><div><b>${KIND[x.kind]}</b> ${describe(r, x)}${adjust[x.id] ? ` <span class="sub">adjusted</span>` : ""}
         ${x.reason ? `<span class="sub">${esc(x.reason)}</span>` : ""}</div>
       <div class="btns"><button class="btn sm" data-go="${goFrame(x)}">Show</button>
-        <button class="btn sm ok" data-acc="${x.id}">Accept</button><button class="btn sm" data-rej="${x.id}">Dismiss</button></div></div>`).join("")
+        <button class="btn sm ok" data-acc="${esc(x.id)}">Accept</button><button class="btn sm" data-rej="${esc(x.id)}">Dismiss</button></div></div>`).join("")
       || `<div class="task">Nothing open.</div>`}
     <div class="rvsec">Outcome</div>
     <div class="chips">${["success", "failure", "timeout"].map(o => `<button class="chip" data-out="${o}" aria-pressed="${tr === o}">${o}</button>`).join("")}</div>
@@ -175,9 +186,9 @@ function reviewCard(r) {
     </div>
     ${acc.length ? `<div class="rvsec">Corrections in effect</div>${acc.map(x => `<div class="prow"><div><b>${KIND[x.kind]}</b> ${describe(r, x)}
         <span class="sub">${x.source === "agent" ? "agent, accepted" : "you"}</span></div>
-      <div class="btns"><button class="btn sm" data-go="${goFrame(x)}">Show</button><button class="btn sm" data-rej="${x.id}">Undo</button></div></div>`).join("")}` : ""}
+      <div class="btns"><button class="btn sm" data-go="${goFrame(x)}">Show</button><button class="btn sm" data-rej="${esc(x.id)}">Undo</button></div></div>`).join("")}` : ""}
     <div class="rvfoot">
-      <button class="btn primary" data-act="done">${r.review.reviewed ? "Reviewed ✓ · next" : "Mark reviewed · next"} <kbd>Enter</kbd></button>
+      <button class="btn primary" data-act="done" ${props.length ? `disabled title="Accept or dismiss the proposals first"` : ""}>${r.review.reviewed ? "Reviewed ✓ · next" : "Mark reviewed · next"} <kbd>Enter</kbd></button>
       ${props.length ? `<button class="btn" data-act="all">Accept all <kbd>A</kbd></button>` : ""}
       <span class="rvstatus" id="rvstatus"></span>
     </div>
@@ -203,6 +214,7 @@ async function act(r, what) {
     return;
   }
   if (what === "done") {
+    if (pending(r).length) return;
     if (!(await send(r, { op: "reviewed", reviewed: true }))) return;
     const next = visible().find(x => x !== r && needsReview(x));
     if (next) select(next.run_id);
@@ -230,7 +242,7 @@ function render(r, t0) {
   const exSpans = [...e.excludes.map(x => ({ ...x, cls: "" })),
     ...props.filter(x => x.kind === "exclude").map(x => ({ ...(adjust[x.id] || x.payload), cls: "prop" }))];
   const sgs = e.subgoals;
-  const bounds = editable ? sgs.slice(0, -1).map((s, i) => [s, sgs[i + 1]]).filter(([a, b]) => a.end_frame === b.start_frame) : [];
+  const bounds = editable ? sgs.slice(0, -1).map((s, i) => [s, sgs[i + 1], i]).filter(([a, b]) => a.end_frame === b.start_frame) : [];
   document.getElementById("detail").innerHTML = `
     <div class="title"><h2>Run ${runNo(r)}</h2>${outcomePill(r)}
       <span class="task">${esc(r.task)}</span></div>
@@ -254,8 +266,8 @@ function render(r, t0) {
       ${exSpans.map(x => `<div class="ex ${x.cls}" style="left:${pct(x.start)}%;width:${pct(x.end - x.start)}%"></div>`).join("")}
       ${r.events.map(ev => `<div class="mark" style="left:${pct(ev.frame)}%"></div>`).join("")}
       ${exStart !== null ? `<div class="fs pend" style="left:${pct(exStart)}%"></div>` : ""}
-      ${fsMarks.map(m => `<div class="fs ${m.cls}" style="left:${pct(m.frame)}%">${editable ? `<span class="knob" data-fs="${m.id ?? ""}" title="Drag to move"></span>` : ""}</div>`).join("")}
-      ${bounds.map(([a, b]) => `<span class="bknob" data-before="${esc(a.name)}" data-after="${esc(b.name)}" style="left:${pct(a.end_frame)}%" title="Drag to move the ${esc(a.name)}/${esc(b.name)} boundary"></span>`).join("")}
+      ${fsMarks.map(m => `<div class="fs ${m.cls}" style="left:${pct(m.frame)}%">${editable ? `<span class="knob" data-fs="${esc(m.id ?? "")}" title="Drag to move"></span>` : ""}</div>`).join("")}
+      ${bounds.map(([a, b, i]) => `<span class="bknob" data-index="${i}" data-lo="${a.start_frame + 1}" data-hi="${b.end_frame - 1}" style="left:${pct(a.end_frame)}%" title="Drag to move the ${esc(a.name)}/${esc(b.name)} boundary"></span>`).join("")}
       <div class="head" id="head" style="left:0"></div>
     </div>
     <div class="cols">
@@ -268,7 +280,7 @@ function render(r, t0) {
         <dt>Safety-modified</dt><dd>${r.safety_modified} frames</dd>
         <dt>Policy</dt><dd>${esc(r.policy || "–")}</dd>
         ${extras.map(([k, v]) => `<dt>${human(k)}</dt><dd>${esc(typeof v === "object" ? JSON.stringify(v) : v)}</dd>`).join("")}
-        <dt>Run id</dt><dd class="num">${r.run_id}</dd>
+        <dt>Run id</dt><dd class="num">${esc(r.run_id)}</dd>
       </dl></div>
       ${sgs.length ? `<div class="card"><h3>Steps</h3>${sgs.map(s => `<div class="ev" tabindex="0" data-frame="${Math.max(0, s.end_frame - 1)}">
         <span class="time">${fmt(s.start_frame / r.fps)}</span><span><b>${esc(s.name)}</b>
@@ -327,11 +339,12 @@ function wire(r, t0) {
     ev.stopPropagation();
     const holder = knob.classList.contains("knob") ? knob.parentElement : knob;
     let f = null;
-    tl.onpointermove = m => { f = toFrame(m.clientX); holder.style.left = (100 * f / r.length) + "%"; p.seek(Math.min(f, r.length - 1) / r.fps); };
+    const lo = knob.dataset.lo !== undefined ? +knob.dataset.lo : 0, hi = knob.dataset.hi !== undefined ? +knob.dataset.hi : r.length;
+    tl.onpointermove = m => { f = Math.max(lo, Math.min(hi, toFrame(m.clientX))); holder.style.left = (100 * f / r.length) + "%"; p.seek(Math.min(f, r.length - 1) / r.fps); };
     tl.onpointerup = () => {
       tl.onpointermove = tl.onpointerup = null;
       if (f === null) return;
-      if (knob.classList.contains("bknob")) return addEdit(r, "step_boundary", { before: knob.dataset.before, after: knob.dataset.after, frame: f });
+      if (knob.classList.contains("bknob")) return addEdit(r, "step_boundary", { index: +knob.dataset.index, frame: f });
       const id = knob.dataset.fs;
       const frame = Math.min(f, r.length - 1);
       if (id) { adjust[id] = { frame }; render(r, p.t); } else addEdit(r, "failure_start", { frame });

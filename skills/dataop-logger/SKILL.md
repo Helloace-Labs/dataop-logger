@@ -118,7 +118,8 @@ Rewards are optional. Pass `reward=` on `add_frame`, or call `run.complete_trans
 1. Record two or three short episodes, or ask the user to, if the robot is not under your control.
 2. Run `dataop-logger validate <dataset_root>`. It must print `OK`. Fix any error it reports before going further.
 3. Run `dataop-logger inspect <dataset_root>` and check that the outcomes, takeovers and minutes per control mode match what happened.
-4. Tell the user they can browse the runs with `dataop-logger view <dataset_root>`: it starts a local web server and opens a page with each run's outcome, who drove each frame, and the camera videos. Do not run it yourself unless the user asks; it keeps running until stopped.
+4. Optionally run `dataop-logger propose <dataset_root>` so the viewer's Review tab opens with suggested failure starts and trims for the user to accept.
+5. Tell the user they can browse the runs with `dataop-logger view <dataset_root>`: it starts a local web server and opens a page with each run's outcome, who drove each frame, and the camera videos. Do not run it yourself unless the user asks; it keeps running until stopped.
 
 ## Report back
 

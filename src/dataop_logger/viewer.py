@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import functools
+import re
+import secrets
 import http.server
 import json
 import os
@@ -48,9 +50,13 @@ def _video_table(root: Path) -> dict[int, dict]:
     return out
 
 
+RUN_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+
+
 def _review_state(run_path: Path, m: dict) -> dict:
     r = rv.load(run_path)
-    return {"edits": r["edits"], "reviewed": r["reviewed"], "effective": rv.effective(m, r)}
+    return {"edits": r["edits"], "reviewed": r["reviewed"], "rev": r["rev"], "effective": rv.effective(m, r),
+            "needs_review": rv.needs_review(m, r)}
 
 
 def collect(root: Path) -> dict:
@@ -58,6 +64,8 @@ def collect(root: Path) -> dict:
     videos = _video_table(root)
     runs = []
     for run_path, m in store.iter_manifests(root, "committed"):
+        if not RUN_ID.match(str(m["run_id"])) or run_path.name != m["run_id"]:
+            continue                                   # validate reports it; never render an unexpected id
         t = pq.read_table(run_path / "ticks.parquet", columns=["control_mode", "expert_source", "safety_modified"])
         modes = t.column("control_mode").to_pylist()
         sources = t.column("expert_source").to_pylist()
@@ -91,7 +99,9 @@ def build(root: Path, editable: bool = False) -> Path:
     data["editable"] = editable
     here = Path(__file__).parent
     js = (here / "viewer.js").read_text().replace("/*__DATA__*/null", json.dumps(data).replace("</", "<\\/"))
-    html = (here / "viewer.html").read_text().replace('<script src="viewer.js"></script>', "<script>\n" + js + "</script>")
+    nonce = secrets.token_urlsafe(16)
+    html = (here / "viewer.html").read_text().replace("__NONCE__", nonce).replace(
+        '<script src="viewer.js"></script>', f'<script nonce="{nonce}">\n' + js + "</script>")
     out = store.dataop_dir(root) / "view" / "index.html"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html)
@@ -150,20 +160,24 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
             if not isinstance(req, dict):
                 raise ValueError("request must be an object")
             run_path, m = _find_run(self.dataset_root, req.get("run_id"))
-            with _WRITE_LOCK:
-                op = req.get("op")
-                if op == "add":
-                    rv.add_edit(run_path, m, req.get("kind"), req.get("payload") or {}, source="human")
-                elif op == "decide":
-                    rv.decide(run_path, m, req.get("edit_id"), bool(req.get("accept")), req.get("payload"))
-                elif op == "reviewed":
-                    rv.set_reviewed(run_path, bool(req.get("reviewed", True)))
-                else:
-                    raise rv.ReviewError("op must be add, decide or reviewed")
-                state = _review_state(run_path, m)
-        except (rv.ReviewError, ValueError, KeyError) as e:
+            rev = req.get("rev")
+            if isinstance(rev, bool) or not isinstance(rev, int):
+                raise rv.ReviewError("rev (the review revision the page shows) is required")
+            op = req.get("op")
+            if op == "add":
+                payload = req.get("payload", {})
+                rv.add_edit(run_path, m, req.get("kind"), payload, source="human", expect_rev=rev)
+            elif op == "decide":
+                rv.decide(run_path, m, req.get("edit_id"), req.get("accept"), req.get("payload"), expect_rev=rev)
+            elif op == "reviewed":
+                rv.set_reviewed(run_path, req.get("reviewed"), expect_rev=rev)
+            else:
+                raise rv.ReviewError("op must be add, decide or reviewed")
+        except rv.ReviewConflict as e:
+            return self._json(409, {"error": str(e), "state": _review_state(run_path, m)})
+        except (rv.ReviewError, ValueError, KeyError, TypeError) as e:
             return self._json(400, {"error": str(e)})
-        return self._json(200, state)
+        return self._json(200, _review_state(run_path, m))
 
     def send_head(self):
         rng = self.headers.get("Range")
@@ -171,12 +185,14 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
         if not rng or not os.path.isfile(path):
             return super().send_head()
         size = os.path.getsize(path)
-        start, _, end = rng.removeprefix("bytes=").partition("-")
-        start = int(start) if start else 0
-        end = min(int(end) if end else size - 1, size - 1)
-        if start >= size:
-            self.send_error(416)
+        span = _parse_range(rng, size)
+        if span is None:
+            self.send_response(416)
+            self.send_header("Content-Range", f"bytes */{size}")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
             return None
+        start, end = span
         f = open(path, "rb")
         f.seek(start)
         self.send_response(206)
@@ -202,6 +218,22 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
 
 
 _WRITE_LOCK = threading.Lock()
+
+
+def _parse_range(header: str, size: int) -> tuple[int, int] | None:
+    """One RFC 7233 byte range (first-last, first-, or -suffix) as inclusive (start, end); None if unsatisfiable."""
+    m = re.fullmatch(r"\s*bytes=(\d*)-(\d*)\s*", header)
+    if not m or (not m.group(1) and not m.group(2)) or size == 0:
+        return None
+    a, b = m.group(1), m.group(2)
+    if not a:                                          # suffix: the last b bytes
+        n = int(b)
+        return (max(0, size - n), size - 1) if n > 0 else None
+    start = int(a)
+    end = min(int(b), size - 1) if b else size - 1
+    if start >= size or end < start:
+        return None
+    return start, end
 
 
 def _find_run(root: Path, run_id) -> tuple[Path, dict]:
