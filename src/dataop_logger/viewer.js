@@ -68,40 +68,18 @@ function outcomePill(r) {
 }
 
 document.getElementById("ds").textContent = DATA.dataset;
-function drawStats() {
+function drawStats() {          // dataset summary, at the top of the run list
   const n = runs.length, ok = runs.filter(r => eff(r).termination_reason === "success").length;
   const take = runs.reduce((a, r) => a + interventions(r).length, 0);
-  const cutS = runs.reduce((a, r) => a + cutFrames(r) / r.fps, 0);
-  const min = m => runs.reduce((a, r) => a + drv(r).filter(s => s[2] === m).reduce((b, s) => b + s[1] - s[0], 0) / r.fps, 0) / 60;
-  document.getElementById("stats").innerHTML = [
-    [n, "runs"], [n ? Math.round(100 * ok / n) + "%" : "–", "policy success"], [take, "interventions"],
-    [min("base").toFixed(1), "min policy"], [min("expert").toFixed(1), "min rescue"],
-    [cutS.toFixed(1), "s cut"]
-  ].map(([v, l]) => `<span class="stat"><b>${v}</b>${l}</span>`).join("");
-}
-
-function drawFails() {
+  document.getElementById("stats").innerHTML = "";
   const el = document.getElementById("fails");
-  const groups = {};
-  runs.filter(r => eff(r).failure_mode && !eff(r).rejected).forEach(r => {
-    const g = groups[eff(r).failure_mode] ||= { n: 0, steps: {} };
-    g.n++;
-    const sg = eff(r).subgoals.find(s => s.status === "failed");
-    if (sg) g.steps[sg.name] = (g.steps[sg.name] || 0) + 1;
-  });
-  const rows = Object.entries(groups).sort((a, b) => b[1].n - a[1].n);
-  if (!rows.length) { el.hidden = true; return; }
-  const max = rows[0][1].n, failed = runs.filter(r => eff(r).termination_reason !== "success").length;
   el.hidden = false;
-  el.innerHTML = `<h3>Failure modes · ${failed} failed runs</h3>` + rows.map(([m, g]) => `
-    <button class="fm" data-fm="${esc(m)}" aria-pressed="${filter === "fm:" + m}">
-      <span>${human(m)}</span><span class="num">${g.n}</span>
-      <span class="bar" style="width:${100 * g.n / max}%"></span>
-      ${Object.keys(g.steps).length ? `<small>failed at ${Object.entries(g.steps).map(([k, v]) => esc(k) + " " + v).join(", ")}</small>` : ""}
-    </button>`).join("");
+  el.innerHTML = `<div class="summary">${[[n, "runs"], [n ? Math.round(100 * ok / n) + "%" : "–", "success rate"], [take, "interventions"]]
+    .map(([v, l]) => `<div class="tile"><b>${v}</b><span>${l}</span></div>`).join("")}</div>`;
 }
+function drawFails() {}
 document.getElementById("fails").onclick = e => {
-  const b = e.target.closest("[data-fm]"); if (!b) return;
+  const b = e.target.closest("[data-fm]"); if (!b) return;   // (no clickable groups now)
   filter = filter === "fm:" + b.dataset.fm ? "all" : "fm:" + b.dataset.fm;
   redrawList();
 };
@@ -369,7 +347,8 @@ function render(r, t0) {
       ${cs.map(c => `<div class="cut ${sel && sel.cutId === c.id ? "on" : ""}" data-cut-id="${esc(c.id)}" style="left:${pct(c.start)}%;width:${pct(c.end - c.start)}%" title="Cut${c.reason ? ": " + esc(c.reason) : ""}"></div>`).join("")}
       ${(r.review.major || []).filter(m => m.window).map(m => `<div class="attnspan" style="left:${pct(m.window[0])}%;width:${pct(m.window[1] - m.window[0])}%" title="The 2 seconds before the policy fails: the frames to check first"></div>`).join("")}
       ${(r.review.major || []).filter(m => m.kind === "failure").map(m => `<div class="failmark ${m.estimated ? "est" : ""}" style="left:${pct(m.frame)}%"
-        title="Policy fails${m.estimated ? " (estimated)" : ""}${m.note ? ": " + esc(m.note) : ""}${editing ? ". Drag to move it." : ""}"><span class="flag">${m.estimated ? "Policy fails?" : "Policy fails"}</span></div>`).join("")}
+        title="Policy fails${m.estimated ? " (estimated)" : ""}${m.note ? ": " + esc(m.note) : ""}${editing ? ". Drag to move it." : ""}"><span class="flag" data-failtype="1">${m.estimated ? "Policy fails?" : "Policy fails"}${eff(r).failure_mode ? ` · ${human(eff(r).failure_mode)}` : ""}${editing ? " ▾" : ""}</span></div>`).join("")}
+      ${editing && failMenu ? failTypeMenu(r) : ""}
 
       <div class="ruler" id="ruler" role="slider" tabindex="0" aria-label="Playhead: click or drag here to move it" aria-valuemin="0" aria-valuemax="${r.length - 1}" aria-valuenow="0" title="Playhead row: click or drag here to move the playhead. Arrow keys step it."><span class="rulericon" aria-hidden="true">▶</span></div>
       <div class="head" id="head" style="left:0"><span class="knob"></span></div>
@@ -399,6 +378,18 @@ function interventions(r) {
     else out.push({ start: a, end: b, sources: src ? [src] : [] });
   });
   return out;
+}
+
+let failMenu = false;            // the failure type chooser under the "Policy fails" tag
+function failureTypes() {        // types used anywhere in this dataset
+  return [...new Set(runs.map(x => eff(x).failure_mode).filter(Boolean))].sort();
+}
+function failTypeMenu(r) {
+  const f = (r.review.major || []).find(m => m.kind === "failure"); if (!f) return "";
+  const cur = eff(r).failure_mode;
+  return `<div class="failmenu" style="left:${100 * f.frame / r.length}%"><div class="sub">Type of failure</div>
+    <div class="chips">${failureTypes().map(t => `<button class="chip" data-ftype="${esc(t)}" aria-pressed="${t === cur}">${human(t)}</button>`).join("")}</div>
+    <input id="newftype" class="segin" maxlength="60" placeholder="+ failure type"></div>`;
 }
 
 function segBounds(r) {         // draggable edges: shared lines between neighbours, and free outer edges
@@ -588,6 +579,8 @@ function wire(r, t0) {
   tl.onpointerdown = ev => {
     if (ev.target.closest("#ruler, .knob")) return scrub(ev);
     if (canEdit(r) && editing) {
+      if (ev.target.closest(".failmenu")) return;
+      if (ev.target.closest("[data-failtype]")) { ev.preventDefault(); failMenu = !failMenu; return render(r, p.t); }
       const bnd = ev.target.closest(".sbound, .dbound"), fm = ev.target.closest(".failmark");
       if (bnd || fm) return dragMarker(ev, bnd, fm);
     }
@@ -616,6 +609,10 @@ function wire(r, t0) {
     if (b.dataset.cut) return decide(r, b.dataset.cut, true, "accept" + editSpan(r, b.dataset.cut));
     if (b.dataset.keep) return decide(r, b.dataset.keep, false, "keep" + editSpan(r, b.dataset.keep));
     if (b.dataset.uncut) return decide(r, b.dataset.uncut, false, "undo" + editSpan(r, b.dataset.uncut));
+    if (b.dataset.ftype) {
+      failMenu = false;
+      return send(r, { op: "add", kind: "outcome", payload: { termination_reason: eff(r).termination_reason === "success" ? "failure" : eff(r).termination_reason, failure_mode: b.dataset.ftype }, what: "failure type: " + b.dataset.ftype });
+    }
     if (b.dataset.act === "undo") return undoLast();
     if (b.dataset.act === "history") { showHistory = !showHistory; return render(r, p.t); }
     if (b.dataset.undoEntry) {
@@ -631,6 +628,12 @@ function wire(r, t0) {
 
 document.addEventListener("keydown", e => {
   if (!current || !player || e.altKey) return;
+  if (e.target.id === "newftype") {
+    const v = e.target.value.trim().toLowerCase().replace(/\s+/g, "_");
+    if (e.key === "Enter" && v) { failMenu = false; send(current, { op: "add", kind: "outcome", payload: { termination_reason: eff(current).termination_reason === "success" ? "failure" : eff(current).termination_reason, failure_mode: v }, what: "failure type: " + v }); }
+    if (e.key === "Escape") { failMenu = false; render(current, player.t); }
+    return;
+  }
   if (e.target.closest("textarea, input")) {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); act(current, "save"); }
     else if (e.key === "Escape") act(current, "cancel");

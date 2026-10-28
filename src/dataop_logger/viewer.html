@@ -188,6 +188,13 @@ textarea { width: 100%; resize: vertical; }
 .dbound::after { content: ""; position: absolute; left: 7px; top: 1px; width: 4px; height: 20px; border-radius: 2px; background: var(--ink); opacity: .8; }
 .dbound:hover::after { opacity: 1; background: var(--accent); }
 .failline { margin-bottom: 8px; color: var(--ink-2); }
+.summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.summary .tile { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; background: var(--bg); }
+.summary .tile b { font-size: 20px; font-variant-numeric: tabular-nums; }
+.summary .tile span { font-size: 11px; color: var(--ink-3); }
+.failmark .flag[data-failtype] { pointer-events: auto; cursor: pointer; }
+.failmenu { position: absolute; top: 98px; transform: translateX(-50%); z-index: 20; width: 260px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
 .sbound { position: absolute; top: -2px; width: 18px; height: 24px; margin-left: -9px; cursor: ew-resize; z-index: 7; touch-action: none; }
 .sbound::after { content: ""; position: absolute; left: 7px; top: 2px; width: 4px; height: 20px; border-radius: 2px; background: var(--ink); opacity: .8; }
 .sbound:hover::after { opacity: 1; background: var(--accent); }
