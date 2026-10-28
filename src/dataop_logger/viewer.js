@@ -440,7 +440,7 @@ function render(r, t0) {
       ${cs.map(c => `<div class="cut ${sel && sel.cutId === c.id ? "on" : ""}" data-cut-id="${esc(c.id)}" style="left:${pct(c.start)}%;width:${pct(c.end - c.start)}%" title="Cut${c.reason ? ": " + esc(c.reason) : ""}"></div>`).join("")}
       ${(r.review.major || []).filter(m => m.window).map(m => `<div class="attnspan" style="left:${pct(m.window[0])}%;width:${pct(m.window[1] - m.window[0])}%" title="The 2 seconds before the policy fails: the frames to check first"></div>`).join("")}
       ${(r.review.major || []).filter(m => m.kind === "failure").map(m => `<div class="failmark ${m.estimated ? "est" : ""}" style="left:${pct(m.frame)}%"
-        title="Policy fails${m.estimated ? " (estimated)" : ""}${m.note ? ": " + esc(m.note) : ""}${editing ? ". Drag to move it." : ""}"><span class="flag" data-failtype="1">Policy fails${eff(r).failure_mode ? ` · ${human(canon("failure_types", eff(r).failure_mode))}` : ""}${failReason(r, m) ? `<span class="reason"> · ${esc(failReason(r, m))}</span>` : ""}</span></div>`).join("")}
+        title="Policy fails${m.estimated ? " (estimated)" : ""}${m.note ? ": " + esc(m.note) : ""}${editing ? ". Drag to move it." : ""}"><span class="flag">Policy fails here</span></div>`).join("")}
 
 
       <div class="ruler" id="ruler" role="slider" tabindex="0" aria-label="Playhead: click or drag here to move it" aria-valuemin="0" aria-valuemax="${r.length - 1}" aria-valuenow="0" title="Playhead row: click or drag here to move the playhead. Arrow keys step it."><span class="rulericon" aria-hidden="true">▶</span></div>
