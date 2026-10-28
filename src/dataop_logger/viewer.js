@@ -101,7 +101,7 @@ function drawRows() {
   document.getElementById("rows").innerHTML = visible().map(r => `
     <tr class="row" tabindex="0" data-id="${esc(r.run_id)}" aria-selected="${current && current.run_id === r.run_id}">
       <td><b>${runNo(r)}</b></td>
-      <td>${outcomePill(r)}${eff(r).failure_mode ? `<span class="sub">${human(eff(r).failure_mode)}</span>` : ""}</td>
+      <td>${eff(r).termination_reason === "success" ? `<span class="pill ok">success</span>` : `<span class="pill bad">failure</span>`}</td>
       <td><div class="mini" title="${drv(r).map(s => MODE[s[2]] + " " + s[0] + "–" + s[1]).join(", ")}">
         ${drv(r).map(s => `<div style="width:${100 * (s[1] - s[0]) / r.length}%;background:${color(s[2])}"></div>`).join("")}</div></td>
       <td class="num">${(r.length / r.fps).toFixed(1)}s</td>
