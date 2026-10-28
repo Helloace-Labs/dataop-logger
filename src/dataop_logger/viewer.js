@@ -921,7 +921,7 @@ const TYPES = {
   lora: ["LoRA", "Teleop and DAgger together in one set, for a LoRA fine-tune of the base model."],
 };
 const DROVE = { teleop: ["teleop", "tag"], rescued: ["rescued", "warn"], policy: ["policy", "tag"], unknown: ["not recorded", "tag"] };
-const tr = { data: null, picked: new Set(), type: "lora", withSuccess: false, into: "", preview: null, error: "", sets: DATA.training_sets || [], seq: 0 };
+const tr = { data: null, picked: new Set(), type: "lora", withSuccess: false, into: "", preview: null, error: "", sets: DATA.training_sets || [], seq: 0, openRuns: new Set() };
 const key = (root, id) => root + "\n" + id;
 function trRuns() { return (tr.data || []).flatMap(d => d.runs.map(r => ({ ...r, root: d.root, ds: d }))); }
 async function openTrain() {
@@ -969,23 +969,23 @@ function drawTrain() {
     return `<details class="tds" ${on || d.current ? "open" : ""}>
       <summary><b>${esc(d.name)}</b>${d.current ? `<span class="pill tag">open now</span>` : ""}<span class="cnt">${on} of ${plural(inDs.length, "run")} chosen</span>${d.error ? `<span class="pill bad">${esc(d.error)}</span>` : ""}</summary>
       <div class="bchips">${d.batches.map(bchip).join("")}</div>
-      ${inDs.length ? `<div class="tbl"><table><thead><tr><th><input type="checkbox" aria-label="Choose every run in ${esc(d.name)}" data-tall="${esc(d.root)}" ${on === inDs.length ? "checked" : ""} ${running ? "disabled" : ""}></th><th>Run</th><th>Outcome</th><th>Who drove</th><th>Reviewed</th><th>Length</th></tr></thead><tbody>
+      ${inDs.length ? `<details class="runsd" data-rd="${esc(d.root)}" ${tr.openRuns.has(d.root) ? "open" : ""}><summary>${tr.openRuns.has(d.root) ? "Hide" : "Choose single"} runs</summary><div class="tbl"><table><thead><tr><th><input type="checkbox" aria-label="Choose every run in ${esc(d.name)}" data-tall="${esc(d.root)}" ${on === inDs.length ? "checked" : ""} ${running ? "disabled" : ""}></th><th>Run</th><th>Outcome</th><th>Who drove</th><th>Reviewed</th><th>Length</th></tr></thead><tbody>
         ${inDs.map(r => { const on = tr.picked.has(key(r.root, r.run_id)); return `<tr class="${on ? "on" : ""}"><td><input type="checkbox" data-tr="${esc(key(r.root, r.run_id))}" ${on ? "checked" : ""} ${running ? "disabled" : ""} aria-label="Run ${r.episode + 1}"></td>
           <td><b>${r.episode + 1}</b></td><td>${r.outcome === "success" ? `<span class="pill ok">success</span>` : r.outcome === "unknown" ? `<span class="pill tag">unknown</span>` : `<span class="pill bad">${esc(r.outcome)}</span>`}</td>
           <td><span class="pill ${DROVE[r.drove][1]}">${DROVE[r.drove][0]}</span></td><td>${r.reviewed ? "✓" : `<span class="sub">no</span>`}</td><td class="num">${(r.length / r.fps).toFixed(1)}s</td></tr>`; }).join("")}
-      </tbody></table></div>` : `<div class="bchips sub">No runs in a batch yet.</div>`}
+      </tbody></table></div></details>` : `<div class="bchips sub">No runs in a batch yet.</div>`}
     </details>`;
   };
   const quick = [["all", "All"], ["none", "None"], ["teleop", "Teleop runs"], ["rescued", "Rescued runs"], ["success", "Successes"], ["reviewed", "Reviewed only"]];
   el.innerHTML = `<div class="dhead"><h2 id="ttitle">Create training set</h2><button class="btn ghost x" data-tc="close" aria-label="Close">Close</button></div>
   <div class="dbody">
-    <section class="step"><h3>1 · Choose runs</h3>
-      <div class="quick"><span class="lbl">Quick pick</span>${quick.map(([k, l]) => `<button class="chip" data-tq="${k}" ${running ? "disabled" : ""}>${l}</button>`).join("")}</div>
-      <div class="tgroups">${tr.data ? tr.data.map(dsBlock).join("") : `<div class="msg info">Loading runs…</div>`}</div>
-    </section>
-    <section class="step"><h3>2 · Choose the type</h3>
+    <section class="step"><h3>1 · Choose the type</h3>
       <div class="types" role="radiogroup">${Object.entries(TYPES).map(([k, v]) => `<label class="type ${tr.type === k ? "on" : ""}"><input type="radio" name="ttype" value="${k}" ${tr.type === k ? "checked" : ""} ${running ? "disabled" : ""}><b>${v[0]}</b><small>${v[1]}</small></label>`).join("")}</div>
       ${tr.type !== "teleop" ? `<label class="field"><input type="checkbox" id="twith" ${tr.withSuccess ? "checked" : ""} ${running ? "disabled" : ""}> Also include the policy's own successful runs</label>` : ""}
+    </section>
+    <section class="step"><h3>2 · Choose runs</h3>
+      <div class="quick"><span class="lbl">Quick pick</span>${quick.map(([k, l]) => `<button class="chip" data-tq="${k}" ${running ? "disabled" : ""}>${l}</button>`).join("")}</div>
+      <div class="tgroups">${tr.data ? tr.data.map(dsBlock).join("") : `<div class="msg info">Loading runs…</div>`}</div>
     </section>
     <section class="step"><h3>3 · Save</h3>
       <label class="field">Folder <input type="text" id="tinto" value="${esc(tr.into || tr.intoDefault || "")}" ${running ? "disabled" : ""} aria-label="Folder for the new LeRobot dataset"></label>
@@ -1006,6 +1006,11 @@ function drawTrain() {
     <button class="btn primary big" data-tc="go" ${running || !p || !p.frames || p.exists ? "disabled" : ""}>${running ? "Writing…" : "Create"}</button></div>`;
 }
 document.getElementById("opentrain").onclick = openTrain;
+document.getElementById("train").addEventListener("toggle", e => {
+  const d = e.target.closest && e.target.closest("[data-rd]"); if (!d || e.target !== d) return;
+  d.open ? tr.openRuns.add(d.dataset.rd) : tr.openRuns.delete(d.dataset.rd);
+  d.querySelector("summary").textContent = (d.open ? "Hide" : "Choose single") + " runs";
+}, true);
 document.getElementById("train").addEventListener("change", e => {
   const t = e.target;
   if (t.dataset.tr) { t.checked ? tr.picked.add(t.dataset.tr) : tr.picked.delete(t.dataset.tr); }
@@ -1040,7 +1045,10 @@ document.getElementById("train").addEventListener("click", e => {
 const im = { cands: null, presets: {}, source: "", preset: null, detected: null, batch: "", preview: null, error: "", seq: 0 };
 async function openImport() {
   document.getElementById("dlgimport").showModal(); im.error = ""; drawImport();
-  try { const out = await call({ op: "import_scan" }); im.cands = out.candidates; im.presets = out.presets; }
+  try {
+    const out = await call({ op: "import_scan" }), rank = c => c.version !== "v3.0" || !c.complete ? 2 : c.not_imported ? 0 : 1;
+    im.cands = out.candidates.sort((a, b) => rank(a) - rank(b)); im.presets = out.presets;
+  }
   catch (err) { im.error = err.message; im.cands = []; }
   drawImport();
 }

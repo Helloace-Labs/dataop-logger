@@ -1,4 +1,9 @@
-# dataop-logger
+# Aftershock
+
+The post-training data workspace for robotics.
+
+`dataop-logger` is Aftershock's open-source logger and local viewer. The package, the `dataop-logger` command and the
+`dataop/` sidecar folder keep their current names for now, so existing datasets keep working.
 
 Record what post-training needs, next to a normal [LeRobot](https://github.com/huggingface/lerobot) dataset.
 
@@ -249,17 +254,34 @@ A mapping says where each field comes from; anything without a source is stored 
 
 | Preset | Who drove | Policy action | Outcome |
 | --- | --- | --- | --- |
+| `demos` | a person, every frame | none | success |
 | `plain` | unknown | unknown | unknown |
 | `lerobot-hil` | `complementary_info.is_intervention` | the sent action on policy frames | `next.success` on any frame |
 | `watcher` | the `intervention` column | `<session>_raw/epNNN.npy`, one row per policy frame | `<session>_results_*.json` |
 
-Pass `--map map.json` to map your own columns and side files (format in `src/dataop_logger/importer.py`). Import is
+The default `--preset auto` picks one from the dataset's columns and side files. The Watcher preset also takes each
+episode's time from its raw file, marked as estimated. Pass `--map map.json` to map your own columns and side files (format in `src/dataop_logger/importer.py`). Import is
 idempotent: episodes that already have a run are skipped.
+
+In the viewer, **Import** lists the LeRobot datasets on this machine (next to the ones the viewer knows and in
+LeRobot's download cache), takes a Hub id too, shows the detected type and counts, and imports in the background.
+The dataset picker in the header switches between imported datasets.
 
 ## Generate training data
 
-Training sets are made by a plain script from a locked batch. No AI runs here, and the same locked batch with the same
-options always writes the same data.
+Training sets are made by a plain script. No AI runs here, and the same runs with the same options always write the
+same data. In the viewer, **Create training set** asks for the type, then the runs (any dataset, any batch, or single
+runs), shows the counts, and writes the set:
+
+| Type | What goes in |
+| --- | --- |
+| Teleop | runs a person drove from start to finish |
+| DAgger | the rescues inside policy runs, labelled with the expert's action |
+| LoRA | Teleop and DAgger together, for a LoRA fine-tune of the base model |
+
+Columns that only some of the chosen datasets have (an `intervention` flag, say) are left out so they combine. A set
+made from a locked batch stays current while the lock holds; one made from unlocked batches shows "out of date" as
+soon as a run in it is reviewed differently. From the command line:
 
 ```bash
 dataop-logger export --batch data/round3:"round 3" --recipe dagger --into data/round3_dagger
@@ -269,7 +291,9 @@ dataop-logger export --batch data/round3:"round 3" --recipe filtered --val 0.1 -
 
 | Recipe | Frames | Action written |
 | --- | --- | --- |
-| `dagger` | frames with an expert label (`--with-success` adds the policy's successful runs, `--base` adds a demo dataset) | the expert's action |
+| `teleop` | successful runs with no policy frames | the sent action |
+| `lora` | `teleop` runs plus `dagger` frames from policy runs | as those recipes |
+| `dagger` | frames with an expert label in runs the policy drove (`--with-success` adds the policy's successful runs, `--base` adds a demo dataset) | the expert's action |
 | `residual` | frames with both the policy's and the expert's action (`--zero-on-success` adds good policy frames with target zero) | expert minus policy, plus `observation.base_action` |
 | `filtered` | successful runs | the sent action |
 
@@ -278,7 +302,7 @@ Every recipe skips what the review left out (cuts, rejected runs, the failure wi
 training never samples across a gap. The output is a normal LeRobot v3.0 dataset written by LeRobot itself, with
 `dataop_export.json` recording the batches, review digests, source file digests and options it came from. Use
 `--dry-run` to see per-run counts and reasons first, and `--hook file.py:function` for task-specific selection.
-The viewer's "Generate training set" button on a locked batch does the same.
+`--runs id1,id2` limits a batch to chosen runs.
 
 ## Training with the extra fields
 

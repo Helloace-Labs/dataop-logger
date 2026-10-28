@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>dataop runs</title>
+<title>AfterShock</title>
 <link rel="icon" href="data:,">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'nonce-__NONCE__'; style-src 'unsafe-inline'; img-src data:; media-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
 <style>
@@ -34,6 +34,10 @@ header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 28px; p
 header h1 { font-size: 15px; margin: 0; font-weight: 600; }
 .rtime { font-size: 11px; color: var(--ink-3); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .btime { font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+header h1 { font-size: 21px; font-weight: 400; }
+.logo { display: inline-flex; align-items: baseline; line-height: 1; white-space: nowrap; }
+.logo .lg { height: .72em; width: auto; overflow: visible; margin: 0 .01em; }
+header h1 .logo .lt { font: 300 1em/1 var(--sans); color: inherit; margin: 0; letter-spacing: .005em; }
 .dspick select { font: inherit; font-weight: 500; color: var(--ink); background: var(--bg); border: 1px solid var(--line);
   border-radius: 6px; padding: 4px 8px; max-width: 280px; }
 .vh { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
@@ -64,7 +68,8 @@ header { align-items: center; }
 .tds > summary b { font-size: 13px; }
 .tds .cnt { color: var(--ink-3); font-variant-numeric: tabular-nums; }
 .tds .bchips { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 12px; border-top: 1px solid var(--line); }
-.tbl { max-height: 240px; overflow: auto; border-top: 1px solid var(--line); }
+.runsd > summary { padding: 7px 12px; border-top: 1px solid var(--line); cursor: pointer; color: var(--accent); font-size: 12px; }
+.tbl { max-height: 220px; overflow: auto; border-top: 1px solid var(--line); }
 .tbl table td, .tbl table th { padding: 5px 12px; }
 .tbl tr.on td { background: var(--hover); }
 .quick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
@@ -85,7 +90,6 @@ header { align-items: center; }
 .cand .cp { flex-basis: 100%; font: 11px var(--mono); color: var(--ink-3); overflow-wrap: anywhere; }
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; font-size: 12px; }
 .kv dt { color: var(--ink-3); } .kv dd { margin: 0; }
-header h1 span { color: var(--ink-3); font-weight: 400; font-family: var(--mono); font-size: 12px; margin-left: 8px; }
 .stats { display: flex; flex-wrap: wrap; gap: 20px; }
 .stat b { font-size: 15px; font-variant-numeric: tabular-nums; margin-right: 4px; }
 .stat { color: var(--ink-2); }
@@ -385,7 +389,7 @@ textarea { width: 100%; resize: vertical; }
 </head>
 <body>
 <header>
-  <h1>dataop runs</h1>
+  <h1 title="AfterShock: the post-training data workspace for robotics"><span class="logo" role="img" aria-label="AfterShock"><svg class="lg" viewBox="0 0 62 70" aria-hidden="true"><mask id="lgA"><rect width="62" height="70" fill="#fff"/><rect x="29.4" y="-1" width="3.2" height="31" fill="#000"/></mask><g fill="currentColor" mask="url(#lgA)"><polygon points="4,66 9.5,66 31,8.5 31,1.5 27,1.5"/><polygon points="27,1.5 35,1.5 58,66 48.5,66 31,13"/></g><g fill="currentColor"><rect x="19.6" y="42.5" width="19.8" height="5"/><rect x="0" y="65.5" width="15.5" height="4.5"/><rect x="43" y="65.5" width="19" height="4.5"/></g></svg><span class="lt">fter</span><svg class="lg" viewBox="0 0 46 70" aria-hidden="true"><mask id="lgS"><rect width="46" height="70" fill="#fff"/><rect x="21" y="-1" width="3.2" height="12" fill="#000"/><rect x="21.6" y="59" width="3.2" height="12" fill="#000"/></mask><g mask="url(#lgS)"><path d="M41 17 C38 7 30 3.5 22.5 3.5 C12.5 3.5 6.5 9.5 6.5 18 C6.5 29 16 32.5 24 35 C33 37.8 40.5 42 40.5 52 C40.5 61.5 33 66.5 23.5 66.5 C14 66.5 6.5 61.5 4.5 51" fill="none" stroke="currentColor" stroke-width="7.2"/></g></svg><span class="lt">hock</span></span></h1>
   <label class="dspick"><span class="vh">Dataset</span><select id="dsel" aria-label="Dataset"></select></label>
   <button class="btn" id="openimport" type="button">Import</button>
   <div class="stats" id="stats"></div>
