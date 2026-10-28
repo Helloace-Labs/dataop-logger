@@ -320,7 +320,7 @@ function render(r, t0) {
       <div class="lane" aria-label="Task segments">${(r.review.segments || []).map(sg => {
         const shade = segShade(sg.name);
         const tip = `Task segment: ${sg.name} · ${fmt(sg.start / r.fps)}–${fmt(sg.end / r.fps)}${sg.status === "failed" ? " · failed" : ""}${sg.from_label ? " · from a label" : ""}`;
-        return `<div class="sg shade${shade}" style="left:${pct(sg.start)}%;width:${pct(sg.end - sg.start)}%" title="${esc(tip)}" data-tip="${esc(tip)}">
+        return `<div class="sg shade${shade}" data-segkey="${esc("segment:" + sg.name + "@" + sg.start)}" style="left:${pct(sg.start)}%;width:${pct(sg.end - sg.start)}%" title="${esc(tip)}">
           <span>${esc(sg.name)}</span></div>`;
       }).join("")}</div>
       <div class="track">${r.segments.map(s => `<div style="width:${pct(s[1] - s[0])}%;background:${color(s[2])}"
@@ -370,7 +370,7 @@ function interventions(r) {
 
 // Major events come from the server: drive mode changes, task segment starts and the moment the policy fails,
 // the same three kinds for every task. Each has one note with the details.
-const TONE = { failure: "bad", segment: "ok", end: "muted" };
+const TONE = { failure: "bad", segment: "seg", end: "muted" };
 const toneOf = m => m.kind === "drive" ? (m.title.startsWith("Policy") ? "pol" : "warn") : TONE[m.kind] || "";
 function numbered(r) { return (r.review.major || []).map((m, i) => ({ ...m, n: i + 1, tone: toneOf(m) })); }
 function pinRows(r) {           // one pin per event at its exact moment; pins that would overlap move down a row
@@ -588,7 +588,14 @@ function wire(r, t0) {
   const light = (nums, on) => {
     document.querySelectorAll(".pin").forEach(x => x.classList.toggle("hl", on && x.dataset.pin.split(",").some(n => nums.includes(n))));
     document.querySelectorAll(".major .ev").forEach(x => x.classList.toggle("hl", on && nums.includes(x.dataset.n)));
+    const keys = numbered(r).filter(m => nums.includes(String(m.n))).map(m => m.key);
+    document.querySelectorAll(".sg").forEach(x => x.classList.toggle("hl", on && keys.includes(x.dataset.segkey)));
   };
+  document.querySelectorAll(".sg").forEach(x => {   // a segment on the bar lights up with its major event
+    const n = numbered(r).find(m => m.key === x.dataset.segkey);
+    x.onmouseenter = () => { x.classList.add("hl"); if (n) light([String(n.n)], true); };
+    x.onmouseleave = () => { x.classList.remove("hl"); light([], false); };
+  });
   document.querySelectorAll(".pin").forEach(x => {
     x.onmouseenter = x.onfocus = () => light(x.dataset.pin.split(","), true);
     x.onmouseleave = x.onblur = () => light([], false);
