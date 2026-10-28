@@ -78,17 +78,27 @@ function drawStats() {          // dataset summary, at the top of the run list
   document.getElementById("stats").innerHTML = "";
   const el = document.getElementById("fails");
   el.hidden = false;
-  el.innerHTML = `<div class="summary">${[[n, "runs"], [n ? Math.round(100 * ok / n) + "%" : "–", "success rate"], [take, "interventions"]]
-    .map(([v, l]) => `<div class="tile"><b>${v}</b><span>${l}</span></div>`).join("")}</div>`;
+  const pctOk = n ? Math.round(100 * ok / n) : 0, bad = n - ok;
+  const opt = (f, cls, label) => `<button class="sopt ${cls}" data-f="${f}" aria-pressed="${filter === f}">${label}</button>`;
+  el.innerHTML = `<div class="summary2">
+    <div class="shead"><span class="srate"><b>${n ? pctOk : "–"}</b><small>%</small></span>
+      <span class="slabel">success across<br><b>${n}</b> run${n === 1 ? "" : "s"}</span></div>
+    <div class="sbar" role="img" aria-label="${ok} successful and ${bad} failed runs">
+      <i class="ok" style="width:${n ? 100 * ok / n : 0}%"></i><i class="bad" style="width:${n ? 100 * bad / n : 0}%"></i></div>
+    <div class="sopts">${opt("all", "all", `All ${n}`)}${opt("success", "ok", `${ok} success`)}${opt("failure", "bad", `${bad} failure`)}
+      <span class="sint" title="Times a person or rescue skill took control">${take} intervention${take === 1 ? "" : "s"}</span></div>
+  </div>`;
 }
 function drawFails() {}
 document.getElementById("fails").onclick = e => {
-  const b = e.target.closest("[data-fm]"); if (!b) return;   // (no clickable groups now)
+  const o = e.target.closest(".sopt"); if (o) { filter = o.dataset.f; return redrawList(); }
+  const b = e.target.closest("[data-fm]"); if (!b) return;
   filter = filter === "fm:" + b.dataset.fm ? "all" : "fm:" + b.dataset.fm;
   redrawList();
 };
 const FILTERS = [["all", "All runs"], ["success", "Success"], ["failure", "Failed"]];
-function drawFilters() {
+function drawFilters() {             // the summary above holds the filters now
+  document.getElementById("filters").hidden = true; return;
   document.getElementById("filters").innerHTML = FILTERS.map(([k, l]) =>
     `<button class="chip" data-f="${esc(k)}" aria-pressed="${k === filter}">${esc(l)}</button>`).join("");
 }
