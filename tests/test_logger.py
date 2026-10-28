@@ -1154,3 +1154,18 @@ def test_step_boundary_follows_corrected_neighbours(tmp_path):
     rv.add_edit(run.run_path, m, "step_boundary", {"index": 0, "frame": 40})   # clamped to leave lift one frame
     steps = rv.effective(m, rv.load(run.run_path))["subgoals"]
     assert [(s["start_frame"], s["end_frame"]) for s in steps] == [(0, 37), (37, 38)]
+
+
+def test_drive_boundary_moves_the_switch(tmp_path):
+    from dataop_logger import events, review as rv
+    ds, run, m = _review_fixture(tmp_path)
+    modes, srcs = ["base"] * 30 + ["expert"] * 10, [None] * 30 + ["skill:rescue"] * 10
+    rv.add_edit(run.run_path, m, "drive_boundary", {"index": 0, "frame": 26})
+    evs, segs, drive = events.major_events(m, rv.load(run.run_path), modes, srcs, with_segments=True)
+    assert [(d["driver"], d["start"], d["end"], d["rec_start"], d["rec_end"]) for d in drive] == \
+        [("policy", 0, 26, 0, 30), ("rescue", 26, 40, 30, 40)]
+    assert ("drive", 26, "Rescue drives") in [(e["kind"], e["frame"], e["title"]) for e in evs]
+    assert next(e for e in evs if e["kind"] == "failure")["frame"] == 26      # the estimate follows the switch
+    rv.add_edit(run.run_path, m, "drive_boundary", {"index": 0, "frame": 40})  # clamped: rescue keeps a frame
+    drive = events.major_events(m, rv.load(run.run_path), modes, srcs, with_segments=True)[2]
+    assert [(d["start"], d["end"]) for d in drive] == [(0, 39), (39, 40)]

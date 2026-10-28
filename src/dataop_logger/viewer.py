@@ -65,11 +65,11 @@ def _review_state(run_path: Path, m: dict) -> dict:
     try:
         r = rv.load(run_path)
         return {"edits": r["edits"], "rev": r["rev"], "effective": rv.effective(m, r), "undoable": rv.undoable(r),
-                **dict(zip(("major", "segments"), ev.major_events(m, r, modes, sources, with_segments=True))),
+                **dict(zip(("major", "segments", "drive"), ev.major_events(m, r, modes, sources, with_segments=True))),
                 "error": None}
     except rv.ReviewError as e:                        # shown on the run; editing it is disabled
         return {"edits": [], "rev": -1, "effective": rv.effective(m, rv.empty()), "undoable": [],
-                **dict(zip(("major", "segments"), ev.major_events(m, rv.empty(), modes, sources, with_segments=True))),
+                **dict(zip(("major", "segments", "drive"), ev.major_events(m, rv.empty(), modes, sources, with_segments=True))),
                 "error": str(e)}
 
 
@@ -211,7 +211,7 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
     def _apply(self, op, req, run_path, m, rev):
         summary = None
         if op == "add":
-            if req.get("kind") not in ("label", "exclude", "failure_start", "step_boundary", "segment_edge"):
+            if req.get("kind") not in ("label", "exclude", "failure_start", "step_boundary", "segment_edge", "drive_boundary"):
                 raise rv.ReviewError("the viewer adds labels, cuts and the policy-failure moment only")
             payload = req.get("payload", {})
             rv.add_edit(run_path, m, req.get("kind"), payload, source="human", expect_rev=rev)

@@ -35,7 +35,20 @@ def major_events(manifest: dict, review: dict, modes: list[str], sources: list, 
         events.append({"key": key, "kind": kind, "frame": frame, "title": title, "note": note, "note_by": "recorded"
                        if note else None, **more})
 
-    # drive mode: recorded control mode, with people's drive-mode labels over their spans
+    # drive mode: recorded control-mode spans, with people's moved switch points, then drive-mode labels on top
+    rec = [[a, b, v] for a, b, v in _spans(list(zip(modes, sources)))]
+    spans = [list(x) for x in rec]
+    for p in eff.get("drive_edits", []):
+        i = p["index"]
+        if i + 1 < len(spans):
+            f = min(max(p["frame"], spans[i][0] + 1), spans[i + 1][1] - 1)
+            spans[i][1] = spans[i + 1][0] = f
+    modes, sources = [None] * n, [None] * n
+    for a, b, (m, src) in spans:
+        for f in range(a, b):
+            modes[f], sources[f] = m, src
+    drive_spans = [{"index": i, "mode": v[0], "driver": DRIVER.get(v[0], v[0]), "source": v[1], "start": a, "end": b,
+                    "rec_start": rec[i][0], "rec_end": rec[i][1]} for i, (a, b, v) in enumerate(spans)]
     driver = [DRIVER.get(m, m) for m in modes]
     who = [s for s in sources]
     for lb in sorted(eff["labels"], key=lambda x: x["start"]):
@@ -98,4 +111,4 @@ def major_events(manifest: dict, review: dict, modes: list[str], sources: list, 
             e["note"], e["note_by"] = notes[e["key"]]["text"], notes[e["key"]]["by"]
     order = {"drive": 0, "segment": 1, "failure": 2, "end": 3}
     events = sorted(events, key=lambda e: (e["frame"], order[e["kind"]]))
-    return (events, seg_spans) if with_segments else events
+    return (events, seg_spans, drive_spans) if with_segments else events

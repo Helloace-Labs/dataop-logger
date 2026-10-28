@@ -39,8 +39,8 @@ import pyarrow.parquet as pq
 from . import store
 from .schema import TERMINATION_REASONS
 
-KINDS = ("outcome", "failure_start", "exclude", "step_boundary", "segment_edge", "reject_run", "note", "label",
-         "event_note")
+KINDS = ("outcome", "failure_start", "exclude", "step_boundary", "segment_edge", "drive_boundary", "reject_run",
+         "note", "label", "event_note")
 TRAIN_USE = ("keep", "exclude")
 SOURCES = ("agent", "human")
 STATUSES = ("proposed", "accepted", "rejected")
@@ -217,6 +217,11 @@ def check_payload(kind: str, payload: dict, manifest: dict) -> dict:
             raise ReviewError("step names do not match the steps at that index")
         f = frame(payload.get("frame"), "frame", 0, length)   # clamped later against the steps as corrected
         return {"index": i, "before": a["name"], "after": b["name"], "frame": f}
+    if kind == "drive_boundary":                # moves the switch between recorded drive spans index and index + 1
+        i = payload.get("index")
+        if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < length:
+            raise ReviewError("drive_boundary needs the index of a recorded drive span")
+        return {"index": i, "frame": frame(payload.get("frame"), "frame", 0, length)}
     if kind == "segment_edge":                  # the outer start or end of a recorded step with no step next to it
         steps = manifest.get("subgoals", [])
         i, edge = payload.get("index"), payload.get("edge")
@@ -262,6 +267,8 @@ def _slot(e: dict):
         return (e["kind"], e["payload"].get("key"))
     if e["kind"] == "segment_edge":
         return (e["kind"], e["payload"].get("index"), e["payload"].get("edge"))
+    if e["kind"] == "drive_boundary":
+        return (e["kind"], e["payload"].get("index"))
     return e["kind"]
 
 
@@ -522,7 +529,7 @@ def effective(manifest: dict, review: dict) -> dict:
     """The run as training should see it after the edits in effect."""
     check_review(manifest, review)
     act = active_edits(review)
-    single = {e["kind"]: e["payload"] for e in act if e["kind"] not in MULTI and e["kind"] not in ("step_boundary", "event_note", "segment_edge")}
+    single = {e["kind"]: e["payload"] for e in act if e["kind"] not in MULTI and e["kind"] not in ("step_boundary", "event_note", "segment_edge", "drive_boundary")}
     out = {
         "termination_reason": manifest["termination_reason"], "failure_mode": manifest.get("failure_mode"),
         "failure_start": None, "excludes": [e["payload"] for e in act if e["kind"] == "exclude"],
@@ -530,6 +537,7 @@ def effective(manifest: dict, review: dict) -> dict:
         "subgoals": [dict(s) for s in manifest.get("subgoals", [])], "reviewed": review["reviewed"],
         "labels": [{"id": e["id"], **e["payload"], "interpretation": e.get("interpretation")}
                    for e in act if e["kind"] == "label"],
+        "drive_edits": [e["payload"] for e in act if e["kind"] == "drive_boundary"],
         "event_notes": {e["payload"]["key"]: {"text": e["payload"]["text"], "id": e["id"],
                                               "by": e.get("by") or ("person" if e["source"] == "human" else "agent")}
                         for e in act if e["kind"] == "event_note"},

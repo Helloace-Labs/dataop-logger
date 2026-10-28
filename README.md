@@ -158,11 +158,13 @@ When runs carry `failure_mode` and `subgoals`, the run list opens with failed ru
 
 ## Editing runs
 
-Open a run in the viewer and press **Edit** (or E).
+The run view has three rows: task segments, drive mode (who drove), and the playhead row. Only the playhead row moves the playhead. Press **Edit** (or E) to correct the first two:
 
-- **Task segments:** drag the handles on the segment lane above the run bar. The line between two segments moves both sides together, and the outer start and end of a segment can move up to its neighbour. A table below the bar updates live while you drag. For each segment it shows the start, end, length and frames, how they changed from the recording, who drove during it, and whether the policy fails inside it. Click a segment to select its frames.
-- **Policy fails:** drag the red marker to where the policy actually started to fail. The two seconds before it are underlined, since those frames matter most for training data.
-- **Cut:** drag across the run bar to select frames, then **Cut**. Cut frames stay in the recording but are left out of training. Click a cut to undo it.
+- **Task segments:** drag the handles on the segment lane. The line between two segments moves both sides together, and an outer start or end can move up to its neighbour.
+- **Drive mode:** drag the handle where control switches (for example policy to rescue) to where the switch really happened.
+- **Policy fails:** drag the red marker to where the policy actually started to fail. The two seconds before it are underlined.
+
+While you drag, tables below the bar update live. They show each segment's and drive span's start, end, length and frames, the change from the recording, and when the policy fails. Cut frames stay in the recording but are left out of training; click a cut to undo it.
 
 **AI feature: find idle frames.** In Edit, **✦ Find idle frames** runs the built-in idle finder on the run. It marks stretches where the arm barely moves for over a second in light grey, each with a short description. You can cut them all, or cut or keep them one by one. Your own agent can make the same kind of suggestion:
 
