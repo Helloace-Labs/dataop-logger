@@ -12,7 +12,7 @@
   --bg: #f6f7f9; --panel: #ffffff; --ink: #16191f; --ink-2: #4c5361; --ink-3: #8a91a0; --line: #e3e6eb;
   --accent: #2f5bd3; --hover: #eef2fb;
   --base: #4f7be8; --expert: #e39a2d; --blend: #8c6ad8; --none: #c4c9d2;
-  --lbl: #b8467f; --lbl-bg: #f8e6ef; --seg0: #b8a6e8; --seg1: #cfc2f1; --seg2: #9d86dd; --seg3: #e0d8f7; --seg-ink: #2a1d52; --ok: #1f8a4c; --ok-bg: #e4f4ea; --bad: #c2362f; --bad-bg: #fbe9e8; --warn: #9a6a00; --warn-bg: #fbf1d9;
+  --lbl: #b8467f; --lbl-bg: #f8e6ef; --seg0: #7b5ad6; --seg1: #d4c8f7; --seg2: #4a2f9e; --seg3: #b190ea; --seg-ink: #2a1d52; --seg0-ink: #fff; --seg1-ink: #2a1d52; --seg2-ink: #fff; --seg3-ink: #2a1d52; --ok: #1f8a4c; --ok-bg: #e4f4ea; --bad: #c2362f; --bad-bg: #fbe9e8; --warn: #9a6a00; --warn-bg: #fbf1d9;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color-scheme: light;
@@ -22,7 +22,7 @@
     --bg: #111318; --panel: #181b21; --ink: #e8eaee; --ink-2: #b0b6c2; --ink-3: #7c8392; --line: #2a2f38;
     --accent: #7c9cf0; --hover: #1f2430;
     --base: #6b91f0; --expert: #e8a640; --blend: #a387e6; --none: #4a505b;
-    --lbl: #e58bb7; --lbl-bg: #3a1f2d; --seg0: #5b4a96; --seg1: #493b7d; --seg2: #6e5cb0; --seg3: #3d3268; --seg-ink: #efeaff; --ok: #5cc98a; --ok-bg: #16301f; --bad: #f07a72; --bad-bg: #3a1c1a; --warn: #e5b94a; --warn-bg: #352b12;
+    --lbl: #e58bb7; --lbl-bg: #3a1f2d; --seg0: #7b5ad6; --seg1: #c3b3f2; --seg2: #4a2f9e; --seg3: #a37de6; --seg-ink: #efeaff; --seg0-ink: #fff; --seg1-ink: #221545; --seg2-ink: #fff; --seg3-ink: #221545; --ok: #5cc98a; --ok-bg: #16301f; --bad: #f07a72; --bad-bg: #3a1c1a; --warn: #e5b94a; --warn-bg: #352b12;
     color-scheme: dark;
   }
 }
@@ -80,8 +80,8 @@ figcaption { position: absolute; left: 8px; top: 6px; color: #fff; font-size: 11
 .sg { position: absolute; top: 0; height: 20px; border-radius: 3px; font-size: 11px; line-height: 20px; overflow: hidden;
   white-space: nowrap; color: var(--seg-ink); box-shadow: inset -1px 0 0 var(--panel); cursor: default; }
 .sg span { padding: 0 6px; }
-.sg.shade0 { background: var(--seg0); } .sg.shade1 { background: var(--seg1); }
-.sg.shade2 { background: var(--seg2); } .sg.shade3 { background: var(--seg3); }
+.sg.shade0 { background: var(--seg0); color: var(--seg0-ink); } .sg.shade1 { background: var(--seg1); color: var(--seg1-ink); }
+.sg.shade2 { background: var(--seg2); color: var(--seg2-ink); } .sg.shade3 { background: var(--seg3); color: var(--seg3-ink); }
 .sg:hover, .sg.hl { overflow: visible; z-index: 6; filter: brightness(1.25) saturate(1.2); box-shadow: 0 0 0 2px var(--accent); }
 .sg:hover span, .sg.hl span { position: relative; z-index: 6; background: inherit; border-radius: 3px; padding: 0 6px; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
 .track { position: absolute; left: 0; right: 0; top: 56px; height: 14px; border-radius: 4px; overflow: hidden; background: var(--none); }
