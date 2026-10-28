@@ -82,7 +82,9 @@ figcaption { position: absolute; left: 8px; top: 6px; color: #fff; font-size: 11
 .sg span { padding: 0 6px; }
 .sg.shade0 { background: var(--seg0); color: var(--seg0-ink); } .sg.shade1 { background: var(--seg1); color: var(--seg1-ink); }
 .sg.shade2 { background: var(--seg2); color: var(--seg2-ink); } .sg.shade3 { background: var(--seg3); color: var(--seg3-ink); }
-.sg:hover, .sg.hl { overflow: visible; z-index: 6; filter: brightness(1.25) saturate(1.2); box-shadow: 0 0 0 2px var(--accent); }
+.sg:hover, .sg.hl { overflow: visible; z-index: 6; filter: brightness(1.25) saturate(1.2); box-shadow: inset 0 0 0 2px var(--accent); }
+.track .dspan { cursor: default; }
+.track .dspan:hover { filter: brightness(1.25) saturate(1.2); box-shadow: inset 0 0 0 2px var(--accent); z-index: 1; }
 .sg:hover span, .sg.hl span { position: relative; z-index: 6; background: inherit; border-radius: 3px; padding: 0 6px; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
 .track { position: absolute; left: 0; right: 0; top: 56px; height: 14px; border-radius: 4px; overflow: hidden; background: var(--none); }
 .track .dspan { position: absolute; top: 0; height: 100%; }
