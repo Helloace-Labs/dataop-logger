@@ -211,17 +211,19 @@ function driveTable(r, live) {
   if (live) { const a = ds[live.index], b = ds[live.index + 1]; if (a) a.end = live.frame; if (b) b.start = live.frame; }
   const fail = (r.review.major || []).find(m => m.kind === "failure");
   const delta = (now, was) => now === was ? "" : ` <span class="delta">${now > was ? "+" : "−"}${(Math.abs(now - was) / r.fps).toFixed(1)} s</span>`;
-  return `<div class="card segtable drivetable"><h3>Drive mode</h3>
-    ${fail ? `<div class="failline">Policy fails at <b>${fmt(fail.frame / r.fps)}</b>${fail.estimated ? " (estimated, drag the red marker to set it)" : ""}</div>
-      <div class="lbrow failtypes"><span class="lbq">Failure type</span>
-        ${failureTypes().map(t => `<button class="chip" data-ftype="${esc(t)}" aria-pressed="${t === eff(r).failure_mode}">${human(t)}</button>`).join("")}
-        <input id="newftype" class="segin" maxlength="60" placeholder="+ failure type"></div>` : ""}
+  const ftype = eff(r).failure_mode;
+  return `<div class="card segtable drivetable">
     <div class="tablewrap"><table><thead><tr><th>Drive mode</th><th>Start</th><th>End</th><th>Length</th><th>Frames</th><th>By</th></tr></thead><tbody>
     ${ds.map((d, i) => `<tr class="${live && (i === live.index || i === live.index + 1) ? "moving" : ""}">
       <td><i class="sw" style="background:${color(d.mode)}"></i>${MODE[d.mode]}</td>
       <td class="num">${fmt(d.start / r.fps)}${delta(d.start, d.rec_start)}</td><td class="num">${fmt(d.end / r.fps)}${delta(d.end, d.rec_end)}</td>
       <td class="num">${((d.end - d.start) / r.fps).toFixed(1)} s</td><td class="num">${d.end - d.start}</td><td>${esc(d.source || "")}</td></tr>`).join("")}
-    </tbody></table></div></div>`;
+    ${fail ? `<tr class="failrow"><td><i class="sw" style="background:var(--bad)"></i>Failure${ftype ? ": " + human(ftype) : ""}</td>
+      <td class="num">${fmt(fail.frame / r.fps)}</td><td></td><td></td><td></td><td>${fail.estimated ? "estimated" : "marked"}</td></tr>` : ""}
+    </tbody></table></div>
+    ${fail ? `<div class="lbrow failtypes"><span class="lbq">Failure type</span>
+      ${failureTypes().map(t => `<button class="chip" data-ftype="${esc(t)}" aria-pressed="${t === ftype}">${human(t)}</button>`).join("")}
+      <input id="newftype" class="segin" maxlength="60" placeholder="+ failure type"></div>` : ""}</div>`;
 }
 
 function segTable(r, live) {
