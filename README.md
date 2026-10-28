@@ -166,6 +166,19 @@ The run view has three rows: task segments, drive mode (who drove), and the play
 
 While you drag, tables below the bar update live. They show each segment's and drive span's start, end, length and frames, the change from the recording, and when the policy fails. Cut frames stay in the recording but are left out of training; click a cut to undo it.
 
+**Lists (the dataset's schema).** Each dataset keeps two agreed lists in `dataop/lists.json`: **failure types** and **task segments**. People and agents pick from them, so counts stay comparable across runs. The first time the lists are read, they are seeded from the names the dataset already uses. Open **Lists** in the viewer to add, rename or delete entries; a rename keeps the old name as an alias, so recorded data still matches, and an entry a run still uses cannot be deleted. In Edit:
+- click a task segment to change its type, split it at the playhead or remove it;
+- click an empty part of the segment lane to add a segment there;
+- pick the failure type next to the failure row.
+
+Agents use the same lists:
+
+```bash
+dataop-logger lists <dataset_root>                                       # JSON
+dataop-logger lists <dataset_root> add failure_types collision --description "hit something"
+dataop-logger lists <dataset_root> rename task_segments lift raise
+```
+
 **AI feature: find idle frames.** In Edit, **✦ Find idle frames** runs the built-in idle finder on the run. It marks stretches where the arm barely moves for over a second in light grey, each with a short description. You can cut them all, or cut or keep them one by one. Your own agent can make the same kind of suggestion:
 
 ```bash

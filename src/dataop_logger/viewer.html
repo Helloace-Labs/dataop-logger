@@ -190,6 +190,20 @@ textarea { width: 100%; resize: vertical; }
 .dbound { position: absolute; top: 52px; width: 18px; height: 22px; margin-left: -9px; cursor: ew-resize; z-index: 7; touch-action: none; }
 .dbound::after { content: ""; position: absolute; left: 7px; top: 1px; width: 4px; height: 20px; border-radius: 2px; background: var(--ink); opacity: .8; }
 .dbound:hover::after { opacity: 1; background: var(--accent); }
+.segmenu { position: absolute; top: calc(100% + 6px); transform: translateX(-50%); z-index: 20; width: 300px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+.lane { cursor: default; }
+.editing .lane { cursor: copy; }
+.editing .sg { cursor: pointer; }
+.listsbtn { margin-left: auto; }
+.undowrap + .listsbtn { margin-left: 8px; }
+.listsbtn + .editbtn { margin-left: 8px; }
+.listspanel { display: flex; flex-direction: column; gap: 8px; }
+.lgrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px; }
+.lsec { display: flex; flex-direction: column; gap: 6px; }
+.lsec h3 { margin: 0; }
+.lrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.lrow .segin { width: 180px; }
 .failline { margin-bottom: 6px; color: var(--ink-2); }
 .failtypes { margin-top: 10px; }
 .failtypes .lbq { min-width: 92px; }
@@ -198,7 +212,7 @@ textarea { width: 100%; resize: vertical; }
 .summary .tile b { font-size: 20px; font-variant-numeric: tabular-nums; }
 .summary .tile span { font-size: 11px; color: var(--ink-3); }
 .failmark .flag[data-failtype] { pointer-events: auto; cursor: pointer; }
-.failmenu { position: absolute; top: 98px; transform: translateX(-50%); z-index: 20; width: 260px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px;
+.failmenu { position: absolute; top: calc(100% + 6px); transform: translateX(-50%); z-index: 20; width: 260px; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px;
   background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
 .sbound { position: absolute; top: -2px; width: 18px; height: 24px; margin-left: -9px; cursor: ew-resize; z-index: 7; touch-action: none; }
 .sbound::after { content: ""; position: absolute; left: 7px; top: 2px; width: 4px; height: 20px; border-radius: 2px; background: var(--ink); opacity: .8; }

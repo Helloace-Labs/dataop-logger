@@ -130,6 +130,10 @@ People label spans in the viewer in plain language. When the user asks you to re
 3. Record it: `dataop-logger interpret <dataset_root> <run_id> <label_id> --train keep|exclude --meaning "<one short sentence>"`.
 4. If a label is ambiguous, ask the user instead of guessing, and quote it.
 
+## Use the dataset's lists
+
+Failure types and task segments come from the dataset's agreed lists. Read them with `dataop-logger lists <dataset_root>` before you name a failure or a segment, and use those exact names. If something new is really needed, add it once with `dataop-logger lists <dataset_root> add failure_types|task_segments <name> --description "..."` and tell the user. Never invent near-duplicates such as "missed grasp" next to "no grasp".
+
 ## Describing major events (AI feature)
 
 Every run's major events are the same three kinds for any task: drive mode changes, task segment starts, and the moment the policy fails, plus the run's end. Each has one note with the details. When the user asks you to describe them:

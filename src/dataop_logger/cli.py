@@ -9,10 +9,11 @@ from . import validate as V
 
 
 def main(argv=None) -> int:
+    from .lists import ListError
     from .review import ReviewError
     try:
         return _main(argv)
-    except ReviewError as e:
+    except (ReviewError, ListError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
@@ -49,6 +50,13 @@ def _main(argv=None) -> int:
     it.add_argument("--meaning", required=True, help="one sentence: what the person meant")
     it.add_argument("--by", default="agent", help="name of the agent")
     it.add_argument("--replace", action="store_true", help="change an existing interpretation (kept in history)")
+    lp = sub.add_parser("lists", help="the dataset's agreed failure types and task segments; add or rename entries")
+    lp.add_argument("root")
+    lp.add_argument("action", nargs="?", choices=["show", "add", "rename"], default="show")
+    lp.add_argument("kind", nargs="?", choices=["failure_types", "task_segments"])
+    lp.add_argument("name", nargs="?")
+    lp.add_argument("new_name", nargs="?", help="for rename")
+    lp.add_argument("--description", default="")
     evp = sub.add_parser("events", help="major events of each run (drive mode, task segments, policy failure) as JSON")
     evp.add_argument("root")
     evp.add_argument("--run", default=None, help="only this run id")
@@ -111,6 +119,17 @@ def _main(argv=None) -> int:
                 return 0
         print(f"no committed run {a.run_id}", file=sys.stderr)
         return 1
+    if a.cmd == "lists":
+        from . import lists
+        if a.action == "show":
+            print(V.to_json(lists.load(a.root)))
+        elif a.action == "add":
+            lists.add(a.root, a.kind, a.name, a.description)
+            print(f"added {a.name} to {a.kind}")
+        else:
+            lists.rename(a.root, a.kind, a.name, a.new_name)
+            print(f"renamed {a.name} to {a.new_name} in {a.kind}")
+        return 0
     if a.cmd in ("events", "note"):
         import pyarrow.parquet as pq
         from . import events, review, store

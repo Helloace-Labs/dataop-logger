@@ -16,6 +16,7 @@ import pyarrow.dataset as pads
 import pyarrow.parquet as pq
 
 from . import events as ev
+from . import lists as ls
 from . import review as rv
 from . import store
 
@@ -112,7 +113,12 @@ def collect(root: Path) -> dict:
     modes = sorted({r["failure_mode"] for r in runs if r["failure_mode"]} |
                    {e["payload"].get("failure_mode") for r in runs for e in r["review"]["edits"]
                     if e["kind"] == "outcome" and e["payload"].get("failure_mode")})
-    return {"dataset": root.name, "root": str(root), "runs": runs, "failure_modes": modes, "editable": False}
+    try:
+        lists = ls.load(root)
+    except ls.ListError as e:
+        lists = {"version": 1, "rev": -1, "failure_types": [], "task_segments": [], "error": str(e)}
+    return {"dataset": root.name, "root": str(root), "runs": runs, "failure_modes": modes, "lists": lists,
+            "editable": False}
 
 
 def build(root: Path, editable: bool = False) -> Path:
@@ -184,6 +190,22 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
             req = json.loads(self.rfile.read(n))
             if not isinstance(req, dict):
                 raise ValueError("request must be an object")
+            op = req.get("op")
+            if isinstance(op, str) and op.startswith("lists_"):      # the dataset's lists, not one run
+                root, kind, rev = self.dataset_root, req.get("kind"), req.get("rev")
+                if isinstance(rev, bool) or not isinstance(rev, int):
+                    raise rv.ReviewError("rev (the lists revision the page shows) is required")
+                if op == "lists_add":
+                    d = ls.add(root, kind, req.get("name"), req.get("description") or "", expect_rev=rev)
+                elif op == "lists_rename":
+                    d = ls.rename(root, kind, req.get("old"), req.get("new"), expect_rev=rev)
+                elif op == "lists_describe":
+                    d = ls.describe(root, kind, req.get("name"), req.get("description") or "", expect_rev=rev)
+                elif op == "lists_delete":
+                    d = ls.delete(root, kind, req.get("name"), expect_rev=rev)
+                else:
+                    raise rv.ReviewError("unknown lists operation")
+                return self._json(200, {"lists": d})
             run_path, m = _find_run(self.dataset_root, req.get("run_id"))
             rev = req.get("rev")
             if isinstance(rev, bool) or not isinstance(rev, int):
@@ -199,6 +221,13 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
                 summary = self._apply(op, req, run_path, m, rev)
         except rv.ReviewConflict as e:
             return self._json(409, {"error": str(e), "state": _review_state(run_path, m)})
+        except ls.ListError as e:
+            code = 409 if "changed" in str(e) else 400
+            try:
+                cur = ls.load(self.dataset_root)
+            except ls.ListError:
+                cur = None
+            return self._json(code, {"error": str(e), "lists": cur})
         except (rv.ReviewError, ValueError, KeyError, TypeError) as e:
             return self._json(400, {"error": str(e)})
         state = _review_state(run_path, m)
@@ -211,7 +240,8 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
     def _apply(self, op, req, run_path, m, rev):
         summary = None
         if op == "add":
-            if req.get("kind") not in ("label", "exclude", "failure_start", "step_boundary", "segment_edge", "drive_boundary", "outcome"):
+            if req.get("kind") not in ("label", "exclude", "failure_start", "step_boundary", "segment_edge", "drive_boundary", "outcome",
+                                   "segment_plan"):
                 raise rv.ReviewError("the viewer adds labels, cuts and the policy-failure moment only")
             payload = req.get("payload", {})
             rv.add_edit(run_path, m, req.get("kind"), payload, source="human", expect_rev=rev)

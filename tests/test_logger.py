@@ -1112,12 +1112,10 @@ def test_major_events_three_kinds_and_notes(tmp_path):
     assert next(e for e in evs if e["key"] == "segment:lift@10")["note"] == "failed: slipped"
     # a marked failure replaces the estimate; labels correct drive mode and segments
     rv.add_edit(run.run_path, m, "failure_start", {"frame": 22})
-    rv.add_edit(run.run_path, m, "label", {"start": 25, "end": 30, "text": "operator nudged", "driver": "teleop",
-                                           "segment": "regrasp"})
+    rv.add_edit(run.run_path, m, "label", {"start": 25, "end": 30, "text": "operator nudged", "driver": "teleop"})
     evs = events.major_events(m, rv.load(run.run_path), modes, srcs)
     got = [(e["kind"], e["frame"], e["title"]) for e in evs]
     assert ("failure", 22, "Policy fails") in got and ("drive", 25, "Teleop drives") in got
-    assert ("segment", 25, "regrasp") in got
     assert not next(e for e in evs if e["kind"] == "failure")["estimated"]
     # notes: an agent's note replaces the recorded one; undo-able like any edit
     assert main(["note", str(ds.root), run.run_id, "failure", "--text", "gripper slips at the cap", "--by", "vlm-agent"]) == 0
@@ -1169,3 +1167,39 @@ def test_drive_boundary_moves_the_switch(tmp_path):
     rv.add_edit(run.run_path, m, "drive_boundary", {"index": 0, "frame": 40})  # clamped: rescue keeps a frame
     drive = events.major_events(m, rv.load(run.run_path), modes, srcs, with_segments=True)[2]
     assert [(d["start"], d["end"]) for d in drive] == [(0, 39), (39, 40)]
+
+
+def test_lists_schema_seed_add_rename_delete(tmp_path):
+    from dataop_logger import lists, review as rv
+    ds, run, m = _review_fixture(tmp_path)              # failure_mode no_lift, steps grasp and lift
+    d = lists.load(ds.root)
+    assert [e["name"] for e in d["failure_types"]] == ["no_lift"]
+    assert [e["name"] for e in d["task_segments"]] == ["grasp", "lift"]
+    lists.add(ds.root, "failure_types", "collision", "hit something")
+    with pytest.raises(lists.ListError):
+        lists.add(ds.root, "failure_types", "collision")
+    d = lists.rename(ds.root, "task_segments", "lift", "raise")
+    assert lists.canonical(d, "task_segments", "lift") == "raise"          # recorded names still map
+    with pytest.raises(lists.ListError):
+        lists.delete(ds.root, "task_segments", "raise")                    # in use by the run
+    lists.delete(ds.root, "failure_types", "collision")
+    with pytest.raises(lists.ListError):
+        lists.add(ds.root, "failure_types", "x", expect_rev=0)             # stale revision
+    assert [e["name"] for e in lists.load(ds.root)["failure_types"]] == ["no_lift"]
+
+
+def test_segment_plan_replaces_segments(tmp_path):
+    from dataop_logger import events, review as rv
+    ds, run, m = _review_fixture(tmp_path)
+    plan = [{"name": "reach", "start": 0, "end": 5}, {"name": "grasp", "start": 5, "end": 10},
+            {"name": "lift", "start": 12, "end": 30}]
+    rv.add_edit(run.run_path, m, "segment_plan", {"segments": plan})
+    steps = rv.effective(m, rv.load(run.run_path))["subgoals"]
+    assert [(s["name"], s["start_frame"], s["end_frame"], s["status"]) for s in steps] == \
+        [("reach", 0, 5, "completed"), ("grasp", 5, 10, "completed"), ("lift", 12, 30, "failed")]
+    for bad in ([{"name": "a", "start": 0, "end": 5}, {"name": "b", "start": 4, "end": 8}],
+                [{"name": "a", "start": 3, "end": 3}], [{"name": "", "start": 0, "end": 2}]):
+        with pytest.raises(rv.ReviewError):
+            rv.add_edit(run.run_path, m, "segment_plan", {"segments": bad})
+    segs = events.major_events(m, rv.load(run.run_path), ["base"] * 40, [None] * 40, with_segments=True)[1]
+    assert [(s["name"], s["start"], s["end"]) for s in segs] == [("reach", 0, 5), ("grasp", 5, 10), ("lift", 12, 30)]

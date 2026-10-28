@@ -49,9 +49,13 @@ function driveModes(r) {        // policy and rescue, then any other drive modes
   return [...new Set(["policy", "rescue", ...used])];
 }
 const SEG_SHADES = 4;
-function segShade(name) {       // one color family for task segments; each segment name keeps its own shade
-  const names = [...new Set(runs.flatMap(r => (r.review.segments || []).map(s => s.name)))];
-  return Math.max(0, names.indexOf(name)) % SEG_SHADES;
+// The dataset's agreed lists (its schema): failure types and task segments. Renames keep old names as aliases.
+let LISTS = DATA.lists || { rev: 0, failure_types: [], task_segments: [] };
+const listEntry = (kind, name) => (LISTS[kind] || []).find(e => e.name === name || (e.aliases || []).includes(name));
+const canon = (kind, name) => { const e = name && listEntry(kind, name); return e ? e.name : name; };
+function segShade(name) {       // one color family for task segments; each list entry keeps its own shade
+  const i = (LISTS.task_segments || []).findIndex(e => e.name === canon("task_segments", name));
+  return Math.max(0, i) % SEG_SHADES;
 }
 function segmentNames(r) {      // this run's steps first, then segments people used on the same task
   const own = eff(r).subgoals.map(s => s.name);
@@ -118,6 +122,60 @@ function step(dir) {
 
 // ── saving ────────────────────────────────────────────────────────────────────
 let noticeOk = false;           // notice is information, not an error
+// ── the dataset's lists ───────────────────────────────────────────────────────
+async function sendLists(body) {
+  try {
+    const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1" },
+                                   body: JSON.stringify({ rev: LISTS.rev, ...body }) });
+    const out = await res.json();
+    if (out.lists) LISTS = out.lists;
+    if (!res.ok) throw new Error(out.error || res.statusText);
+    return true;
+  } catch (err) { notice = `Not saved: ${err.message}`; noticeOk = false; return false; }
+  finally { redrawList(); if (current) render(current, player ? player.t : 0); }
+}
+async function setFailureType(r, name) {          // new names join the dataset's list first
+  if (!listEntry("failure_types", name) && !(await sendLists({ op: "lists_add", kind: "failure_types", name }))) return;
+  const tr = eff(r).termination_reason === "success" ? "failure" : eff(r).termination_reason;
+  return send(r, { op: "add", kind: "outcome", payload: { termination_reason: tr, failure_mode: canon("failure_types", name) },
+                   what: "failure type: " + name });
+}
+
+// ── task segments as a plan: every segment edit sends the run's full, ordered list ─────────────────
+const planOf = r => (r.review.segments || []).map(x => ({ name: canon("task_segments", x.name), start: x.start, end: x.end }));
+const sendPlan = (r, segments, what) => send(r, { op: "add", kind: "segment_plan", payload: { segments }, what });
+let segMenu = null;              // index of the segment whose menu is open
+function segMenuHtml(r) {
+  const plan = planOf(r), sg = plan[segMenu]; if (!sg) return "";
+  return `<div class="segmenu" style="left:${100 * (sg.start + sg.end) / 2 / r.length}%">
+    <div class="sub">Task segment · ${fmt(sg.start / r.fps)}–${fmt(sg.end / r.fps)}</div>
+    <div class="chips">${(LISTS.task_segments || []).map(e => `<button class="chip" data-segtype="${esc(e.name)}" aria-pressed="${e.name === sg.name}" title="${esc(e.description || "")}">${esc(e.name)}</button>`).join("")}</div>
+    <input id="newsegtype" class="segin" maxlength="60" placeholder="+ task segment">
+    <div class="chips"><button class="btn sm" data-segact="split" title="Splits this segment where the playhead is">Split at playhead</button>
+      <button class="btn sm bad" data-segact="remove">Remove</button><button class="btn sm" data-segact="close">Close</button></div></div>`;
+}
+async function segAction(r, act, name) {
+  const plan = planOf(r), i = segMenu, sg = plan[i]; if (!sg) return;
+  if (act === "close") { segMenu = null; return render(r, player.t); }
+  if (act === "type") {
+    if (!listEntry("task_segments", name) && !(await sendLists({ op: "lists_add", kind: "task_segments", name }))) return;
+    plan[i] = { ...sg, name: canon("task_segments", name) };
+    return sendPlan(r, plan, `${sg.name} → ${name}`);
+  }
+  if (act === "split") {
+    const f = frameOf(r);
+    if (!(f > sg.start && f < sg.end)) { notice = "Move the playhead inside this segment first (click the playhead row)."; noticeOk = false; return render(r, player.t); }
+    plan.splice(i, 1, { ...sg, end: f }, { ...sg, start: f });
+    return sendPlan(r, plan, `split ${sg.name} at ${fmt(f / r.fps)}`);
+  }
+  if (act === "remove") {
+    if (plan[i - 1] && plan[i - 1].end === sg.start) plan[i - 1].end = sg.end;
+    else if (plan[i + 1] && plan[i + 1].start === sg.end) plan[i + 1].start = sg.start;
+    plan.splice(i, 1); segMenu = null;
+    return sendPlan(r, plan, `remove ${sg.name}`);
+  }
+}
+
 async function send(r, body) {
   notice = ""; noticeOk = false;
   try {
@@ -218,11 +276,11 @@ function driveTable(r, live) {
       <td><i class="sw" style="background:${color(d.mode)}"></i>${MODE[d.mode]}</td>
       <td class="num">${fmt(d.start / r.fps)}${delta(d.start, d.rec_start)}</td><td class="num">${fmt(d.end / r.fps)}${delta(d.end, d.rec_end)}</td>
       <td class="num">${((d.end - d.start) / r.fps).toFixed(1)} s</td><td class="num">${d.end - d.start}</td><td>${esc(d.source || "")}</td></tr>`).join("")}
-    ${fail ? `<tr class="failrow"><td><i class="sw" style="background:var(--bad)"></i>Failure${ftype ? ": " + human(ftype) : ""}</td>
+    ${fail ? `<tr class="failrow"><td><i class="sw" style="background:var(--bad)"></i>Failure${ftype ? ": " + human(canon("failure_types", ftype)) : ""}</td>
       <td class="num">${fmt(fail.frame / r.fps)}</td><td></td><td></td><td></td><td>${fail.estimated ? "estimated" : "marked"}</td></tr>` : ""}
     </tbody></table></div>
     ${fail ? `<div class="lbrow failtypes"><span class="lbq">Failure type</span>
-      ${failureTypes().map(t => `<button class="chip" data-ftype="${esc(t)}" aria-pressed="${t === ftype}">${human(t)}</button>`).join("")}
+      ${failureTypes().map(t => `<button class="chip" data-ftype="${esc(t)}" aria-pressed="${t === canon("failure_types", ftype)}">${human(t)}</button>`).join("")}
       <input id="newftype" class="segin" maxlength="60" placeholder="+ failure type"></div>` : ""}</div>`;
 }
 
@@ -302,6 +360,7 @@ function aiBar(r) {
 // ── one run ───────────────────────────────────────────────────────────────────
 const discard = r => { sel = null; delete drafts[r.run_id]; };
 function select(id) {
+  segMenu = null; failMenu = false;
   if (current && sel && sel.dirty) drafts[current.run_id] = sel;
   else if (current) delete drafts[current.run_id];
   const r = runs.find(x => x.run_id === id);
@@ -333,6 +392,7 @@ function render(r, t0) {
       ${editable && undoList().length ? `<span class="undowrap"><button class="btn undobtn" data-act="undo" title="Undo ${esc(undoList().slice(-1)[0].what)} (Cmd/Ctrl+Z)">↶ Undo</button><button class="btn undomore" data-act="history" title="Show changes you can undo" aria-expanded="${showHistory}">▾</button>
         ${showHistory ? `<div class="history" role="menu">${undoList().slice().reverse().map(u => `<div class="hrow"><span>${esc(u.what)}<span class="sub">run ${runs.find(x => x.run_id === u.run_id).episode + 1}</span></span>
           <button class="btn sm" data-undo-entry="${esc(u.entry)}" data-undo-run="${esc(u.run_id)}">Undo</button></div>`).join("")}</div>` : ""}</span>` : ""}
+      ${editable ? `<button class="btn listsbtn" data-act="lists" title="The dataset's failure types and task segments">Lists</button>` : ""}
       ${canEdit(r) ? `<button class="btn ${editing ? "primary" : ""} editbtn" id="edit" title="E">${editing ? "Done" : "Edit"}</button>` : ""}
     </div>
     <div class="timeline ${editing ? "editing" : ""}" id="tl" style="--pinrows:${(r.review.major || []).some(m => m.kind === "failure") ? 1 : 0}">
@@ -340,7 +400,7 @@ function render(r, t0) {
         const shade = segShade(sg.name);
         const tip = `Task segment: ${sg.name} · ${fmt(sg.start / r.fps)}–${fmt(sg.end / r.fps)}${sg.status === "failed" ? " · failed" : ""}${sg.from_label ? " · from a label" : ""}`;
         return `<div class="sg shade${shade}" data-segkey="${esc("segment:" + sg.name + "@" + sg.start)}" style="left:${pct(sg.start)}%;width:${pct(sg.end - sg.start)}%" title="${esc(tip)}">
-          <span>${esc(sg.name)}</span></div>`;
+          <span>${esc(canon("task_segments", sg.name))}</span></div>`;
       }).join("")}${editing ? segBounds(r).map(b => `<span class="sbound" data-kind="${b.kind}" data-index="${b.index}" data-edge="${b.edge || ""}"
           data-lo="${b.lo}" data-hi="${b.hi}" style="left:${pct(b.at)}%" title="${esc(b.tip)}"></span>`).join("") : ""}</div>
       <div class="track">${drv(r).map((s, i) => `<div class="dspan" data-dindex="${i}" style="left:${pct(s[0])}%;width:${pct(s[1] - s[0])}%;background:${color(s[2])}"
@@ -351,12 +411,14 @@ function render(r, t0) {
       ${cs.map(c => `<div class="cut ${sel && sel.cutId === c.id ? "on" : ""}" data-cut-id="${esc(c.id)}" style="left:${pct(c.start)}%;width:${pct(c.end - c.start)}%" title="Cut${c.reason ? ": " + esc(c.reason) : ""}"></div>`).join("")}
       ${(r.review.major || []).filter(m => m.window).map(m => `<div class="attnspan" style="left:${pct(m.window[0])}%;width:${pct(m.window[1] - m.window[0])}%" title="The 2 seconds before the policy fails: the frames to check first"></div>`).join("")}
       ${(r.review.major || []).filter(m => m.kind === "failure").map(m => `<div class="failmark ${m.estimated ? "est" : ""}" style="left:${pct(m.frame)}%"
-        title="Policy fails${m.estimated ? " (estimated)" : ""}${m.note ? ": " + esc(m.note) : ""}${editing ? ". Drag to move it." : ""}"><span class="flag" data-failtype="1">Policy fails${eff(r).failure_mode ? ` · ${human(eff(r).failure_mode)}` : ""}${failReason(r, m) ? `<span class="reason"> · ${esc(failReason(r, m))}</span>` : ""}${editing ? " ▾" : ""}</span></div>`).join("")}
+        title="Policy fails${m.estimated ? " (estimated)" : ""}${m.note ? ": " + esc(m.note) : ""}${editing ? ". Drag to move it." : ""}"><span class="flag" data-failtype="1">Policy fails${eff(r).failure_mode ? ` · ${human(canon("failure_types", eff(r).failure_mode))}` : ""}${failReason(r, m) ? `<span class="reason"> · ${esc(failReason(r, m))}</span>` : ""}${editing ? " ▾" : ""}</span></div>`).join("")}
       ${editing && failMenu ? failTypeMenu(r) : ""}
+      ${editing && segMenu !== null ? segMenuHtml(r) : ""}
 
       <div class="ruler" id="ruler" role="slider" tabindex="0" aria-label="Playhead: click or drag here to move it" aria-valuemin="0" aria-valuemax="${r.length - 1}" aria-valuenow="0" title="Playhead row: click or drag here to move the playhead. Arrow keys step it."><span class="rulericon" aria-hidden="true">▶</span></div>
       <div class="head" id="head" style="left:0"><span class="knob"></span></div>
     </div>
+    ${showLists ? listsPanel() : ""}
     ${aiBar(r)}
     ${selPanel(r)}
     ${editing ? driveTable(r) : ""}
@@ -389,14 +451,14 @@ function failReason(r, m) {      // the details behind the failure, without repe
   return (m.note || "").split("; ").filter(x => x && x !== type).join("; ");
 }
 let failMenu = false;            // the failure type chooser under the "Policy fails" tag
-function failureTypes() {        // types used anywhere in this dataset
-  return [...new Set(runs.map(x => eff(x).failure_mode).filter(Boolean))].sort();
+function failureTypes() {        // from the dataset's list of failure types
+  return (LISTS.failure_types || []).map(e => e.name);
 }
 function failTypeMenu(r) {
   const f = (r.review.major || []).find(m => m.kind === "failure"); if (!f) return "";
   const cur = eff(r).failure_mode;
   return `<div class="failmenu" style="left:${100 * f.frame / r.length}%"><div class="sub">Type of failure</div>
-    <div class="chips">${failureTypes().map(t => `<button class="chip" data-ftype="${esc(t)}" aria-pressed="${t === cur}">${human(t)}</button>`).join("")}</div>
+    <div class="chips">${failureTypes().map(t => `<button class="chip" data-ftype="${esc(t)}" aria-pressed="${t === canon("failure_types", cur)}">${human(t)}</button>`).join("")}</div>
     <input id="newftype" class="segin" maxlength="60" placeholder="+ failure type"></div>`;
 }
 
@@ -417,6 +479,22 @@ function segBounds(r) {         // draggable edges: shared lines between neighbo
                  tip: `Drag to move where ${s.name} ends` });
   });
   return out;
+}
+
+let showLists = false;
+function listsPanel() {
+  const section = (kind, title, hint) => `<div class="lsec"><h3>${title}</h3><div class="sub">${hint}</div>
+    ${(LISTS[kind] || []).map(e => `<div class="lrow">
+      <input id="lren-${kind}-${esc(e.name)}" class="segin" value="${esc(e.name)}" aria-label="Name">
+      <button class="btn sm" data-lren="${esc(e.name)}" data-lkind="${kind}">Rename</button>
+      <button class="btn sm bad" data-ldel="${esc(e.name)}" data-lkind="${kind}" title="Only possible when no run uses it">Delete</button>
+      ${(e.aliases || []).length ? `<span class="sub">was ${esc(e.aliases.join(", "))}</span>` : ""}</div>`).join("") || `<div class="sub">Nothing yet.</div>`}
+    <div class="lrow"><input id="ladd-${kind}" class="segin" placeholder="+ add"><button class="btn sm" data-ladd="${kind}">Add</button></div></div>`;
+  return `<div class="card listspanel"><div class="cardhead"><h3>Lists for this dataset</h3><button class="btn sm" data-act="lists">Close</button></div>
+    <div class="sub">Everyone, including your agent, picks from these lists, so counts stay comparable across runs. A rename keeps the old name as an alias, so recorded data still matches.</div>
+    <div class="lgrid">${section("failure_types", "Failure types", "How a run fails, e.g. missed grasp, dropped object, collision.")}
+    ${section("task_segments", "Task segments", "The parts of the task, e.g. reach, grasp, place.")}</div>
+    ${notice ? `<div class="lbstatus ${noticeOk ? "" : "bad"}">${esc(notice)}</div>` : ""}</div>`;
 }
 
 function aboutCard(r) {
@@ -574,10 +652,12 @@ function wire(r, t0) {
       if (bnd && bnd.classList.contains("dbound"))
         send(r, { op: "add", kind: "drive_boundary", payload: { index: +bnd.dataset.index, frame: f },
                   what: `drive switch to ${fmt(f / r.fps)}` });
-      else if (bnd && bnd.dataset.kind === "step_boundary")
-        send(r, { op: "add", kind: "step_boundary", payload: { index: +bnd.dataset.index, frame: f }, what: `${A.name} | ${B ? B.name : ""} line to ${fmt(f / r.fps)}` });
-      else if (bnd)
-        send(r, { op: "add", kind: "segment_edge", payload: { index: +bnd.dataset.index, edge: bnd.dataset.edge, frame: f }, what: `${A.name} ${bnd.dataset.edge} to ${fmt(f / r.fps)}` });
+      else if (bnd) {
+        const plan = planOf(r), i = segs.indexOf(A);
+        if (bnd.dataset.kind === "step_boundary") { plan[i].end = f; plan[i + 1].start = f; }
+        else plan[i][bnd.dataset.edge] = f;
+        sendPlan(r, plan, bnd.dataset.kind === "step_boundary" ? `${A.name} | ${B ? B.name : ""} line to ${fmt(f / r.fps)}` : `${A.name} ${bnd.dataset.edge} to ${fmt(f / r.fps)}`);
+      }
       else send(r, { op: "add", kind: "failure_start", payload: { frame: f }, what: "policy fails at " + fmt(f / r.fps) });
     };
   };
@@ -587,10 +667,29 @@ function wire(r, t0) {
     tl.onpointermove = m => p.seek(toFrame(m.clientX) / r.fps);
     tl.onpointerup = () => { tl.onpointermove = tl.onpointerup = null; };
   };
-  tl.onpointerdown = ev => {
+  tl.onpointerdown = async ev => {
     if (ev.target.closest("#ruler, .knob")) return scrub(ev);
     if (canEdit(r) && editing) {
-      if (ev.target.closest(".failmenu")) return;
+      if (ev.target.closest(".failmenu, .segmenu")) return;
+      const sgEl = ev.target.closest(".sg");
+      if (sgEl && !ev.target.closest(".sbound")) {
+        ev.preventDefault();
+        segMenu = (r.review.segments || []).findIndex(x => "segment:" + x.name + "@" + x.start === sgEl.dataset.segkey);
+        failMenu = false; return render(r, p.t);
+      }
+      if (ev.target.classList.contains("lane")) {          // empty part of the segment lane: add a segment there
+        ev.preventDefault();
+        const f = toFrame(ev.clientX), plan = planOf(r);
+        const prevEnd = Math.max(0, ...plan.filter(x => x.end <= f).map(x => x.end));
+        const nextStart = Math.min(r.length, ...plan.filter(x => x.start >= f).map(x => x.start));
+        if (nextStart - prevEnd < 1) return;
+        const before = plan.filter(x => x.end <= f).slice(-1)[0];          // pick a type that differs from its neighbour
+        const name = ((LISTS.task_segments || []).find(e => !before || e.name !== before.name) || {}).name || "segment";
+        if (!listEntry("task_segments", name)) await sendLists({ op: "lists_add", kind: "task_segments", name });
+        const next = [...plan, { name, start: prevEnd, end: nextStart }].sort((a, b) => a.start - b.start);
+        if (await sendPlan(r, next, `add ${name}`)) { segMenu = planOf(r).findIndex(x => x.start === prevEnd); render(r, p.t); }
+        return;
+      }
       if (ev.target.closest("[data-failtype]")) { ev.preventDefault(); failMenu = !failMenu; return render(r, p.t); }
       const bnd = ev.target.closest(".sbound, .dbound"), fm = ev.target.closest(".failmark");
       if (bnd || fm) return dragMarker(ev, bnd, fm);
@@ -620,9 +719,24 @@ function wire(r, t0) {
     if (b.dataset.cut) return decide(r, b.dataset.cut, true, "accept" + editSpan(r, b.dataset.cut));
     if (b.dataset.keep) return decide(r, b.dataset.keep, false, "keep" + editSpan(r, b.dataset.keep));
     if (b.dataset.uncut) return decide(r, b.dataset.uncut, false, "undo" + editSpan(r, b.dataset.uncut));
+    if (b.dataset.segtype) return segAction(r, "type", b.dataset.segtype);
+    if (b.dataset.segact) return segAction(r, b.dataset.segact);
+    if (b.dataset.act === "lists") { showLists = !showLists; return render(r, p.t); }
+    if (b.dataset.ladd) {
+      const inp = document.getElementById("ladd-" + b.dataset.ladd), v = inp && inp.value.trim().toLowerCase().replace(/\s+/g, "_");
+      if (v) return sendLists({ op: "lists_add", kind: b.dataset.ladd, name: v });
+      return;
+    }
+    if (b.dataset.ldel) return sendLists({ op: "lists_delete", kind: b.dataset.lkind, name: b.dataset.ldel });
+    if (b.dataset.lren) {
+      const inp = document.getElementById("lren-" + b.dataset.lkind + "-" + b.dataset.lren);
+      const v = inp && inp.value.trim().toLowerCase().replace(/\s+/g, "_");
+      if (v && v !== b.dataset.lren) return sendLists({ op: "lists_rename", kind: b.dataset.lkind, old: b.dataset.lren, new: v });
+      return;
+    }
     if (b.dataset.ftype) {
       failMenu = false;
-      return send(r, { op: "add", kind: "outcome", payload: { termination_reason: eff(r).termination_reason === "success" ? "failure" : eff(r).termination_reason, failure_mode: b.dataset.ftype }, what: "failure type: " + b.dataset.ftype });
+      return setFailureType(r, b.dataset.ftype);
     }
     if (b.dataset.act === "undo") return undoLast();
     if (b.dataset.act === "history") { showHistory = !showHistory; return render(r, p.t); }
@@ -639,9 +753,15 @@ function wire(r, t0) {
 
 document.addEventListener("keydown", e => {
   if (!current || !player || e.altKey) return;
+  if (e.target.id === "newsegtype") {
+    const v = e.target.value.trim().toLowerCase().replace(/\s+/g, "_");
+    if (e.key === "Enter" && v) segAction(current, "type", v);
+    if (e.key === "Escape") { segMenu = null; render(current, player.t); }
+    return;
+  }
   if (e.target.id === "newftype") {
     const v = e.target.value.trim().toLowerCase().replace(/\s+/g, "_");
-    if (e.key === "Enter" && v) { failMenu = false; send(current, { op: "add", kind: "outcome", payload: { termination_reason: eff(current).termination_reason === "success" ? "failure" : eff(current).termination_reason, failure_mode: v }, what: "failure type: " + v }); }
+    if (e.key === "Enter" && v) { failMenu = false; setFailureType(current, v); }
     if (e.key === "Escape") { failMenu = false; render(current, player.t); }
     return;
   }

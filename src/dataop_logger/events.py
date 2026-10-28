@@ -62,30 +62,17 @@ def major_events(manifest: dict, review: dict, modes: list[str], sources: list, 
         note = "; ".join(x for x in [src and f"by {src}", req and req.get("reason"), req and req.get("text")] if x) or None
         add("drive", a, f"drive@{a}", f"{name.capitalize()} drives", note)
 
-    # task segments: recorded steps, with people's segment labels over their spans
-    seg = [None] * n
-    status = {}
-    for i, s in enumerate(eff["subgoals"]):
-        for f in range(s["start_frame"], min(s["end_frame"], n)):
-            seg[f] = s["name"]
-        status[(s["name"], s["start_frame"])] = {**s, "index": i}
-    for lb in sorted(eff["labels"], key=lambda x: x["start"]):
-        if lb.get("segment"):
-            for f in range(lb["start"], min(lb["end"], n)):
-                seg[f] = lb["segment"]
+    # task segments: each segment as recorded or as a person replanned them; neighbours with the same name stay
+    # separate segments
     seg_spans = []
-    for a, b, name in _spans(seg):
-        if name is None:
+    for i, s in enumerate(sorted(eff["subgoals"], key=lambda x: x["start_frame"])):
+        a, b = s["start_frame"], min(s["end_frame"], n)
+        if b <= a:
             continue
-        rec0 = status.get((name, a))
-        seg_spans.append({"name": name, "start": a, "end": b, "status": rec0["status"] if rec0 else None,
-                          "from_label": rec0 is None or rec0["end_frame"] != b,
-                          "index": rec0["index"] if rec0 and rec0["end_frame"] == b else None})
-        rec = status.get((name, a))
-        note = None
-        if rec and rec["status"] == "failed":
-            note = "failed" + (f": {rec['reason']}" if rec.get("reason") else "")
-        add("segment", a, f"segment:{name}@{a}", f"{name}", note)
+        seg_spans.append({"name": s["name"], "start": a, "end": b, "status": s.get("status"), "from_label": False,
+                          "index": i})
+        note = ("failed" + (f": {s['reason']}" if s.get("reason") else "")) if s.get("status") == "failed" else None
+        add("segment", a, f"segment:{s['name']}@{a}", f"{s['name']}", note)
 
     # the moment the policy fails
     if eff["termination_reason"] != "success" and not eff["rejected"]:

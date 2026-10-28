@@ -39,8 +39,8 @@ import pyarrow.parquet as pq
 from . import store
 from .schema import TERMINATION_REASONS
 
-KINDS = ("outcome", "failure_start", "exclude", "step_boundary", "segment_edge", "drive_boundary", "reject_run",
-         "note", "label", "event_note")
+KINDS = ("outcome", "failure_start", "exclude", "step_boundary", "segment_edge", "drive_boundary", "segment_plan",
+         "reject_run", "note", "label", "event_note")
 TRAIN_USE = ("keep", "exclude")
 SOURCES = ("agent", "human")
 STATUSES = ("proposed", "accepted", "rejected")
@@ -217,6 +217,20 @@ def check_payload(kind: str, payload: dict, manifest: dict) -> dict:
             raise ReviewError("step names do not match the steps at that index")
         f = frame(payload.get("frame"), "frame", 0, length)   # clamped later against the steps as corrected
         return {"index": i, "before": a["name"], "after": b["name"], "frame": f}
+    if kind == "segment_plan":                  # a person's full list of task segments for the run
+        segs = payload.get("segments")
+        if not isinstance(segs, list) or len(segs) > 500:
+            raise ReviewError("segment_plan needs a list of segments")
+        out, last = [], 0
+        for x in segs:
+            if not isinstance(x, dict) or not isinstance(x.get("name"), str) or not 0 < len(x["name"].strip()) <= 100:
+                raise ReviewError("each segment needs a name")
+            a, b = frame(x.get("start"), "start", 0, length), frame(x.get("end"), "end", 0, length)
+            if a >= b or a < last:
+                raise ReviewError("segments must be in order, at least one frame long, and must not overlap")
+            out.append({"name": x["name"].strip(), "start": a, "end": b})
+            last = b
+        return {"segments": out}
     if kind == "drive_boundary":                # moves the switch between recorded drive spans index and index + 1
         i = payload.get("index")
         if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < length:
@@ -529,7 +543,8 @@ def effective(manifest: dict, review: dict) -> dict:
     """The run as training should see it after the edits in effect."""
     check_review(manifest, review)
     act = active_edits(review)
-    single = {e["kind"]: e["payload"] for e in act if e["kind"] not in MULTI and e["kind"] not in ("step_boundary", "event_note", "segment_edge", "drive_boundary")}
+    single = {e["kind"]: e["payload"] for e in act if e["kind"] not in MULTI and e["kind"] not in ("step_boundary", "event_note", "segment_edge", "drive_boundary",
+                                                                  "segment_plan")}
     out = {
         "termination_reason": manifest["termination_reason"], "failure_mode": manifest.get("failure_mode"),
         "failure_start": None, "excludes": [e["payload"] for e in act if e["kind"] == "exclude"],
@@ -566,6 +581,18 @@ def effective(manifest: dict, review: dict) -> dict:
             else:
                 hi = steps[i + 1]["start_frame"] if i + 1 < len(steps) else manifest["length"]
                 st["end_frame"] = max(min(p["frame"], hi), st["start_frame"] + 1)
+    plan = next((e["payload"]["segments"] for e in reversed(act) if e["kind"] == "segment_plan"), None)
+    if plan is not None:                         # a person's segments replace the recorded ones
+        recorded = out["subgoals"]
+
+        def match(x):
+            best = max(recorded, key=lambda s: min(s["end_frame"], x["end"]) - max(s["start_frame"], x["start"])
+                       if s["name"] == x["name"] else -1, default=None)
+            return best if best and best["name"] == x["name"] and \
+                min(best["end_frame"], x["end"]) > max(best["start_frame"], x["start"]) else None
+        out["subgoals"] = [{"name": x["name"], "start_frame": x["start"], "end_frame": x["end"],
+                            "status": (match(x) or {}).get("status", "completed"),
+                            "reason": (match(x) or {}).get("reason")} for x in plan]
     return out
 
 
