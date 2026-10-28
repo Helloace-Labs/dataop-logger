@@ -345,12 +345,13 @@ function busy(r) {
 // Major events: the moments that explain the run bar and matter for training data, in time order.
 // Interventions: stretches where a person or skill had any control (expert or blend), merged when contiguous.
 function interventions(r) {
-  const out = [];
-  r.segments.forEach(([a, b, mode, src]) => {
+  const out = [], segs = r.segments;
+  segs.forEach(([a, b, mode, src], i) => {
     if (mode !== "expert" && mode !== "blend") return;
     const last = out[out.length - 1];
-    if (last && last.end === a) { last.end = b; if (src && !last.sources.includes(src)) last.sources.push(src); if (mode === "expert") last.full = true; }
-    else out.push({ start: a, end: b, sources: src ? [src] : [], full: mode === "expert" });
+    if (last && last.end === a) { last.end = b; if (src && !last.sources.includes(src)) last.sources.push(src); last.nextMode = segs[i + 1] ? segs[i + 1][2] : null; }
+    else out.push({ start: a, end: b, sources: src ? [src] : [], firstMode: mode,
+                    prevMode: i > 0 ? segs[i - 1][2] : null, nextMode: segs[i + 1] ? segs[i + 1][2] : null });
   });
   return out;
 }
@@ -372,15 +373,19 @@ function majorEvents(r) {
     // a takeover request logged up to a second before the switch explains it
     const req = recorded.find(ev => !ev.used && ev.kind === "takeover" && ev.frame >= iv.start - fps && ev.frame <= iv.start);
     if (req) req.used = true;
-    const why = req && [req.reason, req.text].filter(Boolean).join(" · ");
+    const why = req && [req.reason, req.text, req.source && `requested by ${req.source}`,
+                        req.frame !== iv.start && `at ${req.frame < 0 ? "before recording" : fmt(req.frame / fps)}`].filter(Boolean).join(" · ");
     const who = iv.sources.join(", ");
     if (iv.start > 0) {
-      const w = Math.max(0, iv.start - Math.round(2 * fps));
-      add(w, "Check the seconds before the takeover: this is where the policy went wrong", "attn", { span: [w, iv.start] });
-      add(iv.start, `${iv.full ? "Rescue takes over" : "Shared control starts"}${who ? " (" + who + ")" : ""}`, "warn",
+      if (iv.prevMode === "base") {             // only the policy can have gone wrong right before it
+        const w = Math.max(0, iv.start - Math.round(2 * fps));
+        add(w, "Check the seconds before the takeover: this is where the policy went wrong", "attn", { span: [w, iv.start] });
+      }
+      add(iv.start, `${iv.firstMode === "expert" ? "Rescue takes over" : "Shared control starts"}${who ? " (" + who + ")" : ""}`, "warn",
           { tick: true, note: why || "" });
-    } else if (why) add(0, `Takeover reason: ${why}`, "warn");
-    if (iv.end < r.length) add(iv.end, "Policy back in control", "", { tick: true });
+    } else if (why) add(0, `Takeover request: ${why}`, "warn");
+    if (iv.end < r.length)
+      add(iv.end, iv.nextMode === "base" ? "Policy back in control" : `${MODE[iv.nextMode] || "Nobody"} in control`, "", { tick: true });
   });
   if (e.failure_start !== null) add(e.failure_start, "Failure starts (marked)", "bad", { tick: true });
   recorded.filter(ev => !ev.used).forEach(ev =>
@@ -413,7 +418,8 @@ function aboutCard(r) {
   const when = r.started_at ? new Date(r.started_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : null;
   const L = r.latency_ms || {};
   const checks = [
-    L.measured ? `Frame to command: ${L.p50} ms median, ${L.p95} ms p95` : "Frame to command: not measured (frame and command times are equal)",
+    L.measured ? `Frame to command: ${L.p50} ms median, ${L.p95} ms p95${L.timed < L.frames ? ` (${L.timed} of ${L.frames} frames timed)` : ""}`
+               : "Frame to command: not measured (frame and command times are equal)",
     `Safety filter changed ${r.safety_modified} frame${r.safety_modified === 1 ? "" : "s"}`,
     cuts(r).length ? `${(cutFrames(r) / r.fps).toFixed(1)} s cut from training` : "Nothing cut",
   ];
