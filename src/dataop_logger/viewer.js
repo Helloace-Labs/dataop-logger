@@ -318,8 +318,11 @@ function render(r, t0) {
       ${sug.map(x => `<div class="sugg-span" style="left:${pct(x.payload.start)}%;width:${pct(x.payload.end - x.payload.start)}%" title="${esc(x.reason || "")}"></div>`).join("")}
       ${cs.map(c => `<div class="cut ${sel && sel.cutId === c.id ? "on" : ""}" data-cut-id="${esc(c.id)}" style="left:${pct(c.start)}%;width:${pct(c.end - c.start)}%" title="Cut${c.reason ? ": " + esc(c.reason) : ""}"></div>`).join("")}
       ${majorEvents(r).filter(m => m.span).map(m => `<div class="attnspan" style="left:${pct(m.span[0])}%;width:${pct(m.span[1] - m.span[0])}%" title="${esc(m.text)}"></div>`).join("")}
-      <div class="pins">${pinGroups(r).map(g => `<button class="pin ${g.tone}" data-pin="${g.nums.join(",")}" data-frame="${g.frame}"
-        style="left:clamp(9px, ${pct(g.frame)}%, calc(100% - 9px))" title="${esc(g.items.map(m => `${m.n}. ${fmt(m.frame / r.fps)} ${m.text}`).join("\n"))}">${g.nums.length > 1 ? g.nums[0] + "+" : g.nums[0]}</button>`).join("")}</div>
+      <div class="pins">${pinGroups(r).map(g => {
+        const desc = g.items.map(m => `${m.n}. ${m.frame < 0 ? "before recording" : fmt(m.frame / r.fps)} ${m.text}`).join("; ");
+        return `<button class="pin ${g.tone}" data-pin="${g.nums.join(",")}" data-frame="${g.frame}"
+          style="left:clamp(14px, ${pct(g.frame)}%, calc(100% - 14px))" title="${esc(desc)}" aria-label="${esc("Event " + desc)}">${g.nums.length > 1 ? g.nums[0] + "+" : g.nums[0]}</button>`;
+      }).join("")}</div>
       ${sel && editing && !sel.cutId ? `<div class="selbox" id="selbox" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%" title="Drag to move, drag an edge to resize. Keys [ and ] set the start and end at the playhead." role="group" aria-label="Selected frames ${sel ? sel.start : 0} to ${sel ? sel.end - 1 : 0}. Press [ or ] to set the start or end at the playhead.">
         <span class="hdl l" data-edge="start"></span><span class="hdl r" data-edge="end"></span></div>` : sel ? `<div class="selbox fixed" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%"></div>` : ""}
       <div class="ruler" id="ruler" role="slider" tabindex="0" aria-label="Playhead frame" aria-valuemin="0" aria-valuemax="${r.length - 1}" aria-valuenow="0" title="Drag to move the playhead. Arrow keys step it."></div>
@@ -405,10 +408,11 @@ function majorEvents(r) {
 function numbered(r) { return majorEvents(r).map((m, i) => ({ ...m, n: i + 1 })); }
 function pinGroups(r) {         // events close together share one pin so the bar stays readable
   const near = Math.max(1, Math.round(r.length * 0.012)), groups = [];
-  numbered(r).filter(m => m.frame >= 0).forEach(m => {
+  numbered(r).forEach(m => {
+    const f = Math.max(0, m.frame);             // events before recording sit at the left edge
     const g = groups[groups.length - 1];
-    if (g && m.frame - g.frame <= near) { g.items.push(m); g.nums.push(m.n); if (m.tone === "bad") g.tone = "bad"; }
-    else groups.push({ frame: m.frame, items: [m], nums: [m.n], tone: m.tone });
+    if (g && f - g.frame <= near) { g.items.push(m); g.nums.push(m.n); if (m.tone === "bad") g.tone = "bad"; }
+    else groups.push({ frame: f, items: [m], nums: [m.n], tone: m.tone });
   });
   return groups;
 }
@@ -541,8 +545,7 @@ function wire(r, t0) {
   };
   tl.onpointerdown = ev => {
     if (ev.target.closest("#ruler, .knob")) return scrub(ev);
-    const pin = ev.target.closest(".pin");
-    if (pin) { ev.preventDefault(); return p.seek(Math.max(0, +pin.dataset.frame / r.fps - 0.5)); }
+    if (ev.target.closest(".pin")) return;     // pins are buttons: their click handler seeks
     if (canEdit(r)) {
       const lbEl = ev.target.closest(".lb"), cutEl = ev.target.closest(".cut");
       if (lbEl) { ev.preventDefault(); return openLabel(r, lbEl.dataset.label); }
@@ -593,7 +596,11 @@ function wire(r, t0) {
     document.querySelectorAll(".pin").forEach(x => x.classList.toggle("hl", on && x.dataset.pin.split(",").some(n => nums.includes(n))));
     document.querySelectorAll(".major .ev").forEach(x => x.classList.toggle("hl", on && nums.includes(x.dataset.n)));
   };
-  document.querySelectorAll(".pin").forEach(x => { x.onmouseenter = () => light(x.dataset.pin.split(","), true); x.onmouseleave = () => light([], false); });
+  document.querySelectorAll(".pin").forEach(x => {
+    x.onmouseenter = x.onfocus = () => light(x.dataset.pin.split(","), true);
+    x.onmouseleave = x.onblur = () => light([], false);
+    x.onclick = () => p.seek(Math.max(0, +x.dataset.frame / r.fps - 0.5));
+  });
   document.querySelectorAll(".major .ev").forEach(x => { x.onmouseenter = () => light([x.dataset.n], true); x.onmouseleave = () => light([], false); });
   document.querySelectorAll(".ev").forEach(el => {
     const go = () => el.dataset.open && canEdit(r) ? openLabel(r, el.dataset.open) : p.seek(Math.max(0, +el.dataset.frame / r.fps - 1));
