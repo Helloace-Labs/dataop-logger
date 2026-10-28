@@ -11,6 +11,7 @@ import threading
 import webbrowser
 from pathlib import Path
 
+import numpy as np
 import pyarrow.dataset as pads
 import pyarrow.parquet as pq
 
@@ -69,9 +70,12 @@ def collect(root: Path) -> dict:
     for run_path, m in store.iter_manifests(root, "committed"):
         if not RUN_ID.match(str(m["run_id"])) or run_path.name != m["run_id"]:
             continue                                   # validate reports it; never render an unexpected id
-        t = pq.read_table(run_path / "ticks.parquet", columns=["control_mode", "expert_source", "safety_modified"])
+        t = pq.read_table(run_path / "ticks.parquet",
+                          columns=["control_mode", "expert_source", "safety_modified", "obs_ns", "sent_ns"])
         modes = t.column("control_mode").to_pylist()
         sources = t.column("expert_source").to_pylist()
+        lat = (t.column("sent_ns").to_numpy() - t.column("obs_ns").to_numpy()) / 1e6     # ms, frame -> command
+        policy, env = m.get("policy") or {}, m.get("env") or {}
         runs.append({
             "run_id": m["run_id"], "episode": m["episode_index"], "task": m["task"], "length": m["length"],
             "fps": m["action_schema"]["rate_hz"], "outcome": m["termination_reason"],
@@ -83,8 +87,11 @@ def collect(root: Path) -> dict:
                        if e["kind"] != "subgoal"],
             "segments": _segments(modes, sources),
             "safety_modified": int(sum(t.column("safety_modified").to_pylist())),
-            "policy": (m.get("policy") or {}).get("source"),
-            "env": (m.get("env") or {}).get("extras", {}),
+            "policy": policy.get("source"), "policy_revision": policy.get("revision"),
+            "robot": env.get("robot_id"), "operator": env.get("operator"),
+            "conditions": env.get("extras", {}),
+            "latency_ms": ({"p50": round(float(np.percentile(lat, 50)), 1), "p95": round(float(np.percentile(lat, 95)), 1)}
+                           if len(lat) and float(lat.max()) > 0 else None),
             "started_at": m.get("started_at"),
             "videos": videos.get(m["episode_index"], []),
             "review": _review_state(run_path, m),

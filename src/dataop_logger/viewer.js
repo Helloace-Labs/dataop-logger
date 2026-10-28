@@ -19,7 +19,7 @@ const undoList = () => runs.flatMap(r => (r.review.undoable || []).map(u => ({ r
                            .sort((a, b) => a.t - b.t);
 
 const eff = r => r.review.effective;
-const runNo = r => esc(r.env.run ?? r.episode + 1);
+const runNo = r => r.episode + 1;
 const frameOf = r => Math.min(r.length - 1, Math.floor(player.t * r.fps + 1e-6));
 const canEdit = r => editable && !r.review.error;
 function frac(r, mode) { return r.segments.filter(s => s[2] === mode).reduce((a, s) => a + s[1] - s[0], 0) / r.length; }
@@ -55,7 +55,7 @@ function outcomePill(r) {
   const e = eff(r);
   if (e.rejected) return `<span class="pill tag">rejected</span>`;
   if (e.termination_reason === "success") return `<span class="pill ok">success</span>`;
-  if (r.labels.includes("rescued")) return `<span class="pill warn">rescued</span>`;
+  if (r.takeovers.length) return `<span class="pill warn">rescued</span>`;
   return `<span class="pill bad">${esc(e.termination_reason)}</span>`;
 }
 
@@ -245,8 +245,7 @@ function setSpan(r, lo, hi) {           // new selection, or move/resize the ope
   const t = document.getElementById("lbtext"); if (t && !sel.id && !sel.text) t.focus();
 }
 function defaultSelection(r) {           // on Edit: about two seconds starting at the playhead
-  const w = Math.max(2, Math.round(2 * r.fps)), f = frameOf(r);
-  const lo = Math.max(0, Math.min(r.length - w, f));
+  const w = Math.max(1, Math.round(2 * r.fps)), lo = Math.min(frameOf(r), r.length - 1);
   setSpan(r, lo, Math.min(r.length, lo + w));
 }
 
@@ -289,7 +288,6 @@ function select(id) {
 function render(r, t0) {
   current = r;
   const dur = r.length / r.fps, take = r.takeovers[0], e = eff(r);
-  const extras = Object.entries(r.env).filter(([k]) => k !== "run");
   const pct = f => 100 * f / r.length;
   const sgs = e.subgoals, cs = cuts(r), sug = editing ? suggestions(r) : [];
   if (!canEdit(r)) editing = false;
@@ -319,42 +317,23 @@ function render(r, t0) {
         title="${MODE[s[2]]}${s[3] ? " (" + esc(s[3]) + ")" : ""}: frames ${s[0]}–${s[1]}"></div>`).join("")}</div>
       ${sug.map(x => `<div class="sugg-span" style="left:${pct(x.payload.start)}%;width:${pct(x.payload.end - x.payload.start)}%" title="${esc(x.reason || "")}"></div>`).join("")}
       ${cs.map(c => `<div class="cut ${sel && sel.cutId === c.id ? "on" : ""}" data-cut-id="${esc(c.id)}" style="left:${pct(c.start)}%;width:${pct(c.end - c.start)}%" title="Cut${c.reason ? ": " + esc(c.reason) : ""}"></div>`).join("")}
-      ${r.events.map(ev => `<div class="mark" style="left:${pct(ev.frame)}%"></div>`).join("")}
-      ${sel && editing && !sel.cutId ? `<div class="selbox" id="selbox" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%" title="Drag to move, drag an edge to resize">
+      ${majorEvents(r).filter(m => m.span).map(m => `<div class="attnspan" style="left:${pct(m.span[0])}%;width:${pct(m.span[1] - m.span[0])}%" title="${esc(m.text)}"></div>`).join("")}
+      ${majorEvents(r).filter(m => m.tick).map(m => `<div class="mark ${m.tone}" style="left:${pct(m.frame)}%" title="${fmt(m.frame / r.fps)} ${esc(m.text)}"></div>`).join("")}
+      ${sel && editing && !sel.cutId ? `<div class="selbox" id="selbox" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%" title="Drag to move, drag an edge to resize. Keys [ and ] set the start and end at the playhead." role="group" aria-label="Selected frames">
         <span class="hdl l" data-edge="start"></span><span class="hdl r" data-edge="end"></span></div>` : sel ? `<div class="selbox fixed" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%"></div>` : ""}
-      <div class="ruler" id="ruler" title="Drag to move the playhead"></div>
+      <div class="ruler" id="ruler" role="slider" aria-label="Playhead" aria-valuemin="0" aria-valuemax="${r.length - 1}" title="Drag to move the playhead. Arrow keys step it."></div>
       <div class="head" id="head" style="left:0"><span class="knob"></span></div>
     </div>
     ${aiBar(r)}
     ${selPanel(r)}
     <div class="cols">
-      ${e.labels.length ? `<div class="card labels"><h3>Labels</h3>${e.labels.map(l => `<div class="ev" tabindex="0" data-frame="${l.start}" data-open="${esc(l.id)}">
-        <span class="time">${fmt(l.start / r.fps)}</span><span>${l.segment ? `<span class="pill tag">${esc(l.segment)}</span> ` : ""}${l.driver ? `<span class="pill tag">${esc(l.driver)}</span> ` : ""}${esc(l.text)}
-        ${l.interpretation ? `<span class="sub">agent: ${l.interpretation.train === "exclude" ? "leave out" : "keep"} · ${esc(l.interpretation.meaning)}</span>` : ""}</span></div>`).join("")}</div>` : ""}
-      ${cs.length ? `<div class="card"><h3 title="Left out of training">Cut · ${(cutFrames(r) / r.fps).toFixed(1)} s</h3>
-        ${cs.map(c => `<div class="srow"><span class="time">${fmt(c.start / r.fps)}–${fmt(c.end / r.fps)}</span><span class="sdesc">${c.reason ? esc(c.reason) : ""}</span>
-          ${canEdit(r) ? `<span class="sbtns"><button class="btn sm" data-uncut="${esc(c.id)}">Undo</button></span>` : ""}</div>`).join("")}</div>` : ""}
+      ${eventsCard(r)}
+      ${aboutCard(r)}
       ${corrections(r).length || otherProposals(r).length ? `<div class="card"><h3>Other corrections</h3>
         ${corrections(r).map(x => `<div class="srow"><span class="time">${KIND[x.kind]}</span><span class="sdesc">${esc(JSON.stringify(x.payload))}<span class="sub">${x.source === "agent" ? "agent" : "person"}</span></span>
           ${canEdit(r) ? `<span class="sbtns"><button class="btn sm" data-uncut="${esc(x.id)}">Undo</button></span>` : ""}</div>`).join("")}
         ${otherProposals(r).map(x => `<div class="srow"><span class="time">${esc(KIND[x.kind] || x.kind)}?</span><span class="sdesc">${esc(JSON.stringify(x.payload))}${x.reason ? ` · ${esc(x.reason)}` : ""}<span class="sub">suggested by an agent</span></span>
           ${canEdit(r) ? `<span class="sbtns"><button class="btn sm" data-cut="${esc(x.id)}">Accept</button><button class="btn sm" data-keep="${esc(x.id)}">Dismiss</button></span>` : ""}</div>`).join("")}</div>` : ""}
-      <div class="card"><h3>Run</h3><dl>
-        <dt>Episode</dt><dd>${r.episode} in the LeRobot dataset</dd>
-        ${r.labels.length ? `<dt>Tags</dt><dd>${r.labels.map(human).join(", ")}</dd>` : ""}
-        <dt>Frames</dt><dd>${r.length} at ${r.fps} fps (${dur.toFixed(1)} s)</dd>
-        <dt>Takeover</dt><dd>${take ? `frame ${take.start_frame} (${(take.start_frame / r.fps).toFixed(1)} s) by ${esc(take.expert_source)}` : "none"}</dd>
-        <dt>Policy</dt><dd>${esc(r.policy || "–")}</dd>
-        ${extras.map(([k, v]) => `<dt>${human(k)}</dt><dd>${esc(typeof v === "object" ? JSON.stringify(v) : v)}</dd>`).join("")}
-        <dt>Run id</dt><dd class="num">${esc(r.run_id)}</dd>
-      </dl></div>
-      ${sgs.length ? `<div class="card"><h3>Steps</h3>${sgs.map(s => `<div class="ev" tabindex="0" data-frame="${Math.max(0, s.end_frame - 1)}">
-        <span class="time">${fmt(s.start_frame / r.fps)}</span><span><b>${esc(s.name)}</b>
-        <span class="pill ${s.status === "completed" ? "ok" : s.status === "failed" ? "bad" : "tag"}">${s.status}</span> ${esc(s.reason || "")}</span></div>`).join("")}
-        ${e.failure_mode ? `<div class="task" style="margin-top:6px">Failure mode: <b>${human(e.failure_mode)}</b></div>` : ""}</div>` : ""}
-      <div class="card"><h3>Events</h3>${r.events.map(ev => `<div class="ev" tabindex="0" data-frame="${Math.max(0, ev.frame)}">
-        <span class="time">${fmt(Math.max(0, ev.frame) / r.fps)}</span><span><b>${esc(ev.kind)}</b> ${esc([ev.source, ev.reason, ev.text].filter(Boolean).join(" · "))}</span></div>`).join("")
-        || `<div class="task">No events in this run.</div>`}</div>
     </div>`;
   wire(r, t0);
 }
@@ -363,6 +342,76 @@ function busy(r) {
   if (sel && sel.dirty) { notice = "Save or cancel the open label first."; noticeOk = false; render(r, player.t); return true; }
   return false;
 }
+// Major events: the moments that explain the run bar and matter for training data, in time order.
+function majorEvents(r) {
+  const e = eff(r), fps = r.fps, out = [];
+  const add = (frame, text, tone = "", more = {}) => out.push({ frame: Math.max(0, Math.min(r.length, frame)), text, tone, ...more });
+  const first = r.segments[0];
+  if (first) add(0, `${MODE[first[2]]} in control`, "");
+  e.subgoals.forEach(s => {
+    if (s.status === "completed") add(s.end_frame, `${s.name} done`, "ok", { tick: true });
+    if (s.status === "failed") add(s.end_frame, `${s.name} failed${s.reason ? ": " + s.reason : ""}`, "bad", { tick: true });
+  });
+  r.takeovers.forEach(t => {
+    if (t.start_frame > Math.round(fps))
+      add(t.start_frame - Math.round(2 * fps), "Check the seconds before the takeover: this is where the policy went wrong", "attn",
+          { tick: false, span: [Math.max(0, t.start_frame - Math.round(2 * fps)), t.start_frame] });
+    add(t.start_frame, `${t.control_mode === "blend" ? "Shared control" : "Rescue takes over"}${t.expert_source ? " (" + t.expert_source + ")" : ""}`, "warn", { tick: true });
+    if (t.end_frame < r.length) add(t.end_frame, "Policy back in control", "", { tick: true });
+  });
+  if (e.failure_start !== null) add(e.failure_start, "Failure starts (marked)", "bad", { tick: true });
+  r.events.filter(ev => ev.kind !== "takeover").forEach(ev =>
+    add(ev.frame, [ev.kind, ev.source, ev.reason, ev.text].filter(Boolean).join(" · "), "", { tick: true }));
+  cuts(r).forEach(c => add(c.start, `Cut ${((c.end - c.start) / fps).toFixed(1)} s${c.reason ? ": " + c.reason : ""}`, "muted"));
+  suggestions(r).forEach(x => add(x.payload.start, `Suggested cut ${((x.payload.end - x.payload.start) / fps).toFixed(1)} s: ${x.reason || ""}`, "muted"));
+  e.labels.forEach(l => add(l.start, `Label: ${l.text}`, "lbl", { open: l.id,
+    note: [l.driver, l.segment, l.interpretation && `agent: ${l.interpretation.train === "exclude" ? "leave out" : "keep"}`].filter(Boolean).join(" · ") }));
+  add(r.length, e.rejected ? "Run rejected" : e.termination_reason === "success" ? "Run ends: success"
+    : `Run ends: ${e.termination_reason}${e.failure_mode ? " (" + e.failure_mode.replace(/_/g, " ") + ")" : ""}`,
+    e.termination_reason === "success" ? "ok" : "bad");
+  return out.sort((a, b) => a.frame - b.frame);
+}
+function eventsCard(r) {
+  return `<div class="card major"><h3>Major events</h3>${majorEvents(r).map(m => `
+    <div class="ev ${m.tone}" tabindex="0" data-frame="${Math.min(m.frame, r.length - 1)}"${m.open ? ` data-open="${esc(m.open)}"` : ""}>
+      <span class="time">${fmt(m.frame / r.fps)}</span><span class="dot"></span>
+      <span>${esc(m.text)}${m.note ? `<span class="sub">${esc(m.note)}</span>` : ""}</span></div>`).join("")}</div>`;
+}
+
+function aboutCard(r) {
+  const e = eff(r), dur = r.length / r.fps, take = r.takeovers[0];
+  const failed = e.subgoals.find(x => x.status === "failed");
+  const result = e.rejected ? "Rejected" : e.termination_reason === "success" ? `Success in ${dur.toFixed(1)} s`
+    : [take ? "Rescued" : human(e.termination_reason), e.failure_mode && human(e.failure_mode),
+       failed && `${esc(failed.name)} failed at ${fmt(failed.end_frame / r.fps)}`].filter(Boolean).join(" · ");
+  const share = ["base", "expert", "blend", "none"].filter(m => frac(r, m) > 0)
+    .map(m => `${MODE[m].toLowerCase()} ${Math.round(100 * frac(r, m))}%`).join(" · ");
+  const drove = share + (take ? ` · ${r.takeovers.length} takeover${r.takeovers.length > 1 ? "s" : ""}, first at ${fmt(take.start_frame / r.fps)} by ${esc(take.expert_source)}` : "");
+  const when = r.started_at ? new Date(r.started_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : null;
+  const checks = [
+    r.latency_ms && `frame to command ${r.latency_ms.p50} ms typical, ${r.latency_ms.p95} ms slowest 5%`,
+    r.safety_modified && `${r.safety_modified} frames changed by the safety filter`,
+    cuts(r).length && `${(cutFrames(r) / r.fps).toFixed(1)} s cut`,
+  ].filter(Boolean);
+  const row = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : "";
+  return `<div class="card about"><h3>Run</h3><dl>
+      ${row("Result", result)}
+      ${row("Policy", r.policy && esc(r.policy) + (r.policy_revision ? ` <span class="sub inl">${esc(String(r.policy_revision).slice(0, 12))}</span>` : ""))}
+      ${row("Robot", [r.robot, r.operator].filter(Boolean).map(esc).join(" · "))}
+      ${row("Recorded", [when && esc(when), `${dur.toFixed(1)} s`].filter(Boolean).join(" · "))}
+      ${row("Drive mode", drove)}
+    </dl>
+    ${conditions(r)}
+    ${checks.length ? `<h3 class="sub2">Data check</h3><ul class="checks">${checks.map(c => `<li>${c}</li>`).join("")}</ul>` : ""}
+    <div class="ids" title="run ${esc(r.run_id)}">episode ${r.episode} · run ${esc(r.run_id.slice(0, 8))}</div>
+  </div>`;
+}
+function conditions(r) {
+  const c = Object.entries(r.conditions || {});
+  return c.length ? `<h3 class="sub2">Conditions</h3><dl>${c.map(([k, v]) =>
+    `<dt>${human(k)}</dt><dd>${esc(typeof v === "object" ? JSON.stringify(v) : v)}</dd>`).join("")}</dl>` : "";
+}
+
 function openLabel(r, id) {
   const l = eff(r).labels.find(x => x.id === id); if (!l || busy(r)) return;
   editing = true; notice = "";
@@ -406,6 +455,7 @@ function wire(r, t0) {
   const p = player = { t: t0 || 0 };
   const paint = () => {
     head.style.left = (100 * p.t / dur) + "%";
+    const ru = document.getElementById("ruler"); if (ru) ru.setAttribute("aria-valuenow", frameOf(r));
     document.getElementById("time").textContent = `${fmt(p.t)} / ${fmt(dur)} · frame ${frameOf(r)}`;
   };
   p.seek = s => {
@@ -457,33 +507,35 @@ function wire(r, t0) {
     // edit mode: drag inside the selection to move it, drag an edge to resize (an edge may cross the other),
     // or drag anywhere else on the bar to select new frames
     pause();
-    const box = document.getElementById("selbox");
+    let box = document.getElementById("selbox");
     const at = toFrame(ev.clientX);
     let mode = "new", lo0 = at, hi0 = at;
     if (sel && box) {
       if (ev.target.closest(".hdl")) { mode = ev.target.closest(".hdl").dataset.edge; lo0 = sel.start; hi0 = sel.end; }
       else if (ev.target.closest("#selbox")) { mode = "move"; lo0 = sel.start; hi0 = sel.end; }
     }
-    let lo = lo0, hi = hi0;
+    let lo = lo0, hi = hi0, moved = false;
     const draw = () => {
-      const b = box || tl.appendChild(Object.assign(document.createElement("div"), { className: "selbox", id: "selbox" }));
-      b.style.left = (100 * lo / r.length) + "%"; b.style.width = (100 * Math.max(hi - lo, 1) / r.length) + "%";
+      box ||= tl.appendChild(Object.assign(document.createElement("div"), { className: "selbox", id: "selbox" }));
+      box.style.left = (100 * lo / r.length) + "%"; box.style.width = (100 * Math.max(hi - lo, 1) / r.length) + "%";
     };
     tl.onpointermove = m => {
       const f = toFrame(m.clientX);
+      if (f !== at) moved = true;
       if (mode === "move") {
         const len = hi0 - lo0, d = Math.max(-lo0, Math.min(r.length - hi0, f - at));
         lo = lo0 + d; hi = lo + len;
       } else {
         const fixed = mode === "start" ? hi0 : mode === "end" ? lo0 : at;   // the edge that stays put
         lo = Math.min(fixed, f); hi = Math.max(fixed, f);
+        if (hi === lo) hi < r.length ? hi++ : lo--;                       // at least one frame
       }
       draw();                              // selecting frames never moves the playhead
     };
     tl.onpointerup = () => {
       tl.onpointermove = tl.onpointerup = null;
-      if (mode === "move" && lo === lo0) return;                    // a click inside the selection: nothing to do
-      if (hi - lo < 2) {                         // a click on the bar selects about one second around it
+      if (!moved && mode !== "new") return;                         // a click on the selection: nothing to do
+      if (!moved) {                              // a click on the bar selects about one second around it
         const w = Math.max(1, Math.round(r.fps));
         lo = Math.max(0, Math.min(r.length - w, lo - Math.round(w / 2)));
         hi = Math.min(r.length, lo + w);
@@ -533,9 +585,14 @@ document.addEventListener("keydown", e => {
     editing = !editing;
     if (!editing) { discard(r); render(r, player.t); } else if (!sel) defaultSelection(r); else render(r, player.t);
   }
+  else if ((k === "[" || k === "]") && editing && sel && !sel.cutId) {      // set an edge of the selection at the playhead
+    const f = frameOf(r);
+    const [lo, hi] = k === "[" ? [f, Math.max(sel.end, f + 1)] : [Math.min(sel.start, f), f + 1];
+    setSpan(r, lo, Math.min(hi, r.length));
+  }
   else if (k === "Escape" && sel) act(r, "cancel");
 });
 
 redrawList();
-const first = runs.find(r => r.labels.includes("rescued")) || runs[0];
+const first = runs.find(r => r.takeovers.length) || runs[0];
 if (first) select(first.run_id);
