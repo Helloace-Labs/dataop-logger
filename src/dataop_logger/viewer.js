@@ -149,10 +149,11 @@ function segMenuHtml(r) {
   const plan = planOf(r), sg = plan[segMenu]; if (!sg) return "";
   return `<div class="segmenu" style="left:${100 * (sg.start + sg.end) / 2 / r.length}%">
     <div class="sub">Task segment · ${fmt(sg.start / r.fps)}–${fmt(sg.end / r.fps)}</div>
-    <div class="chips">${(LISTS.task_segments || []).map(e => `<button class="chip" data-segtype="${esc(e.name)}" aria-pressed="${e.name === sg.name}" title="${esc(e.description || "")}">${esc(e.name)}</button>`).join("")}</div>
+    <div class="chips">${(LISTS.task_segments || []).map(e => `<span class="chipx"><button class="chip" data-segtype="${esc(e.name)}" aria-pressed="${e.name === sg.name}" title="${esc(e.description || "")}">${esc(e.name)}</button><button class="x" data-ldel="${esc(e.name)}" data-lkind="task_segments" title="Remove ${esc(e.name)} from this dataset's task segments (only if no run uses it)" aria-label="Remove ${esc(e.name)}">×</button></span>`).join("")}</div>
     <input id="newsegtype" class="segin" maxlength="60" placeholder="+ task segment">
     <div class="chips"><button class="btn sm" data-segact="split" title="Splits this segment where the playhead is">Split at playhead</button>
-      <button class="btn sm bad" data-segact="remove">Remove</button><button class="btn sm" data-segact="close">Close</button></div></div>`;
+      <button class="btn sm bad" data-segact="remove">Remove</button><button class="btn sm" data-segact="close">Close</button></div>
+    ${notice ? `<span class="lbstatus ${noticeOk ? "" : "bad"}">${esc(notice)}</span>` : ""}</div>`;
 }
 async function segAction(r, act, name) {
   const plan = planOf(r), i = segMenu, sg = plan[i]; if (!sg) return;
@@ -280,8 +281,9 @@ function driveTable(r, live) {
       <td class="num">${fmt(fail.frame / r.fps)}</td><td></td><td></td><td></td><td>${fail.estimated ? "estimated" : "marked"}</td></tr>` : ""}
     </tbody></table></div>
     ${fail ? `<div class="lbrow failtypes"><span class="lbq">Failure type</span>
-      ${failureTypes().map(t => `<button class="chip" data-ftype="${esc(t)}" aria-pressed="${t === canon("failure_types", ftype)}">${human(t)}</button>`).join("")}
-      <input id="newftype" class="segin" maxlength="60" placeholder="+ failure type"></div>` : ""}</div>`;
+      ${failureTypes().map(t => failChip(t, ftype)).join("")}
+      <input id="newftype" class="segin" maxlength="60" placeholder="+ failure type">
+      ${notice && !noticeOk ? `<span class="lbstatus bad">${esc(notice)}</span>` : ""}</div>` : ""}</div>`;
 }
 
 function segTable(r, live) {
@@ -392,7 +394,6 @@ function render(r, t0) {
       ${editable && undoList().length ? `<span class="undowrap"><button class="btn undobtn" data-act="undo" title="Undo ${esc(undoList().slice(-1)[0].what)} (Cmd/Ctrl+Z)">↶ Undo</button><button class="btn undomore" data-act="history" title="Show changes you can undo" aria-expanded="${showHistory}">▾</button>
         ${showHistory ? `<div class="history" role="menu">${undoList().slice().reverse().map(u => `<div class="hrow"><span>${esc(u.what)}<span class="sub">run ${runs.find(x => x.run_id === u.run_id).episode + 1}</span></span>
           <button class="btn sm" data-undo-entry="${esc(u.entry)}" data-undo-run="${esc(u.run_id)}">Undo</button></div>`).join("")}</div>` : ""}</span>` : ""}
-      ${editable ? `<button class="btn listsbtn" data-act="lists" title="The dataset's failure types and task segments">Lists</button>` : ""}
       ${canEdit(r) ? `<button class="btn ${editing ? "primary" : ""} editbtn" id="edit" title="E">${editing ? "Done" : "Edit"}</button>` : ""}
     </div>
     <div class="timeline ${editing ? "editing" : ""}" id="tl" style="--pinrows:${(r.review.major || []).some(m => m.kind === "failure") ? 1 : 0}">
@@ -418,7 +419,6 @@ function render(r, t0) {
       <div class="ruler" id="ruler" role="slider" tabindex="0" aria-label="Playhead: click or drag here to move it" aria-valuemin="0" aria-valuemax="${r.length - 1}" aria-valuenow="0" title="Playhead row: click or drag here to move the playhead. Arrow keys step it."><span class="rulericon" aria-hidden="true">▶</span></div>
       <div class="head" id="head" style="left:0"><span class="knob"></span></div>
     </div>
-    ${showLists ? listsPanel() : ""}
     ${aiBar(r)}
     ${selPanel(r)}
     ${editing ? driveTable(r) : ""}
@@ -454,11 +454,12 @@ let failMenu = false;            // the failure type chooser under the "Policy f
 function failureTypes() {        // from the dataset's list of failure types
   return (LISTS.failure_types || []).map(e => e.name);
 }
+const failChip = (t, cur) => `<span class="chipx"><button class="chip" data-ftype="${esc(t)}" aria-pressed="${t === canon("failure_types", cur)}">${human(t)}</button><button class="x" data-ldel="${esc(t)}" data-lkind="failure_types" title="Remove ${esc(human(t))} from this dataset's failure types (only if no run uses it)" aria-label="Remove ${esc(human(t))}">×</button></span>`;
 function failTypeMenu(r) {
   const f = (r.review.major || []).find(m => m.kind === "failure"); if (!f) return "";
   const cur = eff(r).failure_mode;
   return `<div class="failmenu" style="left:${100 * f.frame / r.length}%"><div class="sub">Type of failure</div>
-    <div class="chips">${failureTypes().map(t => `<button class="chip" data-ftype="${esc(t)}" aria-pressed="${t === canon("failure_types", cur)}">${human(t)}</button>`).join("")}</div>
+    <div class="chips">${failureTypes().map(t => failChip(t, cur)).join("")}</div>
     <input id="newftype" class="segin" maxlength="60" placeholder="+ failure type"></div>`;
 }
 
@@ -479,22 +480,6 @@ function segBounds(r) {         // draggable edges: shared lines between neighbo
                  tip: `Drag to move where ${s.name} ends` });
   });
   return out;
-}
-
-let showLists = false;
-function listsPanel() {
-  const section = (kind, title, hint) => `<div class="lsec"><h3>${title}</h3><div class="sub">${hint}</div>
-    ${(LISTS[kind] || []).map(e => `<div class="lrow">
-      <input id="lren-${kind}-${esc(e.name)}" class="segin" value="${esc(e.name)}" aria-label="Name">
-      <button class="btn sm" data-lren="${esc(e.name)}" data-lkind="${kind}">Rename</button>
-      <button class="btn sm bad" data-ldel="${esc(e.name)}" data-lkind="${kind}" title="Only possible when no run uses it">Delete</button>
-      ${(e.aliases || []).length ? `<span class="sub">was ${esc(e.aliases.join(", "))}</span>` : ""}</div>`).join("") || `<div class="sub">Nothing yet.</div>`}
-    <div class="lrow"><input id="ladd-${kind}" class="segin" placeholder="+ add"><button class="btn sm" data-ladd="${kind}">Add</button></div></div>`;
-  return `<div class="card listspanel"><div class="cardhead"><h3>Lists for this dataset</h3><button class="btn sm" data-act="lists">Close</button></div>
-    <div class="sub">Everyone, including your agent, picks from these lists, so counts stay comparable across runs. A rename keeps the old name as an alias, so recorded data still matches.</div>
-    <div class="lgrid">${section("failure_types", "Failure types", "How a run fails, e.g. missed grasp, dropped object, collision.")}
-    ${section("task_segments", "Task segments", "The parts of the task, e.g. reach, grasp, place.")}</div>
-    ${notice ? `<div class="lbstatus ${noticeOk ? "" : "bad"}">${esc(notice)}</div>` : ""}</div>`;
 }
 
 function aboutCard(r) {
@@ -721,19 +706,7 @@ function wire(r, t0) {
     if (b.dataset.uncut) return decide(r, b.dataset.uncut, false, "undo" + editSpan(r, b.dataset.uncut));
     if (b.dataset.segtype) return segAction(r, "type", b.dataset.segtype);
     if (b.dataset.segact) return segAction(r, b.dataset.segact);
-    if (b.dataset.act === "lists") { showLists = !showLists; return render(r, p.t); }
-    if (b.dataset.ladd) {
-      const inp = document.getElementById("ladd-" + b.dataset.ladd), v = inp && inp.value.trim().toLowerCase().replace(/\s+/g, "_");
-      if (v) return sendLists({ op: "lists_add", kind: b.dataset.ladd, name: v });
-      return;
-    }
     if (b.dataset.ldel) return sendLists({ op: "lists_delete", kind: b.dataset.lkind, name: b.dataset.ldel });
-    if (b.dataset.lren) {
-      const inp = document.getElementById("lren-" + b.dataset.lkind + "-" + b.dataset.lren);
-      const v = inp && inp.value.trim().toLowerCase().replace(/\s+/g, "_");
-      if (v && v !== b.dataset.lren) return sendLists({ op: "lists_rename", kind: b.dataset.lkind, old: b.dataset.lren, new: v });
-      return;
-    }
     if (b.dataset.ftype) {
       failMenu = false;
       return setFailureType(r, b.dataset.ftype);
