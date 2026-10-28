@@ -50,6 +50,18 @@ def _main(argv=None) -> int:
     it.add_argument("--meaning", required=True, help="one sentence: what the person meant")
     it.add_argument("--by", default="agent", help="name of the agent")
     it.add_argument("--replace", action="store_true", help="change an existing interpretation (kept in history)")
+    rp = sub.add_parser("runs", help="each run's task segments, drive mode, failure moment and type, and video files (JSON)")
+    rp.add_argument("root")
+    rp.add_argument("--run", default=None, help="only this run id")
+    an = sub.add_parser("annotate", help="for agents: fill in a run's task segments, failure moment and type, or takeover")
+    an.add_argument("root")
+    an.add_argument("run_id")
+    an.add_argument("--segments", default=None,
+                    help='JSON list, e.g. [{"name": "grasp", "start_s": 0, "end_s": 4.2}, ...] using the dataset list names')
+    an.add_argument("--failure-at", type=float, default=None, help="seconds into the run where the policy starts to fail")
+    an.add_argument("--failure-type", default=None, help="a name from the dataset's failure types")
+    an.add_argument("--takeover-at", type=float, default=None, help="seconds where control really switched from the policy")
+    an.add_argument("--by", required=True, help="name of the agent")
     lp = sub.add_parser("lists", help="the dataset's agreed failure types and task segments; add or rename entries")
     lp.add_argument("root")
     lp.add_argument("action", nargs="?", choices=["show", "add", "rename"], default="show")
@@ -119,6 +131,18 @@ def _main(argv=None) -> int:
                 return 0
         print(f"no committed run {a.run_id}", file=sys.stderr)
         return 1
+    if a.cmd == "runs":
+        from . import annotate
+        print(V.to_json(annotate.runs_json(a.root, a.run)))
+        return 0
+    if a.cmd == "annotate":
+        import json as _json
+        from . import annotate
+        segs = _json.loads(a.segments) if a.segments else None
+        for line in annotate.annotate(a.root, a.run_id, a.by, segments=segs, failure_at=a.failure_at,
+                                      failure_type=a.failure_type, takeover_at=a.takeover_at):
+            print(line)
+        return 0
     if a.cmd == "lists":
         from . import lists
         if a.action == "show":

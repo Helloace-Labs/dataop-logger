@@ -181,6 +181,8 @@ dataop-logger lists <dataset_root> add failure_types collision --description "hi
 dataop-logger lists <dataset_root> rename task_segments lift raise
 ```
 
+**Agents fill in the same schema.** `dataop-logger runs <dataset_root>` returns each run's segments, drive mode, failure moment and type, and video files as JSON. An agent that watched the video writes its reading back with `dataop-logger annotate <dataset_root> <run_id> --segments ... --failure-at ... --failure-type ... --takeover-at ... --by my-agent`. Names must come from the lists. Each change shows who set it and is one undoable step in the viewer.
+
 **AI feature: find idle frames.** In Edit, **✦ Find idle frames** runs the built-in idle finder on the run. It marks stretches where the arm barely moves for over a second in light grey, each with a short description. You can cut them all, or cut or keep them one by one. Your own agent can make the same kind of suggestion:
 
 ```bash

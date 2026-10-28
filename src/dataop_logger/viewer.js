@@ -278,7 +278,7 @@ function driveTable(r, live) {
       <td class="num">${fmt(d.start / r.fps)}${delta(d.start, d.rec_start)}</td><td class="num">${fmt(d.end / r.fps)}${delta(d.end, d.rec_end)}</td>
       <td class="num">${((d.end - d.start) / r.fps).toFixed(1)} s</td><td class="num">${d.end - d.start}</td><td>${esc(d.source || "")}</td></tr>`).join("")}
     ${fail ? `<tr class="failrow"><td><i class="sw" style="background:var(--bad)"></i>Failure${ftype ? ": " + human(canon("failure_types", ftype)) : ""}</td>
-      <td class="num">${fmt(fail.frame / r.fps)}</td><td></td><td></td><td></td><td>${fail.estimated ? "estimated" : "marked"}</td></tr>` : ""}
+      <td class="num">${fmt(fail.frame / r.fps)}</td><td></td><td></td><td></td><td>${fail.estimated ? "estimated" : `marked by ${esc((eff(r).set_by || {}).failure_start || "person")}`}</td></tr>` : ""}
     </tbody></table></div>
     ${fail ? `<div class="lbrow failtypes"><span class="lbq">Failure type</span>
       ${failureTypes().map(t => failChip(t, ftype)).join("")}
@@ -314,7 +314,7 @@ function segTable(r, live) {
         <td>${drive(sg)}</td>
         <td>${fail && fail.frame >= sg.start && fail.frame < sg.end ? `<span class="pill bad">policy fails</span>` : ""}</td></tr>`;
     }).join("")}</tbody></table></div>
-    <div class="sub">Changes are compared with the recording. Drag the handles on the segment lane to adjust.</div></div>`;
+    <div class="sub">${(eff(r).set_by || {}).segment_plan ? `Set by ${esc(eff(r).set_by.segment_plan)}. ` : ""}Changes are compared with the recording. Drag the handles on the segment lane to adjust.</div></div>`;
 }
 
 function setSpan(r, lo, hi) {           // new selection, or move/resize the open one; untouched defaults follow

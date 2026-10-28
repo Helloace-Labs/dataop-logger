@@ -134,6 +134,16 @@ People label spans in the viewer in plain language. When the user asks you to re
 
 Failure types and task segments come from the dataset's agreed lists. Read them with `dataop-logger lists <dataset_root>` before you name a failure or a segment, and use those exact names. If something new is really needed, add it once with `dataop-logger lists <dataset_root> add failure_types|task_segments <name> --description "..."` and tell the user. Never invent near-duplicates such as "missed grasp" next to "no grasp".
 
+## Annotate runs from the video (AI feature)
+
+When the user asks you to annotate runs, fill in the schema; don't write free text:
+
+1. `dataop-logger runs <dataset_root>` lists every run with its task segments, drive mode spans, failure moment and type, and the video files (with where each episode starts inside its file).
+2. `dataop-logger lists <dataset_root>` gives the allowed task segment and failure type names.
+3. Watch each run's video and decide: the task segments (name, start and end in seconds), when the policy started to fail, how it failed (one failure type), and, if the recorded takeover time is wrong, when control really switched.
+4. Write it: `dataop-logger annotate <dataset_root> <run_id> --segments '[{"name": "...", "start_s": 0, "end_s": 3.1}, ...]' --failure-at 11.2 --failure-type <name> --takeover-at 12.8 --by <your name>`. Use only list names. Each change applies at once, shows "set by <your name>" in the viewer, and a person can review, change or undo it.
+5. Report what you set per run, and anything you were unsure about.
+
 ## Describing major events (AI feature)
 
 Every run's major events are the same three kinds for any task: drive mode changes, task segment starts, and the moment the policy fails, plus the run's end. Each has one note with the details. When the user asks you to describe them:

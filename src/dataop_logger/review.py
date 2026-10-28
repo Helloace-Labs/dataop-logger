@@ -376,6 +376,21 @@ def decide(run_path: Path, manifest: dict, edit_id: str, accept: bool, payload: 
     return edit
 
 
+def apply_agent_edit(run_path: Path, manifest: dict, kind: str, payload: dict, by: str,
+                     expect_rev: int | None = None) -> dict:
+    """An agent fills in the schema directly (segments, failure moment and type, drive switch). It applies at once,
+    is marked with who set it, and a person reviews it in the viewer, changes it or undoes it."""
+    if not isinstance(by, str) or not by.strip() or len(by) > 100:
+        raise ReviewError("by must name the agent in 1 to 100 characters")
+    payload = check_payload(kind, payload, manifest)
+    with transaction(run_path, expect_rev) as review:
+        edit = {"id": uuid.uuid4().hex[:12], "kind": kind, "payload": payload, "source": "agent", "reason": None,
+                "by": by.strip(), "status": "proposed", "created_at": _now(), "decided_at": None}
+        review["edits"].append(edit)
+        _accept(review, edit)
+    return edit
+
+
 def add_event_note(run_path: Path, manifest: dict, key: str, text: str, by: str, source: str = "agent",
                    expect_rev: int | None = None) -> dict:
     """A note on a major event (its details). Notes are descriptions, not training changes, so an agent's note
@@ -557,6 +572,8 @@ def effective(manifest: dict, review: dict) -> dict:
                                               "by": e.get("by") or ("person" if e["source"] == "human" else "agent")}
                         for e in act if e["kind"] == "event_note"},
     }
+    who = {e["kind"]: (e.get("by") or ("person" if e["source"] == "human" else "agent")) for e in act}
+    out["set_by"] = {k: who[k] for k in ("outcome", "failure_start", "segment_plan", "drive_boundary") if k in who}
     if "outcome" in single:
         out["termination_reason"] = single["outcome"]["termination_reason"]
         out["failure_mode"] = single["outcome"]["failure_mode"]

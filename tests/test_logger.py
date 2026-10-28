@@ -1203,3 +1203,26 @@ def test_segment_plan_replaces_segments(tmp_path):
             rv.add_edit(run.run_path, m, "segment_plan", {"segments": bad})
     segs = events.major_events(m, rv.load(run.run_path), ["base"] * 40, [None] * 40, with_segments=True)[1]
     assert [(s["name"], s["start"], s["end"]) for s in segs] == [("reach", 0, 5), ("grasp", 5, 10), ("lift", 12, 30)]
+
+
+def test_agent_annotates_through_the_schema(tmp_path):
+    from dataop_logger import review as rv
+    from dataop_logger.annotate import runs_json
+    from dataop_logger.cli import main
+    ds, run, m = _review_fixture(tmp_path)                 # 30 fps, 40 frames, grasp 0-10, lift 10-30 failed
+    segs = '[{"name": "grasp", "start_s": 0, "end_s": 0.3}, {"name": "lift", "start_s": 0.3, "end_s": 1.0}]'
+    assert main(["annotate", str(ds.root), run.run_id, "--segments", segs, "--failure-at", "0.8",
+                 "--failure-type", "no_lift", "--by", "vlm-agent"]) == 0
+    assert main(["annotate", str(ds.root), run.run_id, "--failure-type", "teleported", "--by", "x"]) == 2   # not on the list
+    out = runs_json(ds.root)
+    r = out["runs"][0]
+    assert [(s["name"], s["start_frame"], s["end_frame"]) for s in r["segments"]] == [("grasp", 0, 9), ("lift", 9, 30)]
+    assert r["failure"]["frame"] == 24 and r["failure"]["type"] == "no_lift" and not r["failure"]["estimated"]
+    assert r["failure"]["set_by"]["failure_start"] == "vlm-agent" and r["segments_set_by"] == "vlm-agent"
+    assert {e["name"] for e in out["lists"]["task_segments"]} == {"grasp", "lift"}
+    # each agent change is one undoable step for a person
+    undo = rv.undoable(rv.load(run.run_path))
+    assert [u["what"] for u in undo] == ["vlm-agent: task segments", "vlm-agent: failure type no_lift",
+                                          "vlm-agent: policy fails at 0.8 s"]
+    rv.undo(run.run_path, m, undo[-1]["entry"])
+    assert runs_json(ds.root)["runs"][0]["failure"]["estimated"]
