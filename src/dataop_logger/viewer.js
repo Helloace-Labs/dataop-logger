@@ -27,6 +27,10 @@ const undoList = () => runs.flatMap(r => (r.review.undoable || []).map(u => ({ r
                            .sort((a, b) => a.t - b.t);
 
 const eff = r => r.review.effective;
+// when a run was recorded: the logger's clock, or for imports an estimate from a file time (marked ~)
+const day = t => new Date(t).toLocaleDateString([], { month: "short", day: "numeric" });
+const clock = t => new Date(t).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+const runTime = r => r.started_at ? (r.time_estimated ? "~" : "") + `${day(r.started_at)} ${clock(r.started_at)}` : "";
 const runNo = r => r.episode + 1;
 const frameOf = r => Math.min(r.length - 1, Math.floor(player.t * r.fps + 1e-6));
 const canEdit = r => editable && !r.review.error && !locked(r);
@@ -79,7 +83,16 @@ function outcomePill(r) {
   return `<span class="pill bad">${esc(e.termination_reason)}</span>${help}`;
 }
 
-document.getElementById("ds").textContent = DATA.dataset;
+{                                 // the datasets this viewer knows; switching reloads the page on the other one
+  const sel = document.getElementById("dsel"), list = DATA.datasets && DATA.datasets.length ? DATA.datasets : [{ root: DATA.root, name: DATA.dataset }];
+  sel.innerHTML = list.map(d => `<option value="${esc(d.root)}" ${d.root === DATA.root ? "selected" : ""}>${esc(d.name)}${d.runs != null ? ` · ${d.runs} runs` : ""}</option>`).join("");
+  sel.disabled = !editable || list.length < 2;
+  sel.onchange = async () => {
+    try { await call({ op: "ws_open", root: sel.value }); location.reload(); }
+    catch (err) { sel.value = DATA.root; alertBar(err.message); }
+  };
+  if (!editable) { document.getElementById("openimport").hidden = true; document.getElementById("opentrain").hidden = true; }
+}
 const STATUS = { collecting: "Collecting runs", reviewing: "In review", locked: "Locked for export" };
 function batchBar() {            // which batch the list shows, its review progress and what to do next
   if (!batches.length) return "";
@@ -88,82 +101,29 @@ function batchBar() {            // which batch the list shows, its review progr
   let action = "";
   if (b && editable) {
     if (b.status === "collecting") action = `<button class="btn" data-batch="reviewing" title="New runs go to a new batch; review continues here">Close batch</button>`;
-    else if (b.status === "reviewing") action = `<button class="btn" data-batch="locked" title="Freeze the review so a training set can be generated from exactly this state">Lock for export</button>`;
-    else action = (unlocking ? "" : `<button class="btn" data-batch="exportpanel" aria-expanded="${exp.open}">Generate training set</button>`) + (unlocking
+    else if (b.status === "reviewing") action = `<button class="btn" data-batch="locked" title="Freeze the review so nobody changes these runs; training sets made from a locked batch stay current">Lock</button>`;
+    else action = (unlocking
       ? `<input class="segin" id="unlockwhy" maxlength="200" placeholder="Why unlock? (kept in history)" aria-label="Reason to unlock"><button class="btn" data-batch="unlock">Unlock</button><button class="btn ghost" data-batch="cancel">Cancel</button>`
       : `<button class="btn ghost" data-batch="askunlock" title="Allow edits again; exports made before are marked out of date">Unlock</button>`);
   }
   const prog = b ? `<span class="bprog" title="Runs someone marked as reviewed">${b.reviewed} of ${b.n_runs} reviewed</span>` : "";
+  const times = b ? runs.filter(r => b.runs.includes(r.run_id) && r.started_at).map(r => r.started_at).sort() : [];
+  const span = times.length ? (day(times[0]) === day(times[times.length - 1]) ? `${day(times[0])} ${clock(times[0])}–${clock(times[times.length - 1])}`
+    : `${day(times[0])} – ${day(times[times.length - 1])}`) : "";
+  const btime = b ? `<div class="btime">${span ? `Runs recorded ${runs.some(r => r.time_estimated && b.runs.includes(r.run_id)) ? "about " : ""}${esc(span)} · ` : ""}batch created ${esc(day(b.created_at))} ${esc(clock(b.created_at))}</div>` : "";
   const warn = b && b.mixed_policy ? `<span class="pill warn" title="Runs in this batch were recorded with different policies">mixed policies</span>` : "";
   const lineage = b && b.parent ? `<div class="blin">Collected with the model trained from ${esc((batches.find(x => x.batch_id === b.parent.batch_id) || {}).name || "an earlier batch")}</div>` : "";
   return `<div class="bbar">
     <div class="brow"><label class="blabel" for="bsel">Batch</label><select id="bsel" class="bsel">${opts}<option value="all" ${batchSel === "all" ? "selected" : ""}>All runs</option></select></div>
-    ${b ? `<div class="brow"><span class="bstat ${b.status}">${STATUS[b.status]}</span>${prog}${warn}<span class="bact">${action}</span></div>${lineage}` : ""}
-    ${b && b.status === "locked" && exp.open ? exportPanel(b) : ""}
-    ${b && b.exports.length ? `<ul class="xlist" aria-label="Training sets made from this batch">${b.exports.slice().reverse().map(x =>
-      `<li><b>${esc(RECIPE[x.recipe] ? RECIPE[x.recipe][0] : x.recipe)}</b> · ${x.frames.toLocaleString()} frames · ${x.episodes} episodes
-        ${x.stale ? `<span class="pill warn" title="The batch was unlocked after this was made, so its review may have changed">out of date</span>` : ""}
-        <div class="xpath" title="${esc(x.path)}">${esc(x.path)}</div></li>`).join("")}</ul>` : ""}
+    ${b ? `<div class="brow"><span class="bstat ${b.status}">${STATUS[b.status]}</span>${prog}${warn}<span class="bact">${action}</span></div>${btime}${lineage}` : ""}
     ${batchNotice ? `<div class="bnote">${esc(batchNotice)}</div>` : ""}
   </div>`;
 }
 let batchNotice = "";
-// Generate training set: a plain script on the server (no AI). Preview counts first, then write.
-const RECIPE = {
-  dagger: ["DAgger", "Rescue frames, labelled with what the rescue did", "Include the policy's own successful runs", "with_success"],
-  residual: ["Correction (residual)", "What the rescue changed on top of the policy's action", "Add successful policy frames as \"no correction\"", "zero_on_success"],
-  filtered: ["Successful runs only", "Plain imitation from runs that worked", null, null],
-};
-const exp = { open: false, recipe: "dagger", opt: false, into: "", preview: null, job: null, error: "", timer: null };
-function exportPanel(b) {
-  const r = RECIPE[exp.recipe], p = exp.preview, j = exp.job;
-  const running = j && j.state === "running";
-  return `<div class="xpanel" role="group" aria-label="Generate a training set">
-    <div class="xrecipes">${Object.entries(RECIPE).map(([k, v]) => `<label class="xr ${exp.recipe === k ? "on" : ""}">
-      <input type="radio" name="xrecipe" value="${k}" ${exp.recipe === k ? "checked" : ""} ${running ? "disabled" : ""}>
-      <b>${esc(v[0])}</b><small>${esc(v[1])}</small></label>`).join("")}</div>
-    ${r[2] ? `<label class="xopt"><input type="checkbox" id="xopt" ${exp.opt ? "checked" : ""} ${running ? "disabled" : ""}> ${esc(r[2])}</label>` : ""}
-    <label class="xopt xinto">Save to <input class="segin" id="xinto" value="${esc(exp.into || (p && p.into) || "")}" ${running ? "disabled" : ""} aria-label="Folder for the new dataset"></label>
-    <div class="xfoot">
-      <span class="xcount">${p ? `${p.episodes} episode${p.episodes === 1 ? "" : "s"} · ${p.frames.toLocaleString()} frames from ${p.runs_used} of ${p.runs} runs${p.exists ? ` · <span class="bad">folder exists</span>` : ""}` : "Counting…"}</span>
-      <button class="btn" data-batch="exportgo" ${running || !p || !p.frames ? "disabled" : ""}>${running ? "Writing…" : "Generate"}</button>
-    </div>
-    ${p && p.dropped.length ? `<div class="xnote">Left out: ${p.dropped.map(([k, v]) => `${v.toLocaleString()} frames (${esc(k)})`).join(", ")}${
-      exp.recipe === "residual" && !p.frames ? ". A correction set needs the policy's action on the frames the rescue drove: record the policy in shadow during rescues." : ""}</div>` : ""}
-    ${running ? `<div class="xnote">Writing the LeRobot dataset and re-encoding video. This can take a few minutes.</div>` : ""}
-    ${j && j.state === "done" ? `<div class="xnote ${j.result.stale ? "bad" : "ok"}">Saved ${j.result.episodes} episodes to ${esc(j.result.into)}${
-      j.result.stale ? ". The batch was unlocked while it was written, so this set is marked out of date" : ""}</div>` : ""}
-    ${j && j.state === "failed" ? `<div class="xnote bad">Not saved: ${esc(j.error)}</div>` : ""}
-    ${exp.error ? `<div class="xnote bad">${esc(exp.error)}</div>` : ""}
-  </div>`;
-}
-async function exportCall(body) {
-  const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1" },
-                                 body: JSON.stringify({ batch: batchSel, recipe: exp.recipe, into: exp.into || undefined,
-                                                        [RECIPE[exp.recipe][3] || "none"]: exp.opt, ...body }) });
-  const out = await res.json();
-  if (!res.ok) throw new Error(out.error || res.statusText);
-  return out;
-}
-async function exportPreview() {
-  exp.preview = null; exp.error = ""; redrawList();
-  try { exp.preview = (await exportCall({ op: "export_preview" })).preview; if (!exp.into) exp.into = exp.preview.into; }
-  catch (err) { exp.error = err.message; }
-  redrawList();
-}
-async function exportPoll() {
-  try {
-    const out = await exportCall({ op: "export_status" });
-    exp.job = out.job;
-    if (out.batches) { batches = out.batches; batchesRev = out.batches_rev; }
-  } catch (err) { exp.error = err.message; }
-  if (!exp.job || exp.job.state !== "running") { clearInterval(exp.timer); exp.timer = null; }
-  redrawList();
-}
 async function sendBatch(body) {
   batchNotice = "";
   try {
-    const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1" },
+    const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1", "X-Dataop-Root": encodeURIComponent(DATA.root) },
                                    body: JSON.stringify({ rev: batchesRev, ...body }) });
     const out = await res.json();
     if (out.batches) { batches = out.batches; batchesRev = out.batches_rev; }
@@ -194,22 +154,12 @@ function drawStats() {          // batch summary, at the top of the run list
 }
 function drawFails() {}
 document.getElementById("fails").onchange = e => {
-  if (e.target.id === "bsel") { batchSel = e.target.value; unlocking = false; batchNotice = ""; exp.open = false; exp.preview = null; exp.into = ""; redrawList(); }
-  if (e.target.name === "xrecipe") { exp.recipe = e.target.value; exp.opt = false; exp.into = ""; exportPreview(); }
-  if (e.target.id === "xopt") { exp.opt = e.target.checked; exportPreview(); }
-  if (e.target.id === "xinto") { exp.into = e.target.value.trim(); exportPreview(); }
+  if (e.target.id === "bsel") { batchSel = e.target.value; unlocking = false; batchNotice = ""; redrawList(); }
 };
 document.getElementById("fails").onclick = e => {
   const bb = e.target.closest("[data-batch]");
   if (bb) {
     const op = bb.dataset.batch;
-    if (op === "exportpanel") { exp.open = !exp.open; if (exp.open) exportPreview(); else redrawList(); return; }
-    if (op === "exportgo") {
-      exp.into = document.getElementById("xinto").value.trim(); exp.error = "";
-      exportCall({ op: "export_start" }).then(out => { exp.job = out.job; exp.timer = exp.timer || setInterval(exportPoll, 2000); redrawList(); })
-        .catch(err => { exp.error = err.message; redrawList(); });
-      return;
-    }
     if (op === "askunlock" || op === "cancel") { unlocking = op === "askunlock"; batchNotice = ""; redrawList();
       if (unlocking) document.getElementById("unlockwhy").focus(); return; }
     const reason = op === "unlock" ? document.getElementById("unlockwhy").value.trim() : undefined;
@@ -239,7 +189,7 @@ function visible() {
 function drawRows() {
   document.getElementById("rows").innerHTML = visible().map(r => `
     <tr class="row" tabindex="0" data-id="${esc(r.run_id)}" aria-selected="${current && current.run_id === r.run_id}">
-      <td><b>${runNo(r)}</b></td>
+      <td><b>${runNo(r)}</b>${r.started_at ? `<div class="rtime" title="${r.time_estimated ? "Estimated from when the episode's file was written" : "Recorded start time"}">${esc(runTime(r))}</div>` : ""}</td>
       <td>${eff(r).termination_reason === "success" ? `<span class="pill ok">success</span>` : eff(r).termination_reason === "unknown" ? `<span class="pill tag">unknown</span>` : `<span class="pill bad">failure</span>`}</td>
       <td><div class="mini" title="${drv(r).map(s => MODE[s[2]] + " " + s[0] + "–" + s[1]).join(", ")}">
         ${drv(r).map(s => `<div style="width:${100 * (s[1] - s[0]) / r.length}%;background:${color(s[2])}"></div>`).join("")}</div></td>
@@ -261,7 +211,7 @@ let noticeOk = false;           // notice is information, not an error
 // ── the dataset's lists ───────────────────────────────────────────────────────
 async function sendLists(body) {
   try {
-    const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1" },
+    const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1", "X-Dataop-Root": encodeURIComponent(DATA.root) },
                                    body: JSON.stringify({ rev: LISTS.rev, ...body }) });
     const out = await res.json();
     if (out.lists) LISTS = out.lists;
@@ -333,7 +283,7 @@ async function segAction(r, act, name) {
 async function send(r, body) {
   notice = ""; noticeOk = false;
   try {
-    const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1" },
+    const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1", "X-Dataop-Root": encodeURIComponent(DATA.root) },
                                    body: JSON.stringify({ run_id: r.run_id, rev: r.review.rev, ...body }) });
     const out = await res.json();
     if (res.status === 409 && out.state) {
@@ -658,7 +608,8 @@ function aboutCard(r) {
   const share = ["base", "expert", "blend", "none", "unknown"].filter(m => frac(r, m) > 0)
     .map(m => `${MODE[m].toLowerCase()} ${Math.round(100 * frac(r, m))}%`).join(" · ");
   const drove = share + (take ? ` · ${ivs.length} intervention${ivs.length > 1 ? "s" : ""}, first at ${fmt(take.start / r.fps)}${take.sources.length ? " by " + esc(take.sources.join(", ")) : ""}` : "");
-  const when = r.started_at ? new Date(r.started_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : null;
+  const when = r.started_at ? (r.time_estimated ? "about " : "") + new Date(r.started_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })
+    : r.imported ? "not in the imported data" : null;
   const L = r.latency_ms || {};
   // Data warnings: shown only when something could make the training data wrong.
   const frameMs = 1000 / r.fps;
@@ -902,7 +853,7 @@ function wire(r, t0) {
 }
 
 document.addEventListener("keydown", e => {
-  if (!current || !player || e.altKey) return;
+  if (!current || !player || e.altKey || document.querySelector("dialog[open]")) return;
   if (e.target.id === "newsegtype") {
     const v = e.target.value.trim().toLowerCase().replace(/\s+/g, "_");
     if (e.key === "Enter" && v) sendLists({ op: "lists_add", kind: "task_segments", name: v });
@@ -938,6 +889,230 @@ document.addEventListener("keydown", e => {
     setSpan(r, lo, Math.min(hi, r.length));
   }
   else if (k === "Escape" && sel) act(r, "cancel");
+});
+
+// ── shared: one POST to the page's API ─────────────────────────────────────────
+async function call(body) {
+  const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1", "X-Dataop-Root": encodeURIComponent(DATA.root) },
+                                 body: JSON.stringify(body) });
+  const out = await res.json();
+  if (out.reload) location.reload();
+  if (!res.ok) throw new Error(out.error || res.statusText);
+  return out;
+}
+function alertBar(text) { notice = text; noticeOk = false; if (current) render(current, player ? player.t : 0); }
+const plural = (n, w) => `${n.toLocaleString()} ${w}${n === 1 ? "" : "s"}`;
+let job = null, jobTimer = null;           // the import or training set the server is writing
+function pollJob(after) {
+  clearInterval(jobTimer);
+  jobTimer = setInterval(async () => {
+    try { const out = await call({ op: "job_status" }); job = out.job; if (out.training_sets) tr.sets = out.training_sets; }
+    catch (err) { job = { state: "failed", error: err.message }; }
+    if (!job || job.state !== "running") { clearInterval(jobTimer); jobTimer = null; }
+    after();
+  }, 1500);
+}
+
+// ── Create training set: choose runs (any dataset, any batch), choose a type, write a LeRobot dataset ─────────
+// A plain script on the server; no AI runs here.
+const TYPES = {
+  teleop: ["Teleop", "Runs a person drove from start to finish. Plain imitation of the demos."],
+  dagger: ["DAgger", "The rescues inside policy runs, labelled with what the person or rescue skill did."],
+  lora: ["LoRA", "Teleop and DAgger together in one set, for a LoRA fine-tune of the base model."],
+};
+const DROVE = { teleop: ["teleop", "tag"], rescued: ["rescued", "warn"], policy: ["policy", "tag"], unknown: ["not recorded", "tag"] };
+const tr = { data: null, picked: new Set(), type: "lora", withSuccess: false, into: "", preview: null, error: "", sets: DATA.training_sets || [], seq: 0 };
+const key = (root, id) => root + "\n" + id;
+function trRuns() { return (tr.data || []).flatMap(d => d.runs.map(r => ({ ...r, root: d.root, ds: d }))); }
+async function openTrain() {
+  const dlg = document.getElementById("dlgtrain");
+  dlg.showModal(); tr.error = ""; tr.preview = null; drawTrain();
+  try {
+    const out = await call({ op: "train_runs" });
+    const first = !tr.data;
+    tr.data = out.datasets;
+    if (first) {                            // start from what the page shows: this dataset's chosen batch
+      const here = tr.data.find(d => d.current);
+      if (here) here.runs.filter(r => batchSel === "all" || r.batch_id === batchSel).forEach(r => tr.picked.add(key(here.root, r.run_id)));
+    }
+    const sets = await call({ op: "train_list" }); tr.sets = sets.training_sets;
+  } catch (err) { tr.error = err.message; }
+  drawTrain(); trPreview();
+}
+function setPicked(rs, on) { rs.forEach(r => on ? tr.picked.add(key(r.root, r.run_id)) : tr.picked.delete(key(r.root, r.run_id))); }
+async function trPreview() {
+  const seq = ++tr.seq; tr.preview = null; tr.error = "";
+  const picks = trRuns().filter(r => tr.picked.has(key(r.root, r.run_id)));
+  if (!picks.length) return drawTrain();
+  drawTrain();
+  try {
+    const out = await call({ op: "train_preview", recipe: tr.type, with_success: tr.withSuccess, into: tr.into || undefined,
+                             runs: picks.map(r => ({ root: r.root, run_id: r.run_id })) });
+    if (seq !== tr.seq) return;
+    tr.preview = out.preview; if (!tr.into) tr.intoDefault = out.preview.into;
+  } catch (err) { if (seq === tr.seq) tr.error = err.message; }
+  if (seq === tr.seq) drawTrain();
+}
+function drawTrain() {
+  const el = document.getElementById("train");
+  const running = job && job.state === "running" && job.kind === "train";
+  const all = trRuns(), picked = all.filter(r => tr.picked.has(key(r.root, r.run_id)));
+  const unrev = picked.filter(r => !r.reviewed).length;
+  const p = tr.preview;
+  const dsBlock = d => {
+    const inDs = all.filter(r => r.root === d.root), on = inDs.filter(r => tr.picked.has(key(r.root, r.run_id))).length;
+    const bchip = b => {
+      const rs = inDs.filter(r => r.batch_id === b.batch_id); if (!rs.length) return "";
+      const n = rs.filter(r => tr.picked.has(key(r.root, r.run_id))).length;
+      return `<label class="chip" aria-pressed="${n === rs.length}"><input type="checkbox" data-tb="${esc(d.root)}|${esc(b.batch_id)}" ${n === rs.length ? "checked" : ""} ${running ? "disabled" : ""}> ${esc(b.name)} <span class="cnt">${n}/${rs.length}</span>${b.status === "locked" ? " · locked" : ""}</label>`;
+    };
+    return `<details class="tds" ${on || d.current ? "open" : ""}>
+      <summary><b>${esc(d.name)}</b>${d.current ? `<span class="pill tag">open now</span>` : ""}<span class="cnt">${on} of ${plural(inDs.length, "run")} chosen</span>${d.error ? `<span class="pill bad">${esc(d.error)}</span>` : ""}</summary>
+      <div class="bchips">${d.batches.map(bchip).join("")}</div>
+      ${inDs.length ? `<div class="tbl"><table><thead><tr><th><input type="checkbox" aria-label="Choose every run in ${esc(d.name)}" data-tall="${esc(d.root)}" ${on === inDs.length ? "checked" : ""} ${running ? "disabled" : ""}></th><th>Run</th><th>Outcome</th><th>Who drove</th><th>Reviewed</th><th>Length</th></tr></thead><tbody>
+        ${inDs.map(r => { const on = tr.picked.has(key(r.root, r.run_id)); return `<tr class="${on ? "on" : ""}"><td><input type="checkbox" data-tr="${esc(key(r.root, r.run_id))}" ${on ? "checked" : ""} ${running ? "disabled" : ""} aria-label="Run ${r.episode + 1}"></td>
+          <td><b>${r.episode + 1}</b></td><td>${r.outcome === "success" ? `<span class="pill ok">success</span>` : r.outcome === "unknown" ? `<span class="pill tag">unknown</span>` : `<span class="pill bad">${esc(r.outcome)}</span>`}</td>
+          <td><span class="pill ${DROVE[r.drove][1]}">${DROVE[r.drove][0]}</span></td><td>${r.reviewed ? "✓" : `<span class="sub">no</span>`}</td><td class="num">${(r.length / r.fps).toFixed(1)}s</td></tr>`; }).join("")}
+      </tbody></table></div>` : `<div class="bchips sub">No runs in a batch yet.</div>`}
+    </details>`;
+  };
+  const quick = [["all", "All"], ["none", "None"], ["teleop", "Teleop runs"], ["rescued", "Rescued runs"], ["success", "Successes"], ["reviewed", "Reviewed only"]];
+  el.innerHTML = `<div class="dhead"><h2 id="ttitle">Create training set</h2><button class="btn ghost x" data-tc="close" aria-label="Close">Close</button></div>
+  <div class="dbody">
+    <section class="step"><h3>1 · Choose runs</h3>
+      <div class="quick"><span class="lbl">Quick pick</span>${quick.map(([k, l]) => `<button class="chip" data-tq="${k}" ${running ? "disabled" : ""}>${l}</button>`).join("")}</div>
+      <div class="tgroups">${tr.data ? tr.data.map(dsBlock).join("") : `<div class="msg info">Loading runs…</div>`}</div>
+    </section>
+    <section class="step"><h3>2 · Choose the type</h3>
+      <div class="types" role="radiogroup">${Object.entries(TYPES).map(([k, v]) => `<label class="type ${tr.type === k ? "on" : ""}"><input type="radio" name="ttype" value="${k}" ${tr.type === k ? "checked" : ""} ${running ? "disabled" : ""}><b>${v[0]}</b><small>${v[1]}</small></label>`).join("")}</div>
+      ${tr.type !== "teleop" ? `<label class="field"><input type="checkbox" id="twith" ${tr.withSuccess ? "checked" : ""} ${running ? "disabled" : ""}> Also include the policy's own successful runs</label>` : ""}
+    </section>
+    <section class="step"><h3>3 · Save</h3>
+      <label class="field">Folder <input type="text" id="tinto" value="${esc(tr.into || tr.intoDefault || "")}" ${running ? "disabled" : ""} aria-label="Folder for the new LeRobot dataset"></label>
+    </section>
+    ${unrev && picked.length ? `<div class="msg warn">${plural(unrev, "chosen run")} ${unrev === 1 ? "is" : "are"} not marked reviewed. They go in as they are now.</div>` : ""}
+    ${p && p.left_out_columns.length ? `<div class="msg info">Left out ${p.left_out_columns.map(esc).join(", ")}: not every chosen dataset has ${p.left_out_columns.length === 1 ? "this column" : "these columns"}.</div>` : ""}
+    ${p && p.dropped.length ? `<div class="msg info">Not used: ${p.dropped.map(([k, v]) => `${v.toLocaleString()} frames (${esc(k)})`).join(", ")}</div>` : ""}
+    ${p && !p.frames ? `<div class="msg warn">${tr.type === "teleop" ? "None of the chosen runs is a teleop run. Import or record demos, then choose them here." : tr.type === "dagger" ? "None of the chosen runs has a rescue. Choose runs marked rescued." : "Nothing to use in the chosen runs."}</div>` : ""}
+    ${tr.error ? `<div class="msg bad">${esc(tr.error)}</div>` : ""}
+    ${job && job.kind === "train" && job.state === "done" ? `<div class="msg ok">Saved ${plural(job.result.episodes, "episode")} (${job.result.frames.toLocaleString()} frames) to <b>${esc(job.result.into)}</b>. It is a LeRobot dataset, ready for lerobot-train.</div>` : ""}
+    ${job && job.kind === "train" && job.state === "failed" ? `<div class="msg bad">Not saved: ${esc(job.error)}</div>` : ""}
+    ${tr.sets.length ? `<section class="step"><h3>Made before</h3><ul class="tsets">${tr.sets.slice(0, 8).map(x => `<li><b>${esc((TYPES[x.recipe] || [x.recipe])[0])}</b> ${plural(x.episodes, "episode")} · ${x.frames.toLocaleString()} frames · ${esc((x.at || "").slice(0, 16).replace("T", " "))}
+      ${x.out_of_date ? `<span class="pill warn" title="${x.changed_runs ? `${plural(x.changed_runs, "run")} reviewed differently since` : "A source batch was unlocked after it was made"}">out of date</span>` : ""}${x.missing ? `<span class="pill tag">folder gone</span>` : ""}
+      <span class="xpath">${esc(x.path)}</span></li>`).join("")}</ul></section>` : ""}
+  </div>
+  <div class="dfoot"><span class="grow">${running ? "Writing the dataset and re-encoding video. This takes a few minutes; you can close this window." :
+      !picked.length ? "Choose at least one run." : p ? `<b>${plural(p.episodes, "episode")}</b> · ${p.frames.toLocaleString()} frames from ${p.runs_used} of ${plural(picked.length, "chosen run")}${p.exists ? ` · <span class="bad">folder exists, pick another</span>` : ""}` : "Counting…"}</span>
+    <button class="btn primary big" data-tc="go" ${running || !p || !p.frames || p.exists ? "disabled" : ""}>${running ? "Writing…" : "Create"}</button></div>`;
+}
+document.getElementById("opentrain").onclick = openTrain;
+document.getElementById("train").addEventListener("change", e => {
+  const t = e.target;
+  if (t.dataset.tr) { t.checked ? tr.picked.add(t.dataset.tr) : tr.picked.delete(t.dataset.tr); }
+  else if (t.dataset.tall) setPicked(trRuns().filter(r => r.root === t.dataset.tall), t.checked);
+  else if (t.dataset.tb) { const [root, bid] = t.dataset.tb.split("|"); setPicked(trRuns().filter(r => r.root === root && r.batch_id === bid), t.checked); }
+  else if (t.name === "ttype") { tr.type = t.value; tr.into = ""; tr.intoDefault = ""; }
+  else if (t.id === "twith") tr.withSuccess = t.checked;
+  else if (t.id === "tinto") tr.into = t.value.trim();
+  else return;
+  trPreview();
+});
+document.getElementById("train").addEventListener("click", e => {
+  const q = e.target.closest("[data-tq]"), c = e.target.closest("[data-tc]");
+  if (q) {
+    const all = trRuns(), f = q.dataset.tq;
+    if (f === "all" || f === "none") setPicked(all, f === "all");
+    else { tr.picked.clear(); setPicked(all.filter(r => f === "teleop" ? r.drove === "teleop" : f === "rescued" ? r.drove === "rescued" : f === "success" ? r.outcome === "success" : r.reviewed), true); }
+    return trPreview();
+  }
+  if (!c) return;
+  if (c.dataset.tc === "close") return document.getElementById("dlgtrain").close();
+  if (c.dataset.tc === "go") {
+    tr.into = document.getElementById("tinto").value.trim() || tr.intoDefault; tr.error = "";
+    const picks = trRuns().filter(r => tr.picked.has(key(r.root, r.run_id))).map(r => ({ root: r.root, run_id: r.run_id }));
+    call({ op: "train_start", recipe: tr.type, with_success: tr.withSuccess, into: tr.into, runs: picks })
+      .then(out => { job = out.job; drawTrain(); pollJob(() => { drawTrain(); if (job && job.state === "done") { tr.into = ""; tr.intoDefault = ""; tr.preview = null; } }); })
+      .catch(err => { tr.error = err.message; drawTrain(); });
+  }
+});
+
+// ── Import: attach dataop records to a LeRobot v3.0 dataset (on this machine or on the Hub) ──────────────────
+const im = { cands: null, presets: {}, source: "", preset: null, detected: null, batch: "", preview: null, error: "", seq: 0 };
+async function openImport() {
+  document.getElementById("dlgimport").showModal(); im.error = ""; drawImport();
+  try { const out = await call({ op: "import_scan" }); im.cands = out.candidates; im.presets = out.presets; }
+  catch (err) { im.error = err.message; im.cands = []; }
+  drawImport();
+}
+async function imPreview() {
+  const seq = ++im.seq; im.preview = null; im.error = ""; drawImport();
+  if (!im.source) return;
+  try {
+    const out = await call({ op: "import_preview", source: im.source, preset: im.preset || "auto", batch: im.batch || undefined });
+    if (seq !== im.seq) return;
+    im.preview = out.preview; if (!im.preset && out.preview.preset) im.detected = out.preview.preset;
+  } catch (err) { if (seq === im.seq) im.error = err.message; }
+  if (seq === im.seq) drawImport();
+}
+function drawImport() {
+  const el = document.getElementById("imp"), p = im.preview;
+  const running = job && job.state === "running" && job.kind === "import";
+  const chosen = im.preset || im.detected;
+  const cand = c => `<button class="cand" data-src="${esc(c.root)}" aria-pressed="${im.source === c.root}" ${running ? "disabled" : ""}>
+      <b>${esc(c.name)}</b><span class="sub">${plural(c.episodes, "episode")}${c.fps ? ` · ${c.fps} fps` : ""}</span>
+      ${c.version !== "v3.0" ? `<span class="pill bad">LeRobot ${esc(c.version)}: convert first</span>` : !c.complete ? `<span class="pill bad" title="meta/ is here but the data files are not">data files missing</span>` : c.not_imported === 0 ? `<span class="pill ok">imported</span>` : c.runs ? `<span class="pill warn">${c.not_imported} new episodes</span>` : ""}
+      ${c.preset && c.not_imported && c.complete ? `<span class="pill tag">${esc((im.presets[c.preset] || c.preset).split(":")[0])}</span>` : ""}
+      <span class="cp">${esc(c.root)}</span></button>`;
+  el.innerHTML = `<div class="dhead"><h2 id="ititle">Import a LeRobot dataset</h2><button class="btn ghost x" data-ic="close" aria-label="Close">Close</button></div>
+  <div class="dbody">
+    <section class="step"><h3>1 · Choose the dataset</h3>
+      ${im.cands === null ? `<div class="msg info">Looking for LeRobot datasets on this machine…</div>` : im.cands.length ? `<div class="cands">${im.cands.map(cand).join("")}</div>` : `<div class="msg info">No LeRobot datasets found next to this one or in the LeRobot download cache.</div>`}
+      <label class="field">Or a folder or Hugging Face Hub id <input type="text" id="isrc" placeholder="lerobot/svla_so101_pickplace or /path/to/dataset" value="${esc(im.cands && im.cands.some(c => c.root === im.source) ? "" : im.source)}" ${running ? "disabled" : ""}></label>
+    </section>
+    ${im.source ? `<section class="step"><h3>2 · What is this data?</h3>
+      <div class="types" role="radiogroup">${Object.entries(im.presets).map(([k, v]) => { const [t, d] = v.split(": "); return `<label class="type ${chosen === k ? "on" : ""}"><input type="radio" name="ipreset" value="${k}" ${chosen === k ? "checked" : ""} ${running ? "disabled" : ""}><b>${esc(t)}${im.detected === k ? ` <span class="pill tag">detected</span>` : ""}</b><small>${esc(d || "")}</small></label>`; }).join("")}</div>
+    </section>
+    <section class="step"><h3>3 · Batch</h3>
+      <label class="field">New runs join <input type="text" id="ibatch" value="${esc(im.batch || (p && p.batch) || "")}" ${running ? "disabled" : ""} aria-label="Batch name"></label>
+    </section>` : ""}
+    ${p && !p.hub ? `<dl class="kv"><dt>Episodes to import</dt><dd><b>${p.episodes}</b>${p.skipped ? ` · ${p.skipped} skipped (${p.skipped_why.map(esc).join("; ")})` : ""}</dd>
+      <dt>Frames</dt><dd>${p.frames.toLocaleString()}${p.policy_frames ? ` · ${p.policy_frames.toLocaleString()} driven by the policy` : ""}</dd>
+      <dt>Outcomes</dt><dd>${Object.entries(p.outcomes).map(([k, v]) => `${v} ${esc(k)}`).join(", ") || "–"}</dd>
+      <dt>Who drove</dt><dd>${esc(p.fields.control)}</dd><dt>Outcome from</dt><dd>${esc(p.fields.outcome)}</dd>
+      <dt>Written to</dt><dd>${p.into ? esc(p.into) + " (a copy)" : "a dataop folder inside the dataset; LeRobot's files are not changed"}</dd></dl>` : ""}
+    ${p && p.hub ? `<div class="msg info">Downloads ${esc(p.source)} from the Hub into ${esc(p.into)}, then imports it.</div>` : ""}
+    ${im.error ? `<div class="msg bad">${esc(im.error)}</div>` : ""}
+    ${job && job.kind === "import" && job.state === "done" ? `<div class="msg ok">Imported ${plural(job.result.runs, "run")} into batch “${esc(job.result.batch || "")}”.</div>` : ""}
+    ${job && job.kind === "import" && job.state === "failed" ? `<div class="msg bad">Not imported: ${esc(job.error)}</div>` : ""}
+  </div>
+  <div class="dfoot"><span class="grow">${running ? "Importing…" : !im.source ? "Choose a dataset." : p ? (p.hub ? "Ready to download and import." : p.episodes ? `Ready to import ${plural(p.episodes, "episode")}.` : "Nothing new to import.") : im.error ? "" : "Reading the dataset…"}</span>
+    ${job && job.kind === "import" && job.state === "done" ? `<button class="btn primary big" data-ic="open">Open it</button>` :
+      `<button class="btn primary big" data-ic="go" ${running || !p || (!p.hub && !p.episodes) ? "disabled" : ""}>${running ? "Importing…" : "Import"}</button>`}</div>`;
+}
+document.getElementById("openimport").onclick = openImport;
+document.getElementById("imp").addEventListener("click", e => {
+  const s = e.target.closest("[data-src]"), c = e.target.closest("[data-ic]");
+  if (s) { im.source = s.dataset.src; im.preset = null; im.detected = null; im.batch = ""; if (job && job.kind === "import" && job.state !== "running") job = null; return imPreview(); }
+  if (!c) return;
+  if (c.dataset.ic === "close") return document.getElementById("dlgimport").close();
+  if (c.dataset.ic === "open") {
+    const r = job.result;
+    return (r.same ? Promise.resolve() : call({ op: "ws_open", root: r.root })).then(() => location.reload()).catch(err => { im.error = err.message; drawImport(); });
+  }
+  if (c.dataset.ic === "go") {
+    im.batch = (document.getElementById("ibatch") || {}).value || im.batch;
+    call({ op: "import_start", source: im.source, preset: im.preset || im.detected || "auto", batch: im.batch || undefined })
+      .then(out => { job = out.job; drawImport(); pollJob(drawImport); })
+      .catch(err => { im.error = err.message; drawImport(); });
+  }
+});
+document.getElementById("imp").addEventListener("change", e => {
+  const t = e.target;
+  if (t.id === "isrc") { im.source = t.value.trim(); im.preset = null; im.detected = null; im.batch = ""; }
+  else if (t.name === "ipreset") im.preset = t.value;
+  else if (t.id === "ibatch") { im.batch = t.value.trim(); return; }
+  else return;
+  imPreview();
 });
 
 redrawList();

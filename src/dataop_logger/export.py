@@ -5,9 +5,14 @@
 Every recipe works from one snapshot per run (the recorded ticks with the review applied, including moved drive-mode
 boundaries) and decides, per frame, whether to keep it and which action to write:
 
+  teleop     successful runs that a person (or a demo script) drove from start to finish; action = the command
+             that was sent. Runs where the policy drove any frame are left out (that is DAgger data).
   filtered   successful runs only; action = the command that was sent (plain behaviour cloning)
-  dagger     frames with a valid expert label; action = expert_action. --with-success adds the policy's own
-             successful runs as recorded. --base adds every episode of a demo dataset unchanged.
+  dagger     runs the policy drove: frames with a valid expert label (the rescues); action = expert_action.
+             --with-success adds the policy's own successful runs as recorded. --base adds every episode of a demo
+             dataset unchanged. Teleop runs (no policy frames) are left out; lora takes both.
+  lora       teleop and dagger together, one set for a LoRA fine-tune of the base model: each run is taken as
+             teleop if a person drove all of it, otherwise as dagger.
   residual   full-action supervised residual: frames with both base and expert actions;
              action = expert_action - base_action, plus feature observation.base_action (what the head corrects).
              --zero-on-success adds successful runs' policy frames where sent == base and no safety change, with
@@ -48,7 +53,7 @@ from . import lists as ls
 from . import review as rv
 from . import store
 
-RECIPES = ("filtered", "dagger", "residual")
+RECIPES = ("teleop", "dagger", "lora", "filtered", "residual")
 RESERVED = ("index", "episode_index", "frame_index", "timestamp", "task_index")
 
 
@@ -87,10 +92,27 @@ def select(s: dict, recipe: str, opts: dict, lists: dict) -> tuple[np.ndarray, n
     why = {"review": int((~keep).sum())}
     success = outcome == "success"
     action = s["sent"].copy()
-    if recipe == "filtered":
+    teleop_run = not (s["mode"] == "base").any()
+    if recipe == "lora":
+        recipe = "teleop" if teleop_run else "dagger"
+    if recipe == "teleop":
         if not success:
             keep[:] = False
             why = {f"run {outcome}": n}
+        elif not teleop_run:
+            keep[:] = False
+            why = {"the policy drove part of this run": n}
+        else:
+            human = s["mode"] == "expert"
+            why["nobody recorded as driving"] = int((keep & ~human).sum())
+            keep &= human
+    elif recipe == "filtered":
+        if not success:
+            keep[:] = False
+            why = {f"run {outcome}": n}
+    elif recipe == "dagger" and teleop_run and (s["mode"] == "expert").any():
+        keep[:] = False
+        why = {"teleop run (no policy frames)": n}
     elif recipe == "dagger":
         if success and opts.get("with_success"):
             pass                                          # the policy's own good run, as recorded
@@ -259,6 +281,17 @@ def _source_digest(root: Path) -> dict:
     return {k: tree_digest(root / k) if (root / k).exists() else None for k in ("meta", "data", "videos")}
 
 
+def extra_features(roots) -> list[str]:
+    """Features some of these datasets have and others lack, that can be left out so they combine (an intervention
+    flag, say). Cameras, state and action are never on this list: a set cannot be made without them."""
+    feats = [{k for k in json.loads((Path(r).expanduser() / "meta" / "info.json").read_text())["features"]
+              if k not in RESERVED and not k.startswith("next.")} for r in roots]
+    if len(feats) < 2:
+        return []
+    odd = set.union(*feats) - set.intersection(*feats)
+    return sorted(f for f in odd if f != "action" and not f.startswith("observation."))
+
+
 def _split(run_id: str, val: float) -> str:
     """Stable train/val assignment: sha256 of the run id as a number in [0, 1)."""
     x = int(hashlib.sha256(run_id.encode()).hexdigest()[:12], 16) / float(16 ** 12)
@@ -271,7 +304,7 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
            zero_on_success: bool = False, base: str | None = None, segments: list[str] | None = None,
            outcomes: list[str] | None = None, val: float = 0.0, min_span: int = 1, hook: str | None = None,
            allow_unlocked: bool = False, dry_run: bool = False, repo_id: str | None = None, by: str = "human",
-           drop_features: list[str] | None = None) -> dict:
+           drop_features: list[str] | None = None, runs: list[str] | None = None) -> dict:
     if recipe not in RECIPES:
         raise ExportError(f"recipe must be one of {RECIPES}")
     if not 0.0 <= val < 1.0:
@@ -311,7 +344,7 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
                               "export them separately or leave extras out with drop_features")
         lists = ls.load(root)
         manifests = {p.name: (p, m) for p, m in store.iter_manifests(root, "committed")}
-        members = sorted(r for r, x in d["members"].items() if x == b["batch_id"])
+        members = sorted(r for r, x in d["members"].items() if x == b["batch_id"] and (runs is None or r in runs))
         for rid in members:
             p, m = manifests[rid]
             s = snapshot(p, m)
@@ -362,13 +395,15 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
             why["span shorter than min_span"] = dropped_short
         split = _split(m["run_id"], val) if val > 0 else "train"
         runs_out.append({"root": str(root), "batch": b["name"], "run_id": m["run_id"], "episode": m["episode_index"],
+                         "as": ("dagger" if (s["mode"] == "base").any() else "teleop") if recipe == "lora" else recipe,
                          "outcome": "rejected" if s["effective"]["rejected"] else s["effective"]["termination_reason"],
                          "split": split, "frames": m["length"], "kept": sum(b_ - a for a, b_ in sp), "spans": sp,
                          "dropped": why, "review_rev": s["review"]["rev"],
                          "review_digest": B.review_digest(m, s["review"]),
                          "ticks_sha256": m["integrity"]["ticks_sha256"], "manifest_sha256": store.json_sha256(m),
                          "_action": action, "_src": src, "_task": m["task"]})
-    report = {"recipe": recipe, "options": {**opts, "base": base, "val": val, "hook": hook, "drop_features": list(drop)},
+    report = {"recipe": recipe, "options": {**opts, "base": base, "val": val, "hook": hook, "drop_features": list(drop),
+                                            "runs": sorted(runs) if runs is not None else None},
               "sources": src_records, "dry_run": dry_run,
               "episodes": sum(len(r["spans"]) for r in runs_out) + (len(base_src.eps) if base_src is not None else 0),
               "frames": sum(r["kept"] for r in runs_out) +
@@ -448,3 +483,33 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
         store.atomic_write_json(path / "dataop_export.json", {**record, "this_split": split})
     report.update(export_id=export_id, written=written, stale=stale)
     return report
+
+
+def training_sets(root: Path) -> list[dict]:
+    """Training sets made from this dataset, newest first. Each says whether it is out of date: a source batch was
+    unlocked after it was made, or a run it was made from has been reviewed differently since (its review digest
+    no longer matches the one recorded in the set's dataop_export.json)."""
+    root = Path(root).expanduser().resolve()
+    d = B.load(root)
+    current = {}
+    for p, m in store.iter_manifests(root, "committed"):
+        try:
+            current[m["run_id"]] = B.review_digest(m, rv.load(p))
+        except rv.ReviewError:
+            current[m["run_id"]] = None
+    out = {}
+    for b in d["batches"]:
+        for e in b["exports"]:
+            x = out.setdefault(e["export_id"], {**e, "batches": [], "changed_runs": 0, "missing": False})
+            x["batches"].append(b["name"])
+            x["stale"] = x["stale"] or e["stale"]
+    for x in out.values():
+        try:
+            rec = json.loads((Path(x["path"]) / "dataop_export.json").read_text())
+            mine = [r for r in rec["runs"] if Path(r["root"]).expanduser().resolve() == root]
+            x["changed_runs"] = sum(current.get(r["run_id"]) != r["review_digest"] for r in mine)
+            x["runs"] = sum(1 for r in mine if r["kept"])
+        except (OSError, ValueError, KeyError):
+            x["missing"] = True
+        x["out_of_date"] = bool(x["stale"] or x["changed_runs"])
+    return sorted(out.values(), key=lambda x: x["at"], reverse=True)

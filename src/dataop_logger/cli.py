@@ -121,7 +121,7 @@ def _main(argv=None) -> int:
     ip = sub.add_parser("import", help="bind runs to an existing LeRobot v3.0 dataset (local folder or Hub repo id)")
     ip.add_argument("source", help="dataset folder, or a Hugging Face Hub repo id (needs --into)")
     ip.add_argument("--into", help="copy the dataset here first and import into the copy")
-    ip.add_argument("--preset", default="plain", help="field mapping preset: plain, lerobot-hil or watcher")
+    ip.add_argument("--preset", default="auto", help="field mapping preset: auto (detect), demos, plain, lerobot-hil or watcher")
     ip.add_argument("--map", help="JSON file with a field mapping (overrides the preset's entries)")
     ip.add_argument("--batch", help="batch the imported runs join (default: 'import <folder name>')")
     ip.add_argument("--episodes", help="only these episodes, e.g. 0-9,12")
@@ -130,12 +130,13 @@ def _main(argv=None) -> int:
     xp = sub.add_parser("export", help="generate a training set (LeRobot dataset) from locked batches; no AI involved")
     xp.add_argument("--batch", action="append", required=True, metavar="ROOT:BATCH",
                     help="dataset folder and batch name or id, e.g. data/round3:'round 3'; repeat to combine")
-    xp.add_argument("--recipe", required=True, choices=["filtered", "dagger", "residual"])
+    xp.add_argument("--recipe", required=True, choices=["teleop", "filtered", "dagger", "residual"])
     xp.add_argument("--into", required=True, help="new folder for the training set")
     xp.add_argument("--with-success", action="store_true", help="dagger: add the policy's own successful runs")
     xp.add_argument("--zero-on-success", action="store_true",
                     help="residual: add successful policy frames with target zero")
     xp.add_argument("--base", help="dagger/filtered: also include every episode of this demo dataset")
+    xp.add_argument("--runs", help="only these run ids, comma separated (default: every run in the batches)")
     xp.add_argument("--segments", help="only frames in these task segments, comma separated")
     xp.add_argument("--outcomes", help="only runs with these outcomes, comma separated (success,failure,...)")
     xp.add_argument("--val", type=float, default=0.0, help="share of runs for a second dataset <into>_val")
@@ -163,7 +164,8 @@ def _main(argv=None) -> int:
             rep = X.export(srcs, a.recipe, a.into, with_success=a.with_success, zero_on_success=a.zero_on_success,
                            base=a.base, segments=split(a.segments), outcomes=split(a.outcomes), val=a.val,
                            min_span=a.min_span, hook=a.hook, allow_unlocked=a.allow_unlocked, dry_run=a.dry_run,
-                           repo_id=a.repo_id, by=a.by, drop_features=split(a.drop_features))
+                           repo_id=a.repo_id, by=a.by, drop_features=split(a.drop_features),
+                           runs=split(a.runs))
         except (X.ExportError, BatchError) as e:
             print(f"error: {e}", file=sys.stderr)
             return 2

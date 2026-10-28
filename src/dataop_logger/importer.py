@@ -9,6 +9,7 @@ A mapping (JSON) says where each sidecar field comes from. Every entry is option
 as unknown, never invented. Per-run `origin.fields` says where each field came from.
 
   {"control":      {"column": "intervention"}                        bool column: true = expert, false = policy
+                   | {"constant": "expert"}                          the same for every frame (teleop demos)
                    | {"column": "mode", "values": {"auto": "base", "teleop": "expert"}},
    "expert_source": "human",                                         who the expert was (default "expert")
    "base_action":  {"column": "complementary_info.policy_action"}
@@ -17,11 +18,14 @@ as unknown, never invented. Per-run `origin.fields` says where each field came f
                    | "sent_on_policy_frames",                         the command sent while the policy drove
    "expert_action": {"column": ...} | {"file": ...} | "sent_on_expert_frames" (default when control is mapped),
    "outcome":      {"column": "next.success"}                        true on the last frame = success
+                   | {"constant": "success"}                         every episode (demos kept only if they worked)
                    | {"file": "{root}_results_*.json", "key": "episode", "field": "result",
                       "values": {"vla_success": "success", "watcher_rescue": "failure"}},
    "failure_mode": {"file": ..., "key": "episode", "field": "outcome", "skip": ["success"]},
    "reward":       {"column": "next.reward"},
    "segments":     {"column": "task_segment"},                       per-frame segment name (empty = none)
+   "time":         {"file_mtime": "{root}_raw/ep{episode:03d}.npy"}  when each episode ended: a file written as it
+                     finished; the start is that minus the episode's length. Recorded as estimated.
    "policy":       {"family": "smolvla", "source": "...", "revision": null},
    "action_space": "joint_position", "action_units": "deg"}
 
@@ -46,6 +50,8 @@ from .schema import KNOWN_SPACES, SCHEMA_VERSION, TERMINAL_FLAG, TERMINATION_REA
 
 PRESETS = {
     "plain": {},
+    # teleoperated (or scripted) demonstrations: a person drove every frame and every episode is a good demo
+    "demos": {"control": {"constant": "expert"}, "expert_source": "human", "outcome": {"constant": "success"}},
     # LeRobot's human-in-the-loop recordings (gym_manipulator / HIL-SERL)
     "lerobot-hil": {"control": {"column": "complementary_info.is_intervention"}, "expert_source": "human",
                     "base_action": "sent_on_policy_frames", "outcome": {"column": "next.success"},
@@ -56,9 +62,10 @@ PRESETS = {
                 "outcome": {"file": "{root}_results_*.json", "key": "episode", "field": "result",
                             "values": {"vla_success": "success", "watcher_rescue": "failure", "fail": "failure"}},
                 "failure_mode": {"file": "{root}_results_*.json", "key": "episode", "field": "outcome",
-                                 "skip": ["success"]}},
+                                 "skip": ["success"]},
+                "time": {"file_mtime": "{root}_raw/ep{episode:03d}.npy"}},
 }
-KEYS = {"control", "expert_source", "base_action", "expert_action", "outcome", "failure_mode", "reward", "segments",
+KEYS = {"time", "control", "expert_source", "base_action", "expert_action", "outcome", "failure_mode", "reward", "segments",
         "policy", "action_space", "action_units"}
 
 
@@ -94,6 +101,27 @@ def resolve_source(source: str, into: str | None) -> tuple[Path, bool]:
     return Path(ds.root), True
 
 
+PRESET_LABELS = {"watcher": "Watcher session: policy runs with rescues",
+                 "lerobot-hil": "LeRobot human-in-the-loop: policy runs with interventions",
+                 "demos": "Teleop demos: a person drove every episode",
+                 "plain": "Other: who drove is not recorded"}
+
+
+def detect(root: Path) -> str:
+    """The preset that fits a dataset best, from its columns and side files. Demos are the default when nothing
+    says a policy drove, since that is what most LeRobot recordings are."""
+    root = Path(root)
+    names = set(_info(root)["features"])
+    if "intervention" in names and (glob.glob(_pattern("{root}_raw", root)) or
+                                    glob.glob(_pattern("{root}_results_*.json", root))):
+        return "watcher"
+    if "complementary_info.is_intervention" in names:
+        return "lerobot-hil"
+    if "intervention" in names:
+        return "plain"
+    return "demos"
+
+
 def _mapping(preset: str | None, mapping: dict | None) -> dict:
     if preset and preset not in PRESETS:
         raise ImportError_(f"unknown preset {preset!r}; one of {sorted(PRESETS)}")
@@ -101,6 +129,11 @@ def _mapping(preset: str | None, mapping: dict | None) -> dict:
     bad = set(m) - KEYS
     if bad:
         raise ImportError_(f"unknown mapping keys {sorted(bad)}; allowed: {sorted(KEYS)}")
+    c, o = m.get("control"), m.get("outcome")
+    if isinstance(c, dict) and "constant" in c and c["constant"] not in ("base", "expert"):
+        raise ImportError_("a constant control mode is base (the policy) or expert (a person or script)")
+    if isinstance(o, dict) and "constant" in o and o["constant"] not in TERMINATION_REASONS:
+        raise ImportError_(f"a constant outcome is one of {sorted(TERMINATION_REASONS)}")
     return m
 
 
@@ -181,16 +214,18 @@ def plan(root: Path, preset: str | None = "plain", mapping: dict | None = None, 
                           space=space, rate_hz=float(info["fps"]))
     cols_wanted = [s["column"] for s in (mp.get(k) for k in ("control", "base_action", "expert_action", "outcome",
                                                              "reward", "segments"))
-                   if isinstance(s, dict) and "column" in s]
+                   if isinstance(s, dict) and "column" in s and "constant" not in s]
     cols = _columns(root, cols_wanted)
     missing_cols = [c for c in cols_wanted if c not in cols["names"]]
     eps = load_lerobot_episodes(root, action_key)
     bound = {m["episode_index"] for _, m in store.iter_manifests(root, "committed")}
     want = sorted(eps) if episodes is None else [e for e in sorted(set(episodes))]
     fields = {}
-    for k in ("control", "base_action", "expert_action", "outcome", "failure_mode", "reward", "segments"):
+    for k in ("control", "base_action", "expert_action", "outcome", "failure_mode", "reward", "segments", "time"):
         s = mp.get(k)
         fields[k] = ("unknown" if s is None else s if isinstance(s, str) else
+                     f"always {s['constant']}" if "constant" in s else
+                     f"file time of {s['file_mtime']}" if "file_mtime" in s else
                      f"column {s['column']}" + (" (missing)" if s["column"] in missing_cols else "")
                      if "column" in s else f"file {s['file']}")
     if mp.get("expert_action") is None and mp.get("control"):
@@ -228,7 +263,9 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
 
     # who drove
     ctl = mp.get("control")
-    if ctl and ctl["column"] in rows:
+    if ctl and "constant" in ctl:
+        mode = np.array([ctl["constant"]] * n, dtype=object)
+    elif ctl and ctl["column"] in rows:
         raw = rows[ctl["column"]]
         vals = ctl.get("values")
         if vals:
@@ -278,7 +315,9 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
     # outcome and failure type
     reason, failure_mode = "unknown", None
     oc = mp.get("outcome")
-    if isinstance(oc, dict) and "column" in oc and oc["column"] in rows:
+    if isinstance(oc, dict) and "constant" in oc:
+        reason = oc["constant"]
+    elif isinstance(oc, dict) and "column" in oc and oc["column"] in rows:
         # LeRobot marks success on the step that reached it (next.success); any such step makes the run a success
         reason = "success" if any(bool(_scalar(v)) for v in rows[oc["column"]]) else "failure"
     elif isinstance(oc, dict) and "file" in oc:
@@ -320,6 +359,17 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
     ns = np.maximum.accumulate(np.round((ts - ts[0]) * 1e9).astype(np.int64)) if n else np.zeros(0, np.int64)
     for ev in events:
         ev["ns"] = int(ns[max(0, ev["frame_index"])])
+    started_at = ended_at = None
+    tm = mp.get("time")
+    if isinstance(tm, dict) and "file_mtime" in tm:
+        f = Path(_pattern(tm["file_mtime"], root, e))
+        if f.exists():
+            import datetime as _dt
+            end = _dt.datetime.fromtimestamp(f.stat().st_mtime, _dt.timezone.utc)
+            dur = float(ts[-1] - ts[0]) + 1.0 / p["fps"] if n else 0.0
+            ended_at, started_at = end.isoformat(), (end - _dt.timedelta(seconds=dur)).isoformat()
+        else:
+            notes.append(f"time: no file for episode {e}")
     term = np.zeros(n, bool)
     trunc = np.zeros(n, bool)
     flag = TERMINAL_FLAG.get(reason)
@@ -348,7 +398,7 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
     policy = mp.get("policy")
     manifest = {
         "schema_version": SCHEMA_VERSION, "run_id": str(uuid.uuid4()), "status": "committed",
-        "episode_index": int(e), "length": n, "task": ep["task"], "started_at": None, "ended_at": None,
+        "episode_index": int(e), "length": n, "task": ep["task"], "started_at": started_at, "ended_at": ended_at,
         "termination_reason": reason, "task_success": None if reason == "unknown" else reason == "success",
         "labels": [], "failure_mode": failure_mode,
         "fingerprint": fingerprint(schema.id, ep["task"], sent),
@@ -364,7 +414,8 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
         "predictions_count": None,
         "rl_ready": bool(rvalid.all()) if rw else None,
         "batch": None,
-        "origin": {"kind": "import", "fields": p["fields"], "notes": notes},
+        "origin": {"kind": "import", "fields": p["fields"], "notes": notes,
+                   "time": "estimated from a file time" if started_at else None},
     }
     return manifest, table, notes
 
@@ -382,6 +433,8 @@ def import_dataset(source: str, into: str | None = None, preset: str | None = "p
     from .logger import _DATAOP_VERSION as __version__
     src, must_copy = resolve_source(source, into)
     _info(src)
+    if preset == "auto":
+        preset = detect(src)
     root = src
     if into:
         root = Path(into).expanduser()
@@ -393,7 +446,7 @@ def import_dataset(source: str, into: str | None = None, preset: str | None = "p
         raise ImportError_("a Hub dataset is imported into a copy: pass --into <folder>")
     p = plan(src if dry_run else root, preset, mapping, episodes)
     p["root"] = str(src)                               # side-file patterns ({root}, {name}) refer to the source dataset
-    report = {"dataset": str(root), "source": str(src), "fields": p["fields"], "missing_columns": p["missing_columns"],
+    report = {"dataset": str(root), "source": str(src), "preset": preset, "fields": p["fields"], "missing_columns": p["missing_columns"],
               "to_bind": len(p["episodes"]), "skipped": p["skipped"], "dry_run": dry_run, "runs": []}
     results = {k: _results(p["mapping"][k], Path(p["root"])) if isinstance(p["mapping"].get(k), dict)
                and "file" in p["mapping"][k] else {} for k in ("outcome", "failure_mode")}

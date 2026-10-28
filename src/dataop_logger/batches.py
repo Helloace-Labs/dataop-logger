@@ -412,7 +412,9 @@ def add_export(sources: list[tuple[Path, str, dict | None]], record: dict) -> bo
         for root, bid, planned in sources:
             d = regs[str(Path(root).resolve())]
             b = find(d, bid)
-            stale |= planned is None or b["status"] != "locked" or b["locked"] != planned
+            # a set made from a locked batch is current only while that lock holds; one made from an unlocked batch
+            # is judged later, run by run, against the review digests it recorded (export.training_sets)
+            stale |= planned is not None and (b["status"] != "locked" or b["locked"] != planned)
             targets.append((d, b, planned))
         for d, b, planned in targets:
             b["exports"].append({**record, "stale": stale})

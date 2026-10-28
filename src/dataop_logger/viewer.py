@@ -15,8 +15,12 @@ import numpy as np
 import pyarrow.dataset as pads
 import pyarrow.parquet as pq
 
+from urllib.parse import unquote
+
 from . import batches as B
 from . import export as X
+from . import importer as I
+from . import workspace as W
 from . import events as ev
 from . import lists as ls
 from . import review as rv
@@ -108,6 +112,8 @@ def collect(root: Path) -> dict:
                            "p95": round(float(np.percentile(lat[lat > 0], 95)), 1) if (lat > 0).any() else None,
                            "measured": bool((lat > 0).any()), "timed": int((lat > 0).sum()), "frames": int(len(lat))},
             "started_at": m.get("started_at"),
+            "time_estimated": bool((m.get("origin") or {}).get("time")),
+            "imported": (m.get("origin") or {}).get("kind") == "import",
             "videos": videos.get(m["episode_index"], []),
             "review": _review_state(run_path, m),
         })
@@ -120,16 +126,42 @@ def collect(root: Path) -> dict:
     except ls.ListError as e:
         lists = {"version": 1, "rev": -1, "failure_types": [], "task_segments": [], "error": str(e)}
     return {"dataset": root.name, "root": str(root), "runs": runs, "failure_modes": modes, "lists": lists,
-            "editable": False, **_batch_state(root)}
+            "editable": False, "datasets": W.datasets(), **_batch_state(root)}
+
+
+def _pickable(root: Path, current: bool = False) -> dict:
+    """One dataset's batches and runs, for choosing what goes into a training set."""
+    d = B.load(root)
+    runs = []
+    for p, m in store.iter_manifests(root, "committed"):
+        if m["run_id"] not in d["members"]:
+            continue
+        modes = pq.read_table(p / "ticks.parquet", columns=["control_mode"]).column("control_mode").to_pylist()
+        try:
+            r = rv.load(p)
+            e = rv.effective(m, r)
+            outcome, reviewed = ("rejected" if e["rejected"] else e["termination_reason"]), bool(r.get("reviewed"))
+        except rv.ReviewError:
+            outcome, reviewed = m["termination_reason"], False
+        runs.append({"run_id": m["run_id"], "episode": m["episode_index"], "batch_id": d["members"][m["run_id"]],
+                     "outcome": outcome, "reviewed": reviewed, "length": m["length"],
+                     "fps": m["action_schema"]["rate_hz"],
+                     "drove": "teleop" if "base" not in modes and "expert" in modes
+                              else "rescued" if "expert" in modes else "policy" if "base" in modes else "unknown"})
+    runs.sort(key=lambda x: x["episode"])
+    return {"root": str(root), "name": root.name, "current": current, "runs": runs,
+            "batches": [{"batch_id": b["batch_id"], "name": b["name"], "status": b["status"]}
+                        for b in reversed(d["batches"])]}
 
 
 def _batch_state(root: Path) -> dict:
     """Batches newest first with their runs, and the revision the page sends back with batch changes."""
     try:
         bs = B.summary(root)
-        return {"batches": bs, "batches_rev": B._read(root)["rev"], "batches_error": None}
+        return {"batches": bs, "batches_rev": B._read(root)["rev"], "batches_error": None,
+                "training_sets": X.training_sets(root)}
     except (B.BatchError, OSError) as e:
-        return {"batches": [], "batches_rev": -1, "batches_error": str(e)}
+        return {"batches": [], "batches_rev": -1, "batches_error": str(e), "training_sets": []}
 
 
 def build(root: Path, editable: bool = False) -> Path:
@@ -148,7 +180,7 @@ def build(root: Path, editable: bool = False) -> Path:
 
 
 API = "/dataop/api/review"
-_JOB: dict = {}                                       # the one export the page started, if any
+_JOB: dict = {}                     # the one long job the page started (an import or a training set), if any
 
 
 def _slug(name: str) -> str:
@@ -159,7 +191,13 @@ MAX_BODY = 64 * 1024
 class _RangeHandler(http.server.SimpleHTTPRequestHandler):
     """Static files with HTTP Range support, so browsers can seek inside the episode videos, plus the review API."""
 
-    dataset_root: Path = Path(".")
+    @property
+    def dataset_root(self) -> Path:          # the dataset the page shows; the viewer can switch it (ws_open)
+        return self.server.dataop_state["root"]
+
+    def translate_path(self, path):          # static files (videos) come from whichever dataset is open
+        self.directory = str(self.dataset_root)
+        return super().translate_path(path)
 
     def log_message(self, *a):
         pass
@@ -207,6 +245,13 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
             if not isinstance(req, dict):
                 raise ValueError("request must be an object")
             op = req.get("op")
+            shown = self.headers.get("X-Dataop-Root")
+            if shown is not None and unquote(shown) != str(self.dataset_root) and not str(op).startswith("ws_") \
+                    and op != "job_status":
+                return self._json(409, {"error": "this page shows another dataset; reload the page",
+                                        "reload": True})
+            if isinstance(op, str) and (op.startswith(("ws_", "import_", "train_")) or op == "job_status"):
+                return self._json(200, self._long(op, req))
             if isinstance(op, str) and op.startswith("lists_"):      # the dataset's lists, not one run
                 root, kind, rev = self.dataset_root, req.get("kind"), req.get("rev")
                 if isinstance(rev, bool) or not isinstance(rev, int):
@@ -222,8 +267,6 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
                 else:
                     raise rv.ReviewError("unknown lists operation")
                 return self._json(200, {"lists": d})
-            if isinstance(op, str) and op.startswith("export_"):     # generate a training set from a locked batch
-                return self._json(200, self._export(op, req))
             if isinstance(op, str) and op.startswith("batch_"):      # a batch of runs, not one run
                 rev = req.get("rev")
                 if isinstance(rev, bool) or not isinstance(rev, int):
@@ -257,7 +300,7 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
                 summary = self._apply(op, req, run_path, m, rev)
         except rv.ReviewConflict as e:
             return self._json(409, {"error": str(e), "state": _review_state(run_path, m)})
-        except X.ExportError as e:
+        except (X.ExportError, I.ImportError_) as e:
             return self._json(400, {"error": str(e)})
         except B.BatchError as e:
             return self._json(409 if "changed" in str(e) else 400, {"error": str(e), **_batch_state(self.dataset_root)})
@@ -277,19 +320,107 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
             state["step"] = {"entry": rec["entry"], "what": rec["what"]}
         return self._json(200, state)
 
-    def _export(self, op, req):
-        """export_preview: counts from a dry run. export_start: run the export in the background (it re-encodes
-        video and takes a while). export_status: how that job is going."""
+    def _long(self, op, req):
+        """Datasets (ws_*), import (import_*) and training sets (train_*). Import and training-set writes run in the
+        background (download, video re-encode); the page polls job_status."""
         root = self.dataset_root
-        if op == "export_status":
+        if op == "job_status":
             with _WRITE_LOCK:
                 return {"job": dict(_JOB) if _JOB else None, **_batch_state(root)}
+        if op == "ws_list":
+            return {"datasets": W.datasets(), "current": str(root)}
+        if op == "ws_open":
+            want = str(Path(str(req.get("root") or "")).expanduser().resolve())
+            if want not in {d["root"] for d in W.datasets()}:
+                raise rv.ReviewError("that dataset is not in this viewer's list; import it first")
+            with _WRITE_LOCK:
+                self.server.dataop_state["root"] = Path(want)
+            return {"current": want}
+        if op == "import_scan":                          # LeRobot datasets on this machine, with a guessed type
+            out = []
+            for c in W.candidates([root.parent]):
+                try:
+                    c["preset"] = I.detect(Path(c["root"])) if c["version"] == "v3.0" else None
+                except I.ImportError_:
+                    c["preset"] = None
+                out.append(c)
+            return {"candidates": out, "presets": I.PRESET_LABELS}
+        if op.startswith("import_"):
+            source = str(req.get("source") or "").strip()
+            if not source:
+                raise I.ImportError_("choose a dataset folder or type a Hub repo id (owner/name)")
+            local = Path(source).expanduser().exists()
+            preset = req.get("preset") or "auto"
+            into = req.get("into") or (None if local else str(root.parent / source.replace("/", "_")))
+            batch = (req.get("batch") or "").strip() or None
+            if op == "import_preview":
+                if not local:
+                    return {"preview": {"hub": True, "into": into, "source": source}}
+                if preset == "auto":
+                    preset = I.detect(Path(source).expanduser())
+                rep = I.import_dataset(source, into=into, preset=preset, batch=batch, dry_run=True, by="person")
+                oc = {}
+                for r in rep["runs"]:
+                    oc[r["outcome"]] = oc.get(r["outcome"], 0) + 1
+                return {"preview": {"hub": False, "source": source, "into": into, "preset": preset,
+                                    "episodes": rep["to_bind"], "frames": sum(r["frames"] for r in rep["runs"]),
+                                    "policy_frames": sum(r["policy_frames"] for r in rep["runs"]),
+                                    "outcomes": oc, "fields": rep["fields"], "skipped": len(rep["skipped"]),
+                                    "skipped_why": sorted({x["why"] for x in rep["skipped"]})[:3],
+                                    "batch": batch or f"import {Path(source).name}"}}
+            if op != "import_start":
+                raise rv.ReviewError("unknown import operation")
+
+            def work():
+                rep = I.import_dataset(source, into=into, preset=preset, batch=batch, by="person")
+                W.remember(Path(rep["dataset"]))
+                return {"root": str(Path(rep["dataset"]).resolve()), "runs": len(rep["runs"]),
+                        "skipped": len(rep["skipped"]), "batch": rep.get("batch"),
+                        "same": Path(rep["dataset"]).resolve() == root}
+            return self._start("import", {"source": source}, work)
+        # training sets: the page sends the chosen runs (from any dataset in the list), grouped here by batch
+        if op == "train_list":
+            return {"training_sets": X.training_sets(root)}
+        if op == "train_runs":
+            out = []
+            for d in W.datasets():
+                try:
+                    out.append(_pickable(Path(d["root"]), current=Path(d["root"]) == root))
+                except (B.BatchError, OSError, ValueError) as e:
+                    out.append({"root": d["root"], "name": d["name"], "error": str(e), "batches": [], "runs": []})
+            return {"datasets": out}
         recipe = req.get("recipe")
-        b = B.find(B.load(root), req.get("batch"))
-        opts = {"with_success": bool(req.get("with_success")), "zero_on_success": bool(req.get("zero_on_success"))}
-        into = req.get("into") or str(Path(root).parent / f"{Path(root).name}_{_slug(b['name'])}_{recipe}")
-        if op == "export_preview":
-            rep = X.export([(root, b["batch_id"])], recipe, into, dry_run=True, by="person", **opts)
+        if recipe not in X.RECIPES:
+            raise X.ExportError(f"choose a training set type ({', '.join(X.RECIPES)})")
+        picks = req.get("runs")
+        if not isinstance(picks, list) or not picks or not all(
+                isinstance(x, dict) and isinstance(x.get("root"), str) and isinstance(x.get("run_id"), str) for x in picks):
+            raise X.ExportError("choose at least one run")
+        known = {d["root"] for d in W.datasets()}
+        by_root = {}
+        for x in picks:
+            r = str(Path(x["root"]).expanduser().resolve())
+            if r not in known:
+                raise X.ExportError(f"{x['root']} is not in this viewer's dataset list")
+            by_root.setdefault(r, set()).add(x["run_id"])
+        srcs, names = [], []
+        for r, ids in sorted(by_root.items()):
+            d = B.load(Path(r))
+            missing = [i for i in ids if i not in d["members"]]
+            if missing:
+                raise X.ExportError(f"{len(missing)} chosen runs in {Path(r).name} are in no batch; add them to one first")
+            for bid in sorted({d["members"][i] for i in ids}):
+                srcs.append((r, bid))
+                names.append(B.find(d, bid)["name"])
+        drop = X.extra_features(sorted(by_root))
+        opts = {"with_success": bool(req.get("with_success")), "zero_on_success": bool(req.get("zero_on_success")),
+                "allow_unlocked": True, "runs": sorted({i for ids in by_root.values() for i in ids}),
+                "drop_features": drop or None}
+        import datetime as _dt
+        label = "_".join(_slug(x) for x in names[:3]) + ("_and_more" if len(names) > 3 else "")
+        into = req.get("into") or str(root.parent / f"{label}_{recipe}_{_dt.datetime.now():%Y%m%d_%H%M}")
+        if op == "train_preview":
+            rep = X.export(srcs, recipe, into, dry_run=True, by="person", **opts)
             why = {}
             for r in rep["runs"]:
                 for k, v in r["dropped"].items():
@@ -297,28 +428,36 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
             return {"preview": {"into": into, "episodes": rep["episodes"], "frames": rep["frames"],
                                 "dropped": sorted(why.items(), key=lambda kv: -kv[1])[:3],
                                 "runs_used": sum(1 for r in rep["runs"] if r["kept"]), "runs": len(rep["runs"]),
-                                "exists": Path(into).exists()}}
-        if op != "export_start":
-            raise rv.ReviewError("unknown export operation")
-        with _WRITE_LOCK:
-            if _JOB and _JOB.get("state") == "running":
-                raise rv.ReviewError("an export is already running")
-            if Path(into).exists():
-                raise X.ExportError(f"{into} already exists; choose another folder")
-            _JOB.clear()
-            _JOB.update(state="running", recipe=recipe, batch=b["name"], into=into, error=None, result=None)
+                                "teleop_frames": sum(r["kept"] for r in rep["runs"] if r.get("as") == "teleop"),
+                                "exists": Path(into).exists(), "batches": names, "left_out_columns": drop}}
+        if op != "train_start":
+            raise rv.ReviewError("unknown training set operation")
+        if Path(into).exists():
+            raise X.ExportError(f"{into} already exists; choose another folder")
 
         def work():
+            rep = X.export(srcs, recipe, into, by="person", **opts)
+            return {"into": into, "episodes": rep["written"]["train"]["episodes"], "frames": rep["frames"],
+                    "stale": rep["stale"]}
+        return self._start("train", {"recipe": recipe, "into": into}, work)
+
+    def _start(self, kind, info, fn):
+        with _WRITE_LOCK:
+            if _JOB and _JOB.get("state") == "running":
+                raise rv.ReviewError(f"a {_JOB['kind'] == 'import' and 'import' or 'training set'} is still running")
+            _JOB.clear()
+            _JOB.update(kind=kind, state="running", error=None, result=None, **info)
+
+        def run():
             try:
-                rep = X.export([(root, b["batch_id"])], recipe, into, by="person", **opts)
-                res = {"into": into, "episodes": rep["written"]["train"]["episodes"], "frames": rep["frames"],
-                       "stale": rep["stale"]}
+                res = fn()
                 with _WRITE_LOCK:
                     _JOB.update(state="done", result=res)
-            except Exception as e:                      # shown in the panel; nothing half-written is left
+            except Exception as e:                      # shown in the dialog; nothing half-written is left
                 with _WRITE_LOCK:
-                    _JOB.update(state="failed", error=f"{type(e).__name__}: {e}")
-        threading.Thread(target=work, daemon=True).start()
+                    _JOB.update(state="failed", error=str(e) if isinstance(e, (X.ExportError, I.ImportError_))
+                                else f"{type(e).__name__}: {e}")
+        threading.Thread(target=run, daemon=True).start()
         return {"job": dict(_JOB)}
 
     def _apply(self, op, req, run_path, m, rev):
@@ -415,12 +554,14 @@ def _find_run(root: Path, run_id) -> tuple[Path, dict]:
 
 def serve(root: Path, port: int = 8765, open_browser: bool = True, editable: bool = True) -> None:
     root = Path(root).resolve()
+    W.remember(root)
     build(root, editable=editable)
-    handler_cls = type("Handler", (_RangeHandler,), {"dataset_root": root, "editable": editable})
+    handler_cls = type("Handler", (_RangeHandler,), {"editable": editable})
     if not editable:
         handler_cls.do_POST = lambda self: self._json(403, {"error": "this viewer is read-only"})
     handler = functools.partial(handler_cls, directory=str(root))
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
+    httpd.dataop_state = {"root": root}
     url = f"http://127.0.0.1:{port}/dataop/view/"
     print(f"Serving {root.name} at {url}  (Ctrl+C to stop)")
     if open_browser:
