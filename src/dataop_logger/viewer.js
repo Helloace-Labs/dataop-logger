@@ -320,7 +320,7 @@ function render(r, t0) {
       ${majorEvents(r).filter(m => m.span).map(m => `<div class="attnspan" style="left:${pct(m.span[0])}%;width:${pct(m.span[1] - m.span[0])}%" title="${esc(m.text)}"></div>`).join("")}
       <div class="pins">${pinRows(r).map(m => {
         const desc = `${m.n}. ${m.frame < 0 ? "before recording" : fmt(m.frame / r.fps)} ${m.text}`;
-        return `<button class="pin ${m.tone}" data-pin="${m.n}" data-frame="${m.at}" style="left:clamp(10px, ${pct(m.at)}%, calc(100% - 10px));top:${m.row * 20}px;--row:${m.row}"
+        return `<button class="pin ${m.tone}" data-pin="${m.n}" data-frame="${m.at}" style="left:${pct(m.at)}%;top:${m.row * 20}px;--row:${m.row}"
           title="${esc(desc)}" aria-label="${esc("Event " + desc)}">${m.n}</button>`;
       }).join("")}</div>
       ${sel && editing && !sel.cutId ? `<div class="selbox" id="selbox" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%" title="Drag to move, drag an edge to resize. Keys [ and ] set the start and end at the playhead." role="group" aria-label="Selected frames ${sel ? sel.start : 0} to ${sel ? sel.end - 1 : 0}. Press [ or ] to set the start or end at the playhead.">
