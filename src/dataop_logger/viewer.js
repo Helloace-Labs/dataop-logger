@@ -332,7 +332,12 @@ async function act(r, what) {
   if (what === "save") return saveLabel(r);
   if (what === "delete" && sel && sel.id) { const id = sel.id; sel = null; return decide(r, id, false); }
   if (what === "uncut" && sel && sel.cutId) { const id = sel.cutId; sel = null; return decide(r, id, false); }
-  if (what === "cut" && sel) { const s = sel; sel = null; delete drafts[r.run_id]; return send(r, { op: "add", kind: "exclude", payload: { start: s.start, end: s.end } }); }
+  if (what === "cut" && sel) {
+    const keep = sel; sel = null;
+    if (await send(r, { op: "add", kind: "exclude", payload: { start: keep.start, end: keep.end } })) delete drafts[r.run_id];
+    else if (!sel) { sel = keep; render(r, player.t); }      // keep the selection so the person can try again
+    return;
+  }
   if (what === "idle") return send(r, { op: "find_idle" });
   if (what === "cutall" || what === "keepall") {
     for (const x of suggestions(r)) if (!(await decide(r, x.id, what === "cutall"))) return;

@@ -738,14 +738,14 @@ def test_find_idle_and_suggest_cut(tmp_path):
     m = store.read_manifest(run.run_path)
     found = rv.find_idle(ds.root, run.run_path, m)
     sugg = [f["edit"] for f in found]
-    assert [(e["payload"]["start"], e["payload"]["end"]) for e in sugg] == [(30, 90)] and found[0]["status"] == "created"
-    assert sugg[0]["reason"] == "arm still for 2.0 s mid-run, policy driving"
+    assert [(e["payload"]["start"], e["payload"]["end"]) for e in sugg] == [(31, 89)] and found[0]["status"] == "created"
+    assert sugg[0]["reason"] == "arm still for 1.9 s mid-run, policy driving"
     assert sugg[0]["by"] == "dataop idle finder (measured joints)"
     again = rv.find_idle(ds.root, run.run_path, m)
     assert again[0]["edit"]["id"] == sugg[0]["id"] and again[0]["status"] == "already_suggested"
     assert rv.train_mask(m, rv.load(run.run_path), ["base"] * 120).all()             # a suggestion cuts nothing
     rv.decide(run.run_path, m, sugg[0]["id"], True)
-    assert not rv.train_mask(m, rv.load(run.run_path), ["base"] * 120)[30:90].any()
+    assert not rv.train_mask(m, rv.load(run.run_path), ["base"] * 120)[31:89].any()
     assert rv.find_idle(ds.root, run.run_path, m)[0]["status"] == "already_cut"
     assert main(["suggest-cut", str(ds.root), run.run_id, "0", "10", "--reason", "warm-up", "--by", "my-agent"]) == 0
     mine = [e for e in rv.load(run.run_path)["edits"] if e.get("by") == "my-agent"]
@@ -753,8 +753,10 @@ def test_find_idle_and_suggest_cut(tmp_path):
     rv.decide(run.run_path, m, mine[0]["id"], False)                                  # the person keeps it
     assert rv.suggest_cut(run.run_path, m, 0, 10, "again", by="other-agent")["status"] == "previously_kept"
     assert main(["suggest-cut", str(ds.root), run.run_id, "5", "5", "--reason", "x"]) == 2
-    rv.add_edit(run.run_path, m, "exclude", {"start": 80, "end": 100})               # overlaps the accepted 30-90
-    assert V.inspect(ds.root)["after_review"]["cut_frames"] == 70
+    rv.add_edit(run.run_path, m, "exclude", {"start": 80, "end": 100})               # overlaps the accepted 31-89
+    assert V.inspect(ds.root)["after_review"]["cut_frames"] == 69
+    rv.add_edit(run.run_path, m, "exclude", {"start": 0, "end": 10})                 # a person cuts what they kept
+    assert rv.suggest_cut(run.run_path, m, 0, 10, "again", by="x")["status"] == "already_cut"
     rev = rv.load(run.run_path)["rev"]
     with pytest.raises(rv.ReviewConflict):                                            # stale batch writes nothing
         rv.find_idle(ds.root, run.run_path, m, expect_rev=rev - 1)
@@ -762,17 +764,23 @@ def test_find_idle_and_suggest_cut(tmp_path):
 
 
 @pytest.mark.parametrize("series,rate,want", [
-    ([0] * 15 + [10] * 15, 10, [(0, 15), (15, 30)]),          # two still plateaus with a jump between: not merged
-    ([0] * 12 + [10] + [0] * 12, 10, [(0, 12), (13, 25)]),    # a one-frame spike splits the stretch
+    ([0] * 15 + [10] * 15, 10, [(0, 14), (16, 30)]),          # two plateaus: the movement between stays uncut
+    ([0] * 12 + [10] + [0] * 12, 10, [(0, 11), (14, 25)]),    # a one-frame spike splits the stretch
     ([0] * 9, 10, []),                                        # shorter than one window
     ([0] * 10, 10, [(0, 10)]),                                # exactly one window
     (list(range(30)), 10, []),                                # always moving
-    ([0] * 14 + [10] * 8, 10, [(0, 14)]),                     # second plateau shorter than a second
+    ([0] * 14 + [10] * 8, 10, [(0, 13)]),                     # second plateau shorter than a second
 ])
 def test_idle_spans_boundaries(series, rate, want):
     from dataop_logger import review as rv
     motion = np.asarray(series, np.float32).reshape(-1, 1)
-    assert rv.idle_spans(motion, rate) == want
+    spans = rv.idle_spans(motion, rate)
+    assert spans == want
+    cut = np.zeros(len(series), bool)                          # cutting every suggestion keeps every movement
+    for a, b in spans:
+        cut[a:b] = True
+    moves = [i for i in range(1, len(series)) if series[i] != series[i - 1]]
+    assert not any(cut[i] or cut[i - 1] for i in moves)
 
 
 def test_review_validation_covers_history_and_sequences(tmp_path):
@@ -782,6 +790,8 @@ def test_review_validation_covers_history_and_sequences(tmp_path):
     rv.interpret(run.run_path, lb["id"], "keep", "fine")
     good = json.loads((run.run_path / "review.json").read_text())
     for mutate in (lambda r: r["edits"][0].__setitem__("interpretation_history", "oops"),
+                   lambda r: r["edits"][0].__setitem__("interpretation", {}),
+                   lambda r: r["edits"][0]["interpretation"].__setitem__("by", ""),
                    lambda r: r["edits"][0].__setitem__("interpretation_history", [{"train": "keep"}]),
                    lambda r: r.__setitem__("seq", 0),
                    lambda r: r["edits"][0].__setitem__("by", 5)):

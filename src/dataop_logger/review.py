@@ -202,14 +202,14 @@ def add_edit(run_path: Path, manifest: dict, kind: str, payload: dict, source: s
 def _prior_suggestion(review: dict, kind: str, payload: dict) -> tuple[dict | None, str]:
     """An agent suggestion for exactly this change that already exists, and what became of it.
     A person's decision stands: a span someone kept is not suggested again, whichever agent asks."""
-    for e in review["edits"]:
-        if e["source"] == "agent" and e["kind"] == kind and e["payload"] == payload:
-            return e, {"proposed": "already_suggested", "accepted": "already_cut" if kind == "exclude" else "already_accepted",
-                       "rejected": "previously_kept" if kind == "exclude" else "previously_dismissed"}[e["status"]]
-    if kind == "exclude":                       # a person already cut exactly these frames
+    if kind == "exclude":                       # these exact frames are cut right now, by anyone
         for e in active_edits(review):
             if e["kind"] == "exclude" and e["payload"] == payload:
                 return e, "already_cut"
+    for e in review["edits"]:
+        if e["source"] == "agent" and e["kind"] == kind and e["payload"] == payload and e["status"] != "accepted":
+            return e, {"proposed": "already_suggested",
+                       "rejected": "previously_kept" if kind == "exclude" else "previously_dismissed"}[e["status"]]
     return None, "created"
 
 
@@ -312,6 +312,14 @@ def active_edits(review: dict) -> list[dict]:
     return [e for e in acc if e["kind"] in MULTI or latest.get(_slot(e)) is e]
 
 
+def _valid_reading(it) -> bool:
+    """The same limits interpret() enforces when it writes a reading."""
+    def text(v, hi):
+        return isinstance(v, str) and 0 < len(v.strip()) and len(v) <= hi
+    return (isinstance(it, dict) and it.get("train") in TRAIN_USE and text(it.get("meaning"), 500)
+            and text(it.get("by"), 100) and text(it.get("at"), 40))
+
+
 def check_review(manifest: dict, review: dict) -> None:
     """Reject a stored review that this code would never have written: fail closed before it shapes training."""
     for k in ("rev", "seq"):
@@ -336,9 +344,9 @@ def check_review(manifest: dict, review: dict) -> None:
         hist = e.get("interpretation_history", [])
         if not isinstance(hist, list):
             raise ReviewError(f"edit {e['id']} has a malformed interpretation history")
-        for it in ([e["interpretation"]] if e.get("interpretation") is not None else []) + hist:
-            if e["kind"] != "label" or not isinstance(it, dict) or it.get("train") not in TRAIN_USE \
-                    or not all(isinstance(it.get(k), str) for k in ("meaning", "by", "at")):
+        current = [e["interpretation"]] if "interpretation" in e and e["interpretation"] is not None else []
+        for it in current + hist:
+            if e["kind"] != "label" or not _valid_reading(it):
                 raise ReviewError(f"edit {e['id']} has a malformed interpretation")
     seqs = [e["accepted_seq"] for e in review["edits"] if "accepted_seq" in e]
     if any(isinstance(q, bool) or not isinstance(q, int) or not 1 <= q <= review["seq"] for q in seqs) \
@@ -433,7 +441,9 @@ def idle_spans(motion: np.ndarray, rate: float, min_s: float = 1.0, still: float
             while j < len(quiet) and quiet[j]:
                 j += 1
             a, b = i, j - 1 + w
-            if spans and a < spans[-1][1]:          # cannot happen with a real movement between; be safe
+            a += a > 0                               # leave the frames where the arm starts or stops moving
+            b -= b < n                               # outside every stretch, so cutting all keeps them
+            if spans and a < spans[-1][1]:
                 a = spans[-1][1]
             if b - a >= k:
                 spans.append((a, b))
