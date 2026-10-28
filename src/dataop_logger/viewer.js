@@ -41,6 +41,10 @@ function cutFrames(r) {        // union of cut spans: overlaps count once
 const otherProposals = r => r.review.edits.filter(e => e.status === "proposed" && e.kind !== "exclude");
 const suggestions = r => r.review.edits.filter(e => e.status === "proposed" && e.kind === "exclude");
 const corrections = r => activeEdits(r).filter(e => KIND[e.kind]);
+function driveModes(r) {        // policy and rescue, then any other drive modes people used on the same task
+  const used = runs.filter(x => x.task === r.task).flatMap(x => eff(x).labels.map(l => l.driver).filter(Boolean));
+  return [...new Set(["policy", "rescue", ...used])];
+}
 function segmentNames(r) {      // this run's steps first, then segments people used on the same task
   const own = eff(r).subgoals.map(s => s.name);
   const same = runs.filter(x => x.task === r.task).flatMap(x => eff(x).labels.map(l => l.segment).filter(Boolean));
@@ -166,7 +170,8 @@ async function send(r, body) {
 
 async function saveLabel(r) {
   if (!sel.text.trim()) { notice = "Add a few words first."; return render(r, player.t); }
-  const payload = { start: sel.start, end: sel.end, text: sel.text, driver: sel.driver, segment: sel.newseg.trim() || sel.segment };
+  const payload = { start: sel.start, end: sel.end, text: sel.text, driver: (sel.newdrive || "").trim() || sel.driver,
+                    segment: sel.newseg.trim() || sel.segment };
   const keep = sel;
   sel = null;
   const what = (keep.id ? "change label: " : "label: ") + keep.text.trim().slice(0, 60);
@@ -210,11 +215,12 @@ function selPanel(r) {
   const it = lb && lb.interpretation;
   return `<div class="card lbpanel">${span}
     <textarea id="lbtext" rows="2" maxlength="2000" placeholder="What happens here?">${esc(sel.text)}</textarea>
-    <div class="lbrow" title="Notes for the agent">
-      ${["policy", "rescue"].map(d => `<button class="chip" data-driver="${d}" aria-pressed="${sel.driver === d}">${d}</button>`).join("")}
-      <span class="sep"></span>
+    <div class="lbrow"><span class="lbq">Drive mode</span>
+      ${driveModes(r).map(d => `<button class="chip" data-driver="${esc(d)}" aria-pressed="${!sel.newdrive && sel.driver === d}">${esc(d)}</button>`).join("")}
+      <input id="lbnewdrive" class="segin" maxlength="50" placeholder="+ drive mode" value="${esc(sel.newdrive || "")}"></div>
+    <div class="lbrow"><span class="lbq">Task segment</span>
       ${names.map(n => `<button class="chip" data-seg="${esc(n)}" aria-pressed="${!sel.newseg && sel.segment === n}">${esc(n)}</button>`).join("")}
-      <input id="lbnewseg" class="segin" maxlength="100" placeholder="+ segment" value="${esc(sel.newseg)}"></div>
+      <input id="lbnewseg" class="segin" maxlength="100" placeholder="+ task segment" value="${esc(sel.newseg)}"></div>
     ${it ? `<div class="interp" title="Changing the label clears this until the agent reads it again">Agent: ${it.train === "exclude" ? "leave out" : "keep"} · ${esc(it.meaning)}</div>` : ""}
     <div class="lbfoot">
       <button class="btn primary" data-act="save" title="Save the label (Cmd/Ctrl+Enter)">Save</button>
@@ -224,6 +230,24 @@ function selPanel(r) {
       ${status}
     </div>
   </div>`;
+}
+
+function setSpan(r, lo, hi) {           // new selection, or move/resize the open one; untouched defaults follow
+  if (sel && sel.cutId) sel = null;      // a cut's span is fixed: undo it and cut again
+  if (sel) {
+    const d = sel.id ? {} : defaultsFor(r, lo, hi);
+    sel = { ...sel, start: lo, end: hi, dirty: true,
+            ...(sel.id || sel.driverSet ? {} : { driver: d.driver }),
+            ...(sel.id || sel.segmentSet ? {} : { segment: d.segment }) };
+  } else sel = { start: lo, end: hi, text: "", newseg: "", newdrive: "", ...defaultsFor(r, lo, hi) };
+  notice = "";
+  render(r, player.t);
+  const t = document.getElementById("lbtext"); if (t && !sel.id && !sel.text) t.focus();
+}
+function defaultSelection(r) {           // on Edit: about two seconds starting at the playhead
+  const w = Math.max(2, Math.round(2 * r.fps)), f = frameOf(r);
+  const lo = Math.max(0, Math.min(r.length - w, f));
+  setSpan(r, lo, Math.min(r.length, lo + w));
 }
 
 function defaultsFor(r, lo, hi) {       // who drove and the step that cover most of the selected frames
@@ -296,8 +320,10 @@ function render(r, t0) {
       ${sug.map(x => `<div class="sugg-span" style="left:${pct(x.payload.start)}%;width:${pct(x.payload.end - x.payload.start)}%" title="${esc(x.reason || "")}"></div>`).join("")}
       ${cs.map(c => `<div class="cut ${sel && sel.cutId === c.id ? "on" : ""}" data-cut-id="${esc(c.id)}" style="left:${pct(c.start)}%;width:${pct(c.end - c.start)}%" title="Cut${c.reason ? ": " + esc(c.reason) : ""}"></div>`).join("")}
       ${r.events.map(ev => `<div class="mark" style="left:${pct(ev.frame)}%"></div>`).join("")}
-      ${sel ? `<div class="selbox" id="selbox" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%"></div>` : ""}
-      <div class="head" id="head" style="left:0"></div>
+      ${sel && editing && !sel.cutId ? `<div class="selbox" id="selbox" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%" title="Drag to move, drag an edge to resize">
+        <span class="hdl l" data-edge="start"></span><span class="hdl r" data-edge="end"></span></div>` : sel ? `<div class="selbox fixed" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%"></div>` : ""}
+      <div class="ruler" id="ruler" title="Drag to move the playhead"></div>
+      <div class="head" id="head" style="left:0"><span class="knob"></span></div>
     </div>
     ${aiBar(r)}
     ${selPanel(r)}
@@ -341,7 +367,7 @@ function openLabel(r, id) {
   const l = eff(r).labels.find(x => x.id === id); if (!l || busy(r)) return;
   editing = true; notice = "";
   const known = segmentNames(r).includes(l.segment);
-  sel = { id: l.id, start: l.start, end: l.end, text: l.text, driver: l.driver,
+  sel = { id: l.id, start: l.start, end: l.end, text: l.text, driver: l.driver, newdrive: "",
           segment: known ? l.segment : null, newseg: known ? "" : (l.segment || "") };
   render(r, l.start / r.fps);
 }
@@ -406,64 +432,76 @@ function wire(r, t0) {
   playBtn.onclick = p.toggle;
   speedBtn.onclick = () => { rate = rate === 1 ? 2 : rate === 2 ? 4 : 1; speedBtn.textContent = rate + "×"; vids.forEach(v => v.playbackRate = rate); };
   const editBtn = document.getElementById("edit");
-  if (editBtn) editBtn.onclick = () => { editing = !editing; if (!editing) discard(r); notice = ""; render(r, p.t); };
+  if (editBtn) editBtn.onclick = () => {
+    editing = !editing; notice = "";
+    if (!editing) { discard(r); return render(r, p.t); }
+    if (!sel) defaultSelection(r); else render(r, p.t);
+  };
 
   const toFrame = x => { const b = tl.getBoundingClientRect(); return Math.max(0, Math.min(r.length, Math.round((x - b.left) / b.width * r.length))); };
+  const scrub = ev => {                  // the playhead has its own strip under the bar, in every mode
+    tl.setPointerCapture(ev.pointerId);
+    p.seek(toFrame(ev.clientX) / r.fps);
+    tl.onpointermove = m => p.seek(toFrame(m.clientX) / r.fps);
+    tl.onpointerup = () => { tl.onpointermove = tl.onpointerup = null; };
+  };
   tl.onpointerdown = ev => {
+    if (ev.target.closest("#ruler, .knob")) return scrub(ev);
     if (canEdit(r)) {
       const lbEl = ev.target.closest(".lb"), cutEl = ev.target.closest(".cut");
       if (lbEl) { ev.preventDefault(); return openLabel(r, lbEl.dataset.label); }
       if (cutEl && editing) { ev.preventDefault(); return openCut(r, cutEl.dataset.cutId); }
     }
+    if (!editing) return scrub(ev);
     tl.setPointerCapture(ev.pointerId);
-    if (!editing) {
-      p.seek(toFrame(ev.clientX) / r.fps);
-      tl.onpointermove = m => p.seek(toFrame(m.clientX) / r.fps);
-      tl.onpointerup = () => { tl.onpointermove = tl.onpointerup = null; };
-      return;
-    }
-    // edit mode: dragging selects a span; with a label or cut open it changes that one's span
-    const a = toFrame(ev.clientX);
-    let b = a;
+    // edit mode: drag inside the selection to move it, drag an edge to resize (an edge may cross the other),
+    // or drag anywhere else on the bar to select new frames
     pause();
-    let box = document.getElementById("selbox");
-    if (!box) { box = document.createElement("div"); box.className = "selbox"; box.id = "selbox"; tl.insertBefore(box, head); }
+    const box = document.getElementById("selbox");
+    const at = toFrame(ev.clientX);
+    let mode = "new", lo0 = at, hi0 = at;
+    if (sel && box) {
+      if (ev.target.closest(".hdl")) { mode = ev.target.closest(".hdl").dataset.edge; lo0 = sel.start; hi0 = sel.end; }
+      else if (ev.target.closest("#selbox")) { mode = "move"; lo0 = sel.start; hi0 = sel.end; }
+    }
+    let lo = lo0, hi = hi0;
     const draw = () => {
-      const lo = Math.min(a, b), hi = Math.max(a, b);
-      box.style.left = (100 * lo / r.length) + "%"; box.style.width = (100 * Math.max(hi - lo, 1) / r.length) + "%";
+      const b = box || tl.appendChild(Object.assign(document.createElement("div"), { className: "selbox", id: "selbox" }));
+      b.style.left = (100 * lo / r.length) + "%"; b.style.width = (100 * Math.max(hi - lo, 1) / r.length) + "%";
     };
-    draw();
-    tl.onpointermove = m => { b = toFrame(m.clientX); draw(); p.seek(Math.min(b, r.length - 1) / r.fps); };
+    tl.onpointermove = m => {
+      const f = toFrame(m.clientX);
+      if (mode === "move") {
+        const len = hi0 - lo0, d = Math.max(-lo0, Math.min(r.length - hi0, f - at));
+        lo = lo0 + d; hi = lo + len;
+      } else {
+        const fixed = mode === "start" ? hi0 : mode === "end" ? lo0 : at;   // the edge that stays put
+        lo = Math.min(fixed, f); hi = Math.max(fixed, f);
+      }
+      draw();                              // selecting frames never moves the playhead
+    };
     tl.onpointerup = () => {
       tl.onpointermove = tl.onpointerup = null;
-      let lo = Math.min(a, b), hi = Math.max(a, b);
-      if (hi - lo < 2) {                         // a click selects about one second around it
+      if (mode === "move" && lo === lo0) return;                    // a click inside the selection: nothing to do
+      if (hi - lo < 2) {                         // a click on the bar selects about one second around it
         const w = Math.max(1, Math.round(r.fps));
         lo = Math.max(0, Math.min(r.length - w, lo - Math.round(w / 2)));
         hi = Math.min(r.length, lo + w);
       }
-      if (sel && sel.cutId) sel = null;          // a cut's span is fixed: undo it and cut again
-      if (sel) {                                 // resize; untouched defaults follow the new span
-        const d = sel.id ? {} : defaultsFor(r, lo, hi);
-        sel = { ...sel, start: lo, end: hi, dirty: true,
-                ...(sel.id || sel.driverSet ? {} : { driver: d.driver }),
-                ...(sel.id || sel.segmentSet || sel.newseg ? {} : { segment: d.segment }) };
-      } else sel = { start: lo, end: hi, text: "", newseg: "", ...defaultsFor(r, lo, hi) };
-      notice = "";
-      render(r, lo / r.fps);
-      const t = document.getElementById("lbtext"); if (t && !sel.id) t.focus();
+      setSpan(r, lo, hi);
     };
   };
   document.querySelectorAll(".ev").forEach(el => {
     const go = () => el.dataset.open && canEdit(r) ? openLabel(r, el.dataset.open) : p.seek(Math.max(0, +el.dataset.frame / r.fps - 1));
     el.onclick = go; el.onkeydown = ev => { if (ev.key === "Enter") { ev.stopPropagation(); go(); } };
   });
-  const text = document.getElementById("lbtext"), newseg = document.getElementById("lbnewseg");
+  const text = document.getElementById("lbtext"), newseg = document.getElementById("lbnewseg"), newdrive = document.getElementById("lbnewdrive");
+  if (newdrive) newdrive.oninput = () => { sel.newdrive = newdrive.value; sel.driverSet = sel.dirty = true; };
   if (text) text.oninput = () => { sel.text = text.value; sel.dirty = true; };
-  if (newseg) newseg.oninput = () => { sel.newseg = newseg.value; sel.dirty = true; };
+  if (newseg) newseg.oninput = () => { sel.newseg = newseg.value; sel.segmentSet = sel.dirty = true; };
   document.getElementById("detail").onclick = ev => {
     const b = ev.target.closest("button"); if (!b || b.id) return;
-    if (b.dataset.driver) { sel.driver = sel.driver === b.dataset.driver ? null : b.dataset.driver; sel.driverSet = sel.dirty = true; return render(r, p.t); }
+    if (b.dataset.driver) { sel.driver = sel.driver === b.dataset.driver && !sel.newdrive ? null : b.dataset.driver; sel.newdrive = ""; sel.driverSet = sel.dirty = true; return render(r, p.t); }
     if (b.dataset.seg !== undefined) { sel.segment = sel.segment === b.dataset.seg && !sel.newseg ? null : b.dataset.seg; sel.newseg = ""; sel.segmentSet = sel.dirty = true; return render(r, p.t); }
     if (b.dataset.show !== undefined) return p.seek(Math.max(0, +b.dataset.show / r.fps - 0.5));
     if (b.dataset.cut) return decide(r, b.dataset.cut, true, "accept" + editSpan(r, b.dataset.cut));
@@ -491,7 +529,10 @@ document.addEventListener("keydown", e => {
   else if (k === "ArrowLeft") { e.preventDefault(); player.seek(player.t - n / r.fps); }
   else if (k === "j" || k === "ArrowDown") { e.preventDefault(); step(1); }
   else if (k === "k" || k === "ArrowUp") { e.preventDefault(); step(-1); }
-  else if (k === "e" && canEdit(r)) { editing = !editing; if (!editing) discard(r); render(r, player.t); }
+  else if (k === "e" && canEdit(r)) {
+    editing = !editing;
+    if (!editing) { discard(r); render(r, player.t); } else if (!sel) defaultSelection(r); else render(r, player.t);
+  }
   else if (k === "Escape" && sel) act(r, "cancel");
 });
 

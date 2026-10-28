@@ -12,7 +12,7 @@ Edit kinds and their payloads:
                  moves the shared boundary between recorded steps `index` and `index + 1`
   reject_run     {}                           the whole run is left out of training
   note           {"frame": int, "text": str}
-  label          {"start": int, "end": int, "text": str, "driver": "policy" | "rescue" | None, "segment": str | None}
+  label          {"start": int, "end": int, "text": str, "driver": drive mode, e.g. "policy" or "rescue" | None, "segment": str | None}
                  a person's description of frames [start, end) in plain language. An agent reads it later and
                  records what it means with `interpret()`; an interpretation of train="exclude" leaves the span
                  out of training.
@@ -40,7 +40,6 @@ from . import store
 from .schema import TERMINATION_REASONS
 
 KINDS = ("outcome", "failure_start", "exclude", "step_boundary", "reject_run", "note", "label")
-DRIVERS = ("policy", "rescue")
 TRAIN_USE = ("keep", "exclude")
 SOURCES = ("agent", "human")
 STATUSES = ("proposed", "accepted", "rejected")
@@ -227,13 +226,13 @@ def check_payload(kind: str, payload: dict, manifest: dict) -> dict:
         driver, segment = payload.get("driver"), payload.get("segment")
         if not isinstance(text, str) or len(text) > 2000:
             raise ReviewError("label text must be at most 2000 characters")
-        if driver is not None and driver not in DRIVERS:
-            raise ReviewError(f"driver must be one of {DRIVERS} or null")
+        if driver is not None and (not isinstance(driver, str) or not driver.strip() or len(driver) > 50):
+            raise ReviewError("drive mode must be a short name (policy, rescue or your own) or null")
         if segment is not None and (not isinstance(segment, str) or not segment.strip() or len(segment) > 100):
             raise ReviewError("segment must be a short name or null")
         if not text.strip():
             raise ReviewError("a label needs a description of what happens")
-        return {"start": a, "end": b, "text": text.strip(), "driver": driver,
+        return {"start": a, "end": b, "text": text.strip(), "driver": driver.strip() if driver else None,
                 "segment": segment.strip() if segment else None}
     text = payload.get("text")
     if not isinstance(text, str) or not text.strip() or len(text) > 2000:

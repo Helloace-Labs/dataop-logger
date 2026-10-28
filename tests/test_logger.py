@@ -968,7 +968,7 @@ def test_labels_replace_interpret_and_mask(tmp_path):
     modes = ["base"] * 30 + ["expert"] * 10
     lb = rv.add_edit(run.run_path, m, "label", {"start": 2, "end": 6, "text": "my hand blocks the camera",
                                                 "driver": "policy", "segment": "grasp"})
-    for bad in [{"start": 6, "end": 6, "text": "x"}, {"start": 0, "end": 3}, {"start": 0, "end": 3, "driver": "human"},
+    for bad in [{"start": 6, "end": 6, "text": "x"}, {"start": 0, "end": 3}, {"start": 0, "end": 3, "text": "x", "driver": "d" * 51},
                 {"start": 0, "end": 3, "segment": " "}, {"start": 0, "end": 41, "text": "x"}]:
         with pytest.raises(rv.ReviewError):
             rv.add_edit(run.run_path, m, "label", bad)
@@ -1088,3 +1088,10 @@ def test_history_byte_cap(tmp_path, monkeypatch):
             rv.add_edit(run.run_path, m, "exclude", {"start": i, "end": i + 1})
     hist = rv.load(run.run_path)["history"]
     assert 0 < len(hist) < 10 and len(json.dumps(hist)) <= 2000
+
+
+def test_label_custom_drive_mode(tmp_path):
+    from dataop_logger import review as rv
+    ds, run, m = _review_fixture(tmp_path)
+    rv.add_edit(run.run_path, m, "label", {"start": 1, "end": 3, "text": "teleop nudge", "driver": " teleop "})
+    assert rv.effective(m, rv.load(run.run_path))["labels"][0]["driver"] == "teleop"

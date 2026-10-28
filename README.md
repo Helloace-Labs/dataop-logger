@@ -158,10 +158,10 @@ When runs carry `failure_mode` and `subgoals`, the run list opens with failed ru
 
 ## Labelling and cutting runs
 
-Open a run in the viewer and press **Edit** (or E). Drag across the run bar to select frames, then either:
+Open a run in the viewer and press **Edit** (or E). A two-second selection starts at the playhead. Drag inside it to move it, drag either edge to resize it (an edge can cross the other), or drag anywhere else on the bar to select new frames. The playhead has its own strip under the bar, so selecting frames never moves it. Then either:
 
 - **Cut** them. Cut frames stay in the recording but are left out of training. Click a cut to undo it.
-- **Label** them. Say what happens in plain words, and optionally note who drove (policy or rescue) and the task segment, such as grasp or lift, which helps on long tasks. Click a label to change or delete it, or drag again to change its span.
+- **Label** them. Say what happens in plain words. The **drive mode** (policy, rescue, or one you add) and the **task segment** (the recorded steps, or one you add) start from what was recorded in those frames; change them if they're wrong. Segments help on long tasks. Click a label to change or delete it, or drag again to change its span.
 
 **Undo.** Cmd+Z (Ctrl+Z on Windows and Linux) or the Undo button reverts your last change in the page, one step at a time: a cut, a label, a deleted label, "Cut all", or a run of the idle finder. Each step is recorded in the run's `review.json`, and a step can only be undone if nothing changed those edits since. Inside the text box, Cmd+Z undoes typing as usual.
 
