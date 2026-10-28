@@ -427,13 +427,14 @@ function render(r, t0) {
     <div class="timeline ${editing ? "editing" : ""}" id="tl" style="--pinrows:${(r.review.major || []).some(m => m.kind === "failure") ? 1 : 0}">
       <div class="lane" aria-label="Task segments">${(r.review.segments || []).map(sg => {
         const shade = segShade(sg.name);
-        const tip = `Task segment: ${sg.name} · ${fmt(sg.start / r.fps)}–${fmt(sg.end / r.fps)}${sg.status === "failed" ? " · failed" : ""}${sg.from_label ? " · from a label" : ""}`;
-        return `<div class="sg shade${shade}" data-segkey="${esc("segment:" + sg.name + "@" + sg.start)}" style="left:${pct(sg.start)}%;width:${pct(sg.end - sg.start)}%" title="${esc(tip)}">
+        const tip = `Task segment: ${canon("task_segments", sg.name)} · ${fmt(sg.start / r.fps)}–${fmt(sg.end / r.fps)}`;
+        return `<div class="sg shade${shade}" data-segkey="${esc("segment:" + sg.name + "@" + sg.start)}" style="left:${pct(sg.start)}%;width:${pct(sg.end - sg.start)}%" data-tip="${esc(tip)}">
           <span>${esc(canon("task_segments", sg.name))}</span></div>`;
       }).join("")}${editing ? segBounds(r).map(b => `<span class="sbound" data-kind="${b.kind}" data-index="${b.index}" data-edge="${b.edge || ""}"
           data-lo="${b.lo}" data-hi="${b.hi}" style="left:${pct(b.at)}%" title="${esc(b.tip)}"></span>`).join("") : ""}</div>
       <div class="track">${drv(r).map((s, i) => `<div class="dspan" data-dindex="${i}" style="left:${pct(s[0])}%;width:${pct(s[1] - s[0])}%;background:${color(s[2])}"
-        title="${MODE[s[2]]}${s[3] ? " (" + esc(s[3]) + ")" : ""}: ${fmt(s[0] / r.fps)}–${fmt(s[1] / r.fps)}"></div>`).join("")}</div>
+        data-tip="${esc(`Drive mode: ${MODE[s[2]].toLowerCase()} · ${fmt(s[0] / r.fps)}–${fmt(s[1] / r.fps)}`)}"></div>`).join("")}</div>
+      <div class="bartip" id="bartip" hidden></div>
       ${editing ? drv(r).slice(0, -1).map((s, i) => `<span class="dbound" data-index="${i}" data-lo="${s[0] + 1}" data-hi="${drv(r)[i + 1][1] - 1}"
         style="left:${pct(s[1])}%" title="Drag to move when ${MODE[s[2]].toLowerCase()} hands over to ${MODE[drv(r)[i + 1][2]].toLowerCase()}"></span>`).join("") : ""}
       ${sug.map(x => `<div class="sugg-span" style="left:${pct(x.payload.start)}%;width:${pct(x.payload.end - x.payload.start)}%" title="${esc(x.reason || "")}"></div>`).join("")}
@@ -704,6 +705,16 @@ function wire(r, t0) {
     // only the playhead row moves the playhead; the lanes above it are for editing
   };
   document.querySelectorAll(".sg").forEach(x => { x.onmouseenter = () => x.classList.add("hl"); x.onmouseleave = () => x.classList.remove("hl"); });
+  const tip = document.getElementById("bartip");
+  tl.onmousemove = ev => {                      // one fast tooltip for segments and drive mode, in every mode
+    const el = ev.target.closest("[data-tip]");
+    if (!el || ev.buttons) { tip.hidden = true; return; }
+    const b = tl.getBoundingClientRect();
+    tip.textContent = el.dataset.tip; tip.hidden = false;
+    tip.style.left = Math.min(Math.max(0, ev.clientX - b.left + 12), b.width - tip.offsetWidth) + "px";
+    tip.style.top = (el.getBoundingClientRect().top - b.top - 26) + "px";
+  };
+  tl.onmouseleave = () => { tip.hidden = true; };
   document.querySelectorAll(".ev").forEach(el => {
     const go = () => el.dataset.open && canEdit(r) ? openLabel(r, el.dataset.open) : p.seek(+el.dataset.frame / r.fps);
     el.onclick = ev => { if (!ev.target.closest("input, button, [data-note]")) go(); };
