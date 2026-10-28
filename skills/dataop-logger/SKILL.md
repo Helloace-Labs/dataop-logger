@@ -130,6 +130,14 @@ People label spans in the viewer in plain language. When the user asks you to re
 3. Record it: `dataop-logger interpret <dataset_root> <run_id> <label_id> --train keep|exclude --meaning "<one short sentence>"`.
 4. If a label is ambiguous, ask the user instead of guessing, and quote it.
 
+## Describing major events (AI feature)
+
+Every run's major events are the same three kinds for any task: drive mode changes, task segment starts, and the moment the policy fails, plus the run's end. Each has one note with the details. When the user asks you to describe them:
+
+1. Run `dataop-logger events <dataset_root> --run <run_id>`. Each event has a `key`, `time_s`, `title` and the current `note`; `note_by` is `recorded` when the note came from the robot stack.
+2. Watch the video around each event (the dataset's `videos/` files; the viewer shows which file and offset each episode uses) and decide what actually happened.
+3. Write one short, plain note per event: `dataop-logger note <dataset_root> <run_id> <key> --text "<what happened>" --by <your name>`. For the failure event, say what went wrong just before it. If the failure is marked "estimated" and the video shows it started elsewhere, tell the user the time instead of guessing.
+
 ## Suggesting cuts (AI features)
 
 When the user asks you to find frames that should not be trained on (idle stretches, resets, camera problems), suggest them instead of cutting them: `dataop-logger suggest-cut <dataset_root> <run_id> <start> <end> --reason "<short description>" --by <your name>`. Frames are half-open `[start, end)`. Suggestions show in the viewer in light grey for the person to cut or keep. `dataop-logger find-idle` runs the built-in idle finder if you only need that.

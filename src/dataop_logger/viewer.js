@@ -27,7 +27,7 @@ function frac(r, mode) { return r.segments.filter(s => s[2] === mode).reduce((a,
 function activeEdits(r) {
   const acc = r.review.edits.filter(e => e.status === "accepted").sort((a, b) => (a.accepted_seq || 0) - (b.accepted_seq || 0));
   const multi = k => k === "exclude" || k === "note" || k === "label";
-  const slot = e => e.kind === "step_boundary" ? "sb" + e.payload.index : e.kind;
+  const slot = e => e.kind === "step_boundary" ? "sb" + e.payload.index : e.kind === "event_note" ? "en" + e.payload.key : e.kind;
   const latest = {};
   acc.forEach(e => { if (!multi(e.kind)) latest[slot(e)] = e; });
   return acc.filter(e => multi(e.kind) || latest[slot(e)] === e);
@@ -225,6 +225,7 @@ function selPanel(r) {
     <div class="lbfoot">
       <button class="btn primary" data-act="save" title="Save the label (Cmd/Ctrl+Enter)">Save</button>
       ${sel.id ? "" : `<button class="btn" data-act="cut" title="Leave these frames out of training. The recording is not changed.">Cut</button>`}
+      ${sel.id ? "" : `<button class="btn" data-act="failhere" title="Mark the start of the selection as the moment the policy fails">Policy fails here</button>`}
       <button class="btn" data-act="cancel">Cancel</button>
       ${sel.id ? `<button class="btn bad" data-act="delete">Delete</button>` : ""}
       ${status}
@@ -317,9 +318,9 @@ function render(r, t0) {
         title="${MODE[s[2]]}${s[3] ? " (" + esc(s[3]) + ")" : ""}: frames ${s[0]}–${s[1]}"></div>`).join("")}</div>
       ${sug.map(x => `<div class="sugg-span" style="left:${pct(x.payload.start)}%;width:${pct(x.payload.end - x.payload.start)}%" title="${esc(x.reason || "")}"></div>`).join("")}
       ${cs.map(c => `<div class="cut ${sel && sel.cutId === c.id ? "on" : ""}" data-cut-id="${esc(c.id)}" style="left:${pct(c.start)}%;width:${pct(c.end - c.start)}%" title="Cut${c.reason ? ": " + esc(c.reason) : ""}"></div>`).join("")}
-      ${majorEvents(r).filter(m => m.span).map(m => `<div class="attnspan" style="left:${pct(m.span[0])}%;width:${pct(m.span[1] - m.span[0])}%" title="${esc(m.text)}"></div>`).join("")}
+      ${(r.review.major || []).filter(m => m.window).map(m => `<div class="attnspan" style="left:${pct(m.window[0])}%;width:${pct(m.window[1] - m.window[0])}%" title="The seconds before the policy fails: check these frames"></div>`).join("")}
       <div class="pins">${pinRows(r).map(m => {
-        const desc = `${m.n}. ${m.frame < 0 ? "before recording" : fmt(m.frame / r.fps)} ${m.text}`;
+        const desc = `${m.n}. ${fmt(m.frame / r.fps)} ${m.title}${m.note ? ": " + m.note : ""}`;
         return `<button class="pin ${m.tone}" data-pin="${m.n}" data-frame="${m.at}" style="left:${pct(m.at)}%;top:${m.row * 20}px;--row:${m.row}"
           title="${esc(desc)}" aria-label="${esc("Event " + desc)}">${m.n}</button>`;
       }).join("")}</div>
@@ -346,81 +347,53 @@ function busy(r) {
   if (sel && sel.dirty) { notice = "Save or cancel the open label first."; noticeOk = false; render(r, player.t); return true; }
   return false;
 }
-// Major events: the moments that explain the run bar and matter for training data, in time order.
 // Interventions: stretches where a person or skill had any control (expert or blend), merged when contiguous.
 function interventions(r) {
   const out = [], segs = r.segments;
   segs.forEach(([a, b, mode, src], i) => {
     if (mode !== "expert" && mode !== "blend") return;
     const last = out[out.length - 1];
-    if (last && last.end === a) { last.end = b; if (src && !last.sources.includes(src)) last.sources.push(src); last.nextMode = segs[i + 1] ? segs[i + 1][2] : null; }
-    else out.push({ start: a, end: b, sources: src ? [src] : [], firstMode: mode,
-                    prevMode: i > 0 ? segs[i - 1][2] : null, nextMode: segs[i + 1] ? segs[i + 1][2] : null });
+    if (last && last.end === a) { last.end = b; if (src && !last.sources.includes(src)) last.sources.push(src); }
+    else out.push({ start: a, end: b, sources: src ? [src] : [] });
   });
   return out;
 }
 
-// Major events: the moments that explain the run bar and matter for training data, in time order.
-function majorEvents(r) {
-  const e = eff(r), fps = r.fps, out = [];
-  const add = (frame, text, tone = "", more = {}) =>
-    out.push({ frame: frame < 0 ? -1 : Math.min(r.length, frame), text, tone, order: out.length, ...more });
-  const recorded = r.events.map(ev => ({ ...ev, used: false }));
-  const first = r.segments[0];
-  if (first) add(0, `${MODE[first[2]]} in control at the start`, "");
-  e.subgoals.forEach(s => {
-    if (s.status === "completed") add(s.end_frame, `${s.name} done`, "ok", { tick: true });
-    if (s.status === "failed") add(s.end_frame, `${s.name} failed${s.reason ? ": " + s.reason : ""}`, "bad", { tick: true });
-    if (s.status === "unfinished") add(r.length, `${s.name} unfinished at run end`, "bad", { tick: false });
-  });
-  interventions(r).forEach(iv => {
-    // a takeover request logged up to a second before the switch explains it
-    const req = recorded.find(ev => !ev.used && ev.kind === "takeover" && ev.frame >= iv.start - fps && ev.frame <= iv.start);
-    if (req) req.used = true;
-    const why = req && [req.reason, req.text, req.source && !iv.sources.includes(req.source) && `requested by ${req.source}`,
-                        Math.abs(req.frame - iv.start) > fps / 5 && `requested at ${req.frame < 0 ? "before recording" : fmt(req.frame / fps)}`]
-                       .filter(Boolean).join(" · ");
-    const who = iv.sources.join(", ");
-    if (iv.start > 0) {
-      if (iv.prevMode === "base") {             // only the policy can have gone wrong right before it
-        const w = Math.max(0, iv.start - Math.round(2 * fps));
-        add(w, "Check the seconds before the takeover: this is where the policy went wrong", "attn", { span: [w, iv.start] });
-      }
-      add(iv.start, `${iv.firstMode === "expert" ? "Rescue takes over" : "Shared control starts"}${who ? " (" + who + ")" : ""}`, "warn",
-          { tick: true, note: why || "" });
-    } else if (why) add(0, `Takeover request: ${why}`, "warn");
-    if (iv.end < r.length)
-      add(iv.end, iv.nextMode === "base" ? "Policy back in control" : `${MODE[iv.nextMode] || "Nobody"} in control`, "", { tick: true });
-  });
-  if (e.failure_start !== null) add(e.failure_start, "Failure starts (marked)", "bad", { tick: true });
-  recorded.filter(ev => !ev.used).forEach(ev =>
-    add(ev.frame, [ev.kind, ev.source, ev.reason, ev.text].filter(Boolean).join(" · "), "", { tick: ev.frame >= 0 }));
-  cuts(r).forEach(c => add(c.start, `Cut ${((c.end - c.start) / fps).toFixed(1)} s${c.reason ? ": " + c.reason : ""}`, "muted"));
-  suggestions(r).forEach(x => add(x.payload.start, `Suggested cut ${((x.payload.end - x.payload.start) / fps).toFixed(1)} s: ${x.reason || ""}`, "muted"));
-  e.labels.forEach(l => add(l.start, `Label: ${l.text}`, "lbl", { open: l.id,
-    note: [l.driver, l.segment, l.interpretation && `agent: ${l.interpretation.train === "exclude" ? "leave out" : "keep"}`].filter(Boolean).join(" · ") }));
-  add(r.length, e.rejected ? "Run rejected" : e.termination_reason === "success" ? "Run ends: success"
-    : `Run ends: ${e.termination_reason}${e.failure_mode ? " (" + e.failure_mode.replace(/_/g, " ") + ")" : ""}`,
-    e.termination_reason === "success" ? "ok" : "bad");
-  return out.sort((a, b) => a.frame - b.frame || a.order - b.order);
-}
-// Each major event gets a number; the same number sits on the run bar at that moment.
-function numbered(r) { return majorEvents(r).map((m, i) => ({ ...m, n: i + 1 })); }
+// Major events come from the server: drive mode changes, task segment starts and the moment the policy fails,
+// the same three kinds for every task. Each has one note with the details.
+const TONE = { failure: "bad", segment: "ok", end: "muted" };
+const toneOf = m => m.kind === "drive" ? (m.title.startsWith("Policy") ? "pol" : "warn") : TONE[m.kind] || "";
+function numbered(r) { return (r.review.major || []).map((m, i) => ({ ...m, n: i + 1, tone: toneOf(m) })); }
 function pinRows(r) {           // one pin per event at its exact moment; pins that would overlap move down a row
   const near = Math.max(1, Math.round(r.length * 0.022)), lastInRow = [];
   return numbered(r).map(m => {
-    const f = Math.max(0, m.frame);             // events before recording sit at the left edge
+    const f = Math.max(0, m.frame);
     let row = lastInRow.findIndex(x => f - x > near);
     if (row < 0) row = lastInRow.length;
     lastInRow[row] = f;
     return { ...m, at: f, row };
   });
 }
+let noteEdit = null;            // key of the event whose note is being edited
+let aiHelp = false;              // the "describe events" AI feature runs on the user's own agent for now
 function eventsCard(r) {
-  return `<div class="card major"><h3>Major events</h3>${numbered(r).map(m => `
-    <div class="ev ${m.tone}" tabindex="0" data-n="${m.n}" data-frame="${Math.max(0, Math.min(m.frame, r.length - 1))}"${m.open ? ` data-open="${esc(m.open)}"` : ""}>
-      <span class="time">${m.frame < 0 ? "before" : fmt(m.frame / r.fps)}</span><span class="num-badge">${m.n}</span>
-      <span>${esc(m.text)}${m.note ? `<span class="sub">${esc(m.note)}</span>` : ""}</span></div>`).join("")}</div>`;
+  const prompt = `Read skills/dataop-logger/SKILL.md, then describe the major events of run ${r.run_id} in ${DATA.root}: watch the video around each event and write one short note per event with dataop-logger note.`;
+  return `<div class="card major"><div class="cardhead"><h3>Major events</h3>
+    ${editable ? `<button class="btn sm ai" data-act="describe" title="AI feature: your agent watches the video and writes the notes">✦ Describe events</button>` : ""}</div>
+    ${aiHelp ? `<div class="aihelp">Your agent writes these notes. Ask it:<code id="aiprompt">${esc(prompt)}</code>
+      <button class="btn sm" data-act="copyprompt">Copy</button><button class="btn sm" data-act="closeai">Close</button>
+      <span class="sub">Refresh after it finishes to see the notes.</span></div>` : ""}
+    ${numbered(r).map(m => {
+    const editingNote = noteEdit === m.key;
+    const note = editingNote
+      ? `<span class="noteedit"><input id="notein" maxlength="500" value="${esc(m.note || "")}" placeholder="What happened here?">
+         <button class="btn sm primary" data-note-save="${esc(m.key)}">Save</button><button class="btn sm" data-note-cancel="1">Cancel</button></span>`
+      : m.note ? `<span class="sub note" ${canEdit(r) ? `data-note="${esc(m.key)}" title="Click to edit"` : ""}>${esc(m.note)}${m.note_by && m.note_by !== "recorded" ? ` · ${esc(m.note_by)}` : ""}</span>`
+      : canEdit(r) && m.kind !== "end" ? `<span class="sub note add" data-note="${esc(m.key)}">+ note</span>` : "";
+    return `<div class="ev ${m.tone}" tabindex="0" data-n="${m.n}" data-frame="${Math.max(0, Math.min(m.frame, r.length - 1))}">
+      <span class="time">${fmt(m.frame / r.fps)}</span><span class="num-badge">${m.n}</span>
+      <span><b class="evt">${esc(m.title)}</b>${m.estimated ? ` <span class="pill tag" title="Not marked yet: estimated from the recording">estimated</span>` : ""}${note}</span></div>`;
+  }).join("")}</div>`;
 }
 
 function aboutCard(r) {
@@ -488,6 +461,17 @@ async function act(r, what) {
     return;
   }
   if (what === "idle") return send(r, { op: "find_idle", what: "find idle frames" });
+  if (what === "describe") { aiHelp = !aiHelp; return render(r, player.t); }
+  if (what === "closeai") { aiHelp = false; return render(r, player.t); }
+  if (what === "copyprompt") {
+    try { await navigator.clipboard.writeText(document.getElementById("aiprompt").textContent); notice = "Copied."; noticeOk = true; }
+    catch (err) { notice = "Copy failed; select the text instead."; noticeOk = false; }
+    return render(r, player.t);
+  }
+  if (what === "failhere" && sel) {
+    const f = sel.start; sel = null; delete drafts[r.run_id];
+    return send(r, { op: "add", kind: "failure_start", payload: { frame: f }, what: "policy fails at " + fmt(f / r.fps) });
+  }
   if (what === "cutall" || what === "keepall") {
     const ids = suggestions(r).map(x => x.id);
     return send(r, { op: "decide_many", edit_ids: ids, accept: what === "cutall",
@@ -604,13 +588,16 @@ function wire(r, t0) {
   document.querySelectorAll(".major .ev").forEach(x => { x.onmouseenter = () => light([x.dataset.n], true); x.onmouseleave = () => light([], false); });
   document.querySelectorAll(".ev").forEach(el => {
     const go = () => el.dataset.open && canEdit(r) ? openLabel(r, el.dataset.open) : p.seek(+el.dataset.frame / r.fps);
-    el.onclick = go; el.onkeydown = ev => { if (ev.key === "Enter") { ev.stopPropagation(); go(); } };
+    el.onclick = ev => { if (!ev.target.closest("input, button, [data-note]")) go(); };
+    el.onkeydown = ev => { if (ev.key === "Enter" && ev.target === el) { ev.stopPropagation(); go(); } };
   });
   const text = document.getElementById("lbtext"), newseg = document.getElementById("lbnewseg"), newdrive = document.getElementById("lbnewdrive");
   if (newdrive) newdrive.oninput = () => { sel.newdrive = newdrive.value; sel.driverSet = sel.dirty = true; };
   if (text) text.oninput = () => { sel.text = text.value; sel.dirty = true; };
   if (newseg) newseg.oninput = () => { sel.newseg = newseg.value; sel.segmentSet = sel.dirty = true; };
   document.getElementById("detail").onclick = ev => {
+    const nt = ev.target.closest("[data-note]");
+    if (nt) { ev.stopPropagation(); noteEdit = nt.dataset.note; render(r, p.t); const i = document.getElementById("notein"); if (i) i.focus(); return; }
     const b = ev.target.closest("button"); if (!b || b.id) return;
     if (b.dataset.driver) { sel.driver = sel.driver === b.dataset.driver && !sel.newdrive ? null : b.dataset.driver; sel.newdrive = ""; sel.driverSet = sel.dirty = true; return render(r, p.t); }
     if (b.dataset.seg !== undefined) { sel.segment = sel.segment === b.dataset.seg && !sel.newseg ? null : b.dataset.seg; sel.newseg = ""; sel.segmentSet = sel.dirty = true; return render(r, p.t); }
@@ -619,6 +606,12 @@ function wire(r, t0) {
     if (b.dataset.keep) return decide(r, b.dataset.keep, false, "keep" + editSpan(r, b.dataset.keep));
     if (b.dataset.uncut) return decide(r, b.dataset.uncut, false, "undo" + editSpan(r, b.dataset.uncut));
     if (b.dataset.act === "undo") return undoLast();
+    if (b.dataset.noteSave) {
+      const t = document.getElementById("notein").value.trim(); if (!t) return;
+      const key = b.dataset.noteSave; noteEdit = null;
+      return send(r, { op: "note", key, text: t, what: "note: " + t.slice(0, 50) });
+    }
+    if (b.dataset.noteCancel) { noteEdit = null; return render(r, p.t); }
     if (b.dataset.act) return act(r, b.dataset.act);
   };
   vids.forEach(v => v.addEventListener("loadedmetadata", () => { v.currentTime = +v.dataset.t0 + p.t; }, { once: true }));
@@ -627,6 +620,11 @@ function wire(r, t0) {
 
 document.addEventListener("keydown", e => {
   if (!current || !player || e.altKey) return;
+  if (e.target.id === "notein") {
+    if (e.key === "Enter") { e.preventDefault(); document.querySelector("[data-note-save]").click(); }
+    else if (e.key === "Escape") { noteEdit = null; render(current, player.t); }
+    return;
+  }
   if (e.target.closest("textarea, input")) {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); act(current, "save"); }
     else if (e.key === "Escape") act(current, "cancel");

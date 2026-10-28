@@ -15,6 +15,7 @@ import numpy as np
 import pyarrow.dataset as pads
 import pyarrow.parquet as pq
 
+from . import events as ev
 from . import review as rv
 from . import store
 
@@ -54,13 +55,20 @@ def _video_table(root: Path) -> dict[int, dict]:
 RUN_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 
 
+def _modes(run_path: Path) -> tuple[list, list]:
+    t = pq.read_table(run_path / "ticks.parquet", columns=["control_mode", "expert_source"])
+    return t.column("control_mode").to_pylist(), t.column("expert_source").to_pylist()
+
+
 def _review_state(run_path: Path, m: dict) -> dict:
+    modes, sources = _modes(run_path)
     try:
         r = rv.load(run_path)
         return {"edits": r["edits"], "rev": r["rev"], "effective": rv.effective(m, r), "undoable": rv.undoable(r),
-                "error": None}
+                "major": ev.major_events(m, r, modes, sources), "error": None}
     except rv.ReviewError as e:                        # shown on the run; editing it is disabled
-        return {"edits": [], "rev": -1, "effective": rv.effective(m, rv.empty()), "undoable": [], "error": str(e)}
+        return {"edits": [], "rev": -1, "effective": rv.effective(m, rv.empty()), "undoable": [],
+                "major": ev.major_events(m, rv.empty(), modes, sources), "error": str(e)}
 
 
 def collect(root: Path) -> dict:
@@ -102,7 +110,7 @@ def collect(root: Path) -> dict:
     modes = sorted({r["failure_mode"] for r in runs if r["failure_mode"]} |
                    {e["payload"].get("failure_mode") for r in runs for e in r["review"]["edits"]
                     if e["kind"] == "outcome" and e["payload"].get("failure_mode")})
-    return {"dataset": root.name, "runs": runs, "failure_modes": modes, "editable": False}
+    return {"dataset": root.name, "root": str(root), "runs": runs, "failure_modes": modes, "editable": False}
 
 
 def build(root: Path, editable: bool = False) -> Path:
@@ -201,10 +209,12 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
     def _apply(self, op, req, run_path, m, rev):
         summary = None
         if op == "add":
-            if req.get("kind") not in ("label", "exclude"):
-                raise rv.ReviewError("the viewer adds labels and cuts only")
+            if req.get("kind") not in ("label", "exclude", "failure_start"):
+                raise rv.ReviewError("the viewer adds labels, cuts and the policy-failure moment only")
             payload = req.get("payload", {})
             rv.add_edit(run_path, m, req.get("kind"), payload, source="human", expect_rev=rev)
+        elif op == "note":
+            rv.add_event_note(run_path, m, req.get("key"), req.get("text"), by="person", source="human", expect_rev=rev)
         elif op == "decide":
             rv.decide(run_path, m, req.get("edit_id"), req.get("accept"), req.get("payload"), expect_rev=rev)
         elif op == "decide_many":
@@ -216,7 +226,7 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
         elif op == "replace":
             rv.replace_edit(run_path, m, req.get("edit_id"), req.get("payload"), expect_rev=rev)
         else:
-            raise rv.ReviewError("op must be add, decide, decide_many, replace, find_idle or undo")
+            raise rv.ReviewError("op must be add, note, decide, decide_many, replace, find_idle or undo")
         return summary
 
     def send_head(self):

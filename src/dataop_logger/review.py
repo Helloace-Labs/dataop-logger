@@ -39,7 +39,7 @@ import pyarrow.parquet as pq
 from . import store
 from .schema import TERMINATION_REASONS
 
-KINDS = ("outcome", "failure_start", "exclude", "step_boundary", "reject_run", "note", "label")
+KINDS = ("outcome", "failure_start", "exclude", "step_boundary", "reject_run", "note", "label", "event_note")
 TRAIN_USE = ("keep", "exclude")
 SOURCES = ("agent", "human")
 STATUSES = ("proposed", "accepted", "rejected")
@@ -218,6 +218,13 @@ def check_payload(kind: str, payload: dict, manifest: dict) -> dict:
         return {"index": i, "before": a["name"], "after": b["name"], "frame": f}
     if kind == "reject_run":
         return {}
+    if kind == "event_note":
+        key, text = payload.get("key"), payload.get("text")
+        if not isinstance(key, str) or not 0 < len(key) <= 120 or any(c in key for c in "\n\r"):
+            raise ReviewError("event_note needs the event's key")
+        if not isinstance(text, str) or not text.strip() or len(text) > 500:
+            raise ReviewError("a note must be 1 to 500 characters")
+        return {"key": key, "text": text.strip()}
     if kind == "label":
         a, b = frame(payload.get("start"), "start", 0, length), frame(payload.get("end"), "end", 0, length)
         if a >= b:
@@ -242,7 +249,11 @@ def check_payload(kind: str, payload: dict, manifest: dict) -> dict:
 
 def _slot(e: dict):
     """Edits that compete: same kind, and for step boundaries the same index."""
-    return (e["kind"], e["payload"].get("index")) if e["kind"] == "step_boundary" else e["kind"]
+    if e["kind"] == "step_boundary":
+        return (e["kind"], e["payload"].get("index"))
+    if e["kind"] == "event_note":
+        return (e["kind"], e["payload"].get("key"))
+    return e["kind"]
 
 
 def _accept(review: dict, edit: dict) -> None:
@@ -332,6 +343,23 @@ def decide(run_path: Path, manifest: dict, edit_id: str, accept: bool, payload: 
             _accept(review, edit)
         else:
             edit["status"], edit["decided_at"] = "rejected", _now()
+    return edit
+
+
+def add_event_note(run_path: Path, manifest: dict, key: str, text: str, by: str, source: str = "agent",
+                   expect_rev: int | None = None) -> dict:
+    """A note on a major event (its details). Notes are descriptions, not training changes, so an agent's note
+    applies at once like a person's; the newest note for an event wins and undo restores the previous one."""
+    if source not in SOURCES:
+        raise ReviewError(f"source must be one of {SOURCES}")
+    if not isinstance(by, str) or not by.strip() or len(by) > 100:
+        raise ReviewError("by must name who wrote the note in 1 to 100 characters")
+    payload = check_payload("event_note", {"key": key, "text": text}, manifest)
+    with transaction(run_path, expect_rev) as review:
+        edit = {"id": uuid.uuid4().hex[:12], "kind": "event_note", "payload": payload, "source": source,
+                "reason": None, "by": by.strip(), "status": "proposed", "created_at": _now(), "decided_at": None}
+        review["edits"].append(edit)
+        _accept(review, edit)
     return edit
 
 
@@ -485,7 +513,7 @@ def effective(manifest: dict, review: dict) -> dict:
     """The run as training should see it after the edits in effect."""
     check_review(manifest, review)
     act = active_edits(review)
-    single = {e["kind"]: e["payload"] for e in act if e["kind"] not in MULTI and e["kind"] != "step_boundary"}
+    single = {e["kind"]: e["payload"] for e in act if e["kind"] not in MULTI and e["kind"] not in ("step_boundary", "event_note")}
     out = {
         "termination_reason": manifest["termination_reason"], "failure_mode": manifest.get("failure_mode"),
         "failure_start": None, "excludes": [e["payload"] for e in act if e["kind"] == "exclude"],
@@ -493,6 +521,9 @@ def effective(manifest: dict, review: dict) -> dict:
         "subgoals": [dict(s) for s in manifest.get("subgoals", [])], "reviewed": review["reviewed"],
         "labels": [{"id": e["id"], **e["payload"], "interpretation": e.get("interpretation")}
                    for e in act if e["kind"] == "label"],
+        "event_notes": {e["payload"]["key"]: {"text": e["payload"]["text"], "id": e["id"],
+                                              "by": e.get("by") or ("person" if e["source"] == "human" else "agent")}
+                        for e in act if e["kind"] == "event_note"},
     }
     if "outcome" in single:
         out["termination_reason"] = single["outcome"]["termination_reason"]

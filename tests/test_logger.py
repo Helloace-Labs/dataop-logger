@@ -1095,3 +1095,35 @@ def test_label_custom_drive_mode(tmp_path):
     ds, run, m = _review_fixture(tmp_path)
     rv.add_edit(run.run_path, m, "label", {"start": 1, "end": 3, "text": "teleop nudge", "driver": " teleop "})
     assert rv.effective(m, rv.load(run.run_path))["labels"][0]["driver"] == "teleop"
+
+
+def test_major_events_three_kinds_and_notes(tmp_path):
+    from dataop_logger import events, review as rv
+    from dataop_logger.cli import main
+    ds, run, m = _review_fixture(tmp_path)               # grasp 0-10, lift 10-30 failed, rescue from 30
+    modes = ["base"] * 30 + ["expert"] * 10
+    srcs = [None] * 30 + ["skill:rescue"] * 10
+    evs = events.major_events(m, rv.load(run.run_path), modes, srcs)
+    got = [(e["kind"], e["frame"], e["title"]) for e in evs]
+    assert got == [("drive", 0, "Policy drives"), ("segment", 0, "grasp"), ("segment", 10, "lift"),
+                   ("drive", 30, "Rescue drives"), ("failure", 30, "Policy fails"), ("end", 40, "Run ends: failure")]
+    fail = next(e for e in evs if e["kind"] == "failure")
+    assert fail["estimated"] and fail["window"] == [0, 30] and "lift failed" in fail["note"]
+    assert next(e for e in evs if e["key"] == "segment:lift@10")["note"] == "failed: slipped"
+    # a marked failure replaces the estimate; labels correct drive mode and segments
+    rv.add_edit(run.run_path, m, "failure_start", {"frame": 22})
+    rv.add_edit(run.run_path, m, "label", {"start": 25, "end": 30, "text": "operator nudged", "driver": "teleop",
+                                           "segment": "regrasp"})
+    evs = events.major_events(m, rv.load(run.run_path), modes, srcs)
+    got = [(e["kind"], e["frame"], e["title"]) for e in evs]
+    assert ("failure", 22, "Policy fails") in got and ("drive", 25, "Teleop drives") in got
+    assert ("segment", 25, "regrasp") in got
+    assert not next(e for e in evs if e["kind"] == "failure")["estimated"]
+    # notes: an agent's note replaces the recorded one; undo-able like any edit
+    assert main(["note", str(ds.root), run.run_id, "failure", "--text", "gripper slips at the cap", "--by", "vlm-agent"]) == 0
+    evs = events.major_events(m, rv.load(run.run_path), modes, srcs)
+    fail = next(e for e in evs if e["kind"] == "failure")
+    assert (fail["note"], fail["note_by"]) == ("gripper slips at the cap", "vlm-agent")
+    with pytest.raises(rv.ReviewError):
+        rv.add_event_note(run.run_path, m, "failure", " ", by="x")
+    assert V.validate(ds.root)["ok"]

@@ -1,4 +1,4 @@
-"""dataop-logger validate | repair | inspect | remap | view | labels | interpret | find-idle | suggest-cut"""
+"""dataop-logger validate | repair | inspect | remap | view | labels | interpret | events | note | find-idle | suggest-cut"""
 from __future__ import annotations
 
 import argparse
@@ -49,6 +49,15 @@ def _main(argv=None) -> int:
     it.add_argument("--meaning", required=True, help="one sentence: what the person meant")
     it.add_argument("--by", default="agent", help="name of the agent")
     it.add_argument("--replace", action="store_true", help="change an existing interpretation (kept in history)")
+    evp = sub.add_parser("events", help="major events of each run (drive mode, task segments, policy failure) as JSON")
+    evp.add_argument("root")
+    evp.add_argument("--run", default=None, help="only this run id")
+    nt = sub.add_parser("note", help="for your own agent: write the details of one major event")
+    nt.add_argument("root")
+    nt.add_argument("run_id")
+    nt.add_argument("key", help="the event key from `dataop-logger events`, e.g. failure or drive@384")
+    nt.add_argument("--text", required=True)
+    nt.add_argument("--by", default="agent", help="name of the agent")
     q = sub.add_parser("find-idle", help="AI feature: suggest cutting idle stretches (built-in finder)")
     q.add_argument("root")
     q.add_argument("--run", default=None, help="only this run id")
@@ -102,6 +111,31 @@ def _main(argv=None) -> int:
                 return 0
         print(f"no committed run {a.run_id}", file=sys.stderr)
         return 1
+    if a.cmd in ("events", "note"):
+        import pyarrow.parquet as pq
+        from . import events, review, store
+        out, found = [], False
+        for run_path, m in store.iter_manifests(Path(a.root), "committed"):
+            want = a.run if a.cmd == "events" else a.run_id
+            if want and m["run_id"] != want:
+                continue
+            found = True
+            if a.cmd == "note":
+                review.add_event_note(run_path, m, a.key, a.text, by=a.by)
+                print(f"{m['run_id']}: note on {a.key}")
+                continue
+            t = pq.read_table(run_path / "ticks.parquet", columns=["control_mode", "expert_source"])
+            evs = events.major_events(m, review.load(run_path), t.column("control_mode").to_pylist(),
+                                      t.column("expert_source").to_pylist())
+            rate = m["action_schema"]["rate_hz"]
+            out.append({"run_id": m["run_id"], "episode_index": m["episode_index"], "task": m["task"],
+                        "events": [{**e, "time_s": round(e["frame"] / rate, 2)} for e in evs]})
+        if not found:
+            print("no matching committed run", file=sys.stderr)
+            return 1
+        if a.cmd == "events":
+            print(V.to_json(out))
+        return 0
     if a.cmd in ("find-idle", "suggest-cut"):
         from . import review, store
         found = False
