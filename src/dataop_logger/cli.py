@@ -1,4 +1,4 @@
-"""dataop-logger validate | repair | inspect | remap | view"""
+"""dataop-logger validate | repair | inspect | remap | view | propose"""
 from __future__ import annotations
 
 import argparse
@@ -27,6 +27,9 @@ def main(argv=None) -> int:
     w.add_argument("--port", type=int, default=8765)
     w.add_argument("--no-open", action="store_true", help="do not open a browser")
     w.add_argument("--build-only", action="store_true", help="write dataop/view/index.html and exit")
+    w.add_argument("--read-only", action="store_true", help="browse only; no review edits")
+    q = sub.add_parser("propose", help="add agent review proposals (failure start, idle trims) to committed runs")
+    q.add_argument("root")
     a = p.parse_args(argv)
 
     if a.cmd == "validate":
@@ -55,7 +58,12 @@ def main(argv=None) -> int:
         if a.build_only:
             print(viewer.build(a.root))
         else:
-            viewer.serve(a.root, port=a.port, open_browser=not a.no_open)
+            viewer.serve(a.root, port=a.port, open_browser=not a.no_open, editable=not a.read_only)
+        return 0
+    if a.cmd == "propose":
+        from . import review
+        for line in review.propose(a.root):
+            print(line)
         return 0
     return 2
 

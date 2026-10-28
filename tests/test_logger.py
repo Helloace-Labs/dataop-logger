@@ -596,3 +596,104 @@ def test_subgoals_and_failure_mode(tmp_path):
     assert V.validate(ds.root)["ok"]
     info = V.inspect(ds.root)
     assert info["failure_modes"] == {"dropped_during_lift": 1} and info["failed_subgoals"] == {"lift": 1}
+
+
+def _failed_run_with_steps(log, n=40, take=30):
+    with log.run(task=TASK) as run:
+        run.subgoal("grasp", "started")
+        for i in range(n):
+            if i == 10:
+                run.subgoal("grasp", "completed")
+                run.subgoal("lift", "started")
+            a = np.full(6, i, np.float32)
+            if i < take:
+                run.add_frame(frame(i), sent_action=a, base_action=a, control_mode="base",
+                              inference_id=i, chunk_offset=0, **ts())
+            else:
+                if i == take:
+                    run.subgoal("lift", "failed", reason="slipped")
+                run.add_frame(frame(i), sent_action=a, expert_action=a, control_mode="expert",
+                              expert_source="skill:rescue", **ts())
+        run.end(termination_reason="failure", failure_mode="no_lift")
+    return run
+
+
+def test_review_edits_effective_and_train_mask(tmp_path):
+    from dataop_logger import review as rv
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        run = _failed_run_with_steps(log)
+    ds.finalize()
+    m = store.read_manifest(run.run_path)
+    modes = ["base"] * 30 + ["expert"] * 10
+    # agent proposal waits; accepting an adjusted payload applies the adjustment
+    p = rv.add_edit(run.run_path, m, "failure_start", {"frame": 12}, source="agent", reason="test")
+    assert rv.add_edit(run.run_path, m, "failure_start", {"frame": 12}, source="agent")["id"] == p["id"]
+    assert rv.effective(m, rv.load(run.run_path))["failure_start"] is None
+    rv.decide(run.run_path, m, p["id"], True, {"frame": 20})
+    eff = rv.effective(m, rv.load(run.run_path))
+    assert eff["failure_start"] == 20
+    mask = rv.train_mask(m, rv.load(run.run_path), modes)
+    assert mask[:20].all() and not mask[20:30].any() and mask[30:].all()
+    # human edits apply at once; a new outcome replaces the old one
+    rv.add_edit(run.run_path, m, "exclude", {"start": 0, "end": 3})
+    rv.add_edit(run.run_path, m, "outcome", {"termination_reason": "failure", "failure_mode": "dropped"})
+    rv.add_edit(run.run_path, m, "outcome", {"termination_reason": "failure", "failure_mode": "no_grasp"})
+    rv.add_edit(run.run_path, m, "step_boundary", {"before": "grasp", "after": "lift", "frame": 8})
+    r = rv.load(run.run_path)
+    eff = rv.effective(m, r)
+    assert eff["failure_mode"] == "no_grasp" and eff["excludes"] == [{"start": 0, "end": 3}]
+    assert [(s["name"], s["start_frame"], s["end_frame"]) for s in eff["subgoals"]] == [("grasp", 0, 8), ("lift", 8, 30)]
+    assert not rv.train_mask(m, r, modes)[:3].any()
+    for bad in [("exclude", {"start": 5, "end": 5}), ("failure_start", {"frame": 40}), ("failure_start", {"frame": True}),
+                ("outcome", {"termination_reason": "success", "failure_mode": "x"}), ("step_boundary",
+                {"before": "grasp", "after": "nope", "frame": 3}), ("bogus", {})]:
+        with pytest.raises(rv.ReviewError):
+            rv.add_edit(run.run_path, m, *bad)
+    rv.add_edit(run.run_path, m, "reject_run", {})
+    assert not rv.train_mask(m, rv.load(run.run_path), modes).any()
+    # the recorded run is untouched and still validates; the reader applies the mask
+    assert V.validate(ds.root)["ok"]
+    item = DataopDataset(lerobot_dataset.LeRobotDataset("test/ds", root=ds.root))[35]
+    assert not bool(item["dataop.train_mask"]) and not bool(item["dataop.dagger_mask"])
+
+
+def test_propose_and_review_api(tmp_path):
+    import http.client
+    import threading
+    from dataop_logger import review as rv, viewer
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        for _ in range(3):
+            record(log, 20)
+        run = _failed_run_with_steps(log)
+    ds.finalize()
+    lines = rv.propose(ds.root)
+    assert any("failure_start" in line for line in lines) and rv.propose(ds.root) == []
+    handler = type("H", (viewer._RangeHandler,), {"dataset_root": Path(ds.root), "editable": True})
+    import functools
+    import http.server
+    srv = http.server.ThreadingHTTPServer(("127.0.0.1", 0), functools.partial(handler, directory=str(ds.root)))
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+
+    def post(body, **hdr):
+        c = http.client.HTTPConnection("127.0.0.1", port)
+        h = {"Content-Type": "application/json", "X-Dataop": "1", **hdr}
+        c.request("POST", viewer.API, json.dumps(body), h)
+        r = c.getresponse()
+        return r.status, json.loads(r.read())
+    try:
+        assert post({"run_id": run.run_id, "op": "reviewed"}, **{"X-Dataop": "0"})[0] == 403
+        assert post({"run_id": run.run_id, "op": "reviewed"}, Origin="http://evil.example")[0] == 403
+        assert post({"run_id": "nope", "op": "reviewed"})[0] == 400
+        code, state = post({"run_id": run.run_id, "op": "add", "kind": "exclude", "payload": {"start": 1, "end": 4}})
+        assert code == 200 and state["effective"]["excludes"] == [{"start": 1, "end": 4}]
+        code, state = post({"run_id": run.run_id, "op": "reviewed", "reviewed": True})
+        assert code == 200 and state["reviewed"] is True
+        c = http.client.HTTPConnection("127.0.0.1", port)
+        c.request("GET", "/dataop/view/")
+        page = c.getresponse().read().decode()
+        assert '"editable": true' in page and "/*__DATA__*/null" not in page and '"reviewed": true' in page
+    finally:
+        srv.shutdown()

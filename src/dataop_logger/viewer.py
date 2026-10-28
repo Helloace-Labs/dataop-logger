@@ -12,6 +12,7 @@ from pathlib import Path
 import pyarrow.dataset as pads
 import pyarrow.parquet as pq
 
+from . import review as rv
 from . import store
 
 
@@ -47,6 +48,11 @@ def _video_table(root: Path) -> dict[int, dict]:
     return out
 
 
+def _review_state(run_path: Path, m: dict) -> dict:
+    r = rv.load(run_path)
+    return {"edits": r["edits"], "reviewed": r["reviewed"], "effective": rv.effective(m, r)}
+
+
 def collect(root: Path) -> dict:
     root = Path(root)
     videos = _video_table(root)
@@ -70,27 +76,94 @@ def collect(root: Path) -> dict:
             "env": (m.get("env") or {}).get("extras", {}),
             "started_at": m.get("started_at"),
             "videos": videos.get(m["episode_index"], []),
+            "review": _review_state(run_path, m),
         })
     runs.sort(key=lambda r: r["episode"])
-    return {"dataset": root.name, "runs": runs}
+    modes = sorted({r["failure_mode"] for r in runs if r["failure_mode"]} |
+                   {e["payload"].get("failure_mode") for r in runs for e in r["review"]["edits"]
+                    if e["kind"] == "outcome" and e["payload"].get("failure_mode")})
+    return {"dataset": root.name, "runs": runs, "failure_modes": modes, "editable": False}
 
 
-def build(root: Path) -> Path:
+def build(root: Path, editable: bool = False) -> Path:
     root = Path(root)
     data = collect(root)
-    html = (Path(__file__).with_name("viewer.html").read_text()
-            .replace("/*__DATA__*/null", json.dumps(data).replace("</", "<\\/")))
+    data["editable"] = editable
+    here = Path(__file__).parent
+    js = (here / "viewer.js").read_text().replace("/*__DATA__*/null", json.dumps(data).replace("</", "<\\/"))
+    html = (here / "viewer.html").read_text().replace('<script src="viewer.js"></script>', "<script>\n" + js + "</script>")
     out = store.dataop_dir(root) / "view" / "index.html"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html)
     return out
 
 
+API = "/dataop/api/review"
+MAX_BODY = 64 * 1024
+
+
 class _RangeHandler(http.server.SimpleHTTPRequestHandler):
-    """Static files with HTTP Range support, so browsers can seek inside the episode videos."""
+    """Static files with HTTP Range support, so browsers can seek inside the episode videos, plus the review API."""
+
+    dataset_root: Path = Path(".")
 
     def log_message(self, *a):
         pass
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store")
+        super().end_headers()
+
+    def _json(self, code: int, obj) -> None:
+        body = json.dumps(obj).encode()
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    editable: bool = True
+
+    def do_GET(self):
+        if self.path.split("?")[0] in ("/dataop/view/", "/dataop/view/index.html"):
+            with _WRITE_LOCK:                          # rebuilt on every load so a refresh shows saved edits
+                build(self.dataset_root, editable=self.editable)
+        return super().do_GET()
+
+    def do_POST(self):
+        # Only the page we served may write: a custom header forces a CORS preflight that this server never
+        # answers, and Host/Origin must be this server, which blocks other sites and DNS rebinding.
+        host = f"127.0.0.1:{self.server.server_address[1]}"
+        origin = self.headers.get("Origin")
+        if (self.path != API or self.headers.get("X-Dataop") != "1" or self.headers.get("Host") != host
+                or (origin is not None and origin != f"http://{host}")
+                or not (self.headers.get("Content-Type") or "").startswith("application/json")):
+            return self._json(403, {"error": "forbidden"})
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            n = -1
+        if not 0 < n <= MAX_BODY:
+            return self._json(413, {"error": "body missing or too large"})
+        try:
+            req = json.loads(self.rfile.read(n))
+            if not isinstance(req, dict):
+                raise ValueError("request must be an object")
+            run_path, m = _find_run(self.dataset_root, req.get("run_id"))
+            with _WRITE_LOCK:
+                op = req.get("op")
+                if op == "add":
+                    rv.add_edit(run_path, m, req.get("kind"), req.get("payload") or {}, source="human")
+                elif op == "decide":
+                    rv.decide(run_path, m, req.get("edit_id"), bool(req.get("accept")), req.get("payload"))
+                elif op == "reviewed":
+                    rv.set_reviewed(run_path, bool(req.get("reviewed", True)))
+                else:
+                    raise rv.ReviewError("op must be add, decide or reviewed")
+                state = _review_state(run_path, m)
+        except (rv.ReviewError, ValueError, KeyError) as e:
+            return self._json(400, {"error": str(e)})
+        return self._json(200, state)
 
     def send_head(self):
         rng = self.headers.get("Range")
@@ -128,10 +201,25 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
         self._remaining = None
 
 
-def serve(root: Path, port: int = 8765, open_browser: bool = True) -> None:
+_WRITE_LOCK = threading.Lock()
+
+
+def _find_run(root: Path, run_id) -> tuple[Path, dict]:
+    if not isinstance(run_id, str):
+        raise rv.ReviewError("run_id is required")
+    for run_path, m in store.iter_manifests(root, "committed"):
+        if m["run_id"] == run_id:
+            return run_path, m
+    raise rv.ReviewError(f"no committed run {run_id!r}")
+
+
+def serve(root: Path, port: int = 8765, open_browser: bool = True, editable: bool = True) -> None:
     root = Path(root).resolve()
-    build(root)
-    handler = functools.partial(_RangeHandler, directory=str(root))
+    build(root, editable=editable)
+    handler_cls = type("Handler", (_RangeHandler,), {"dataset_root": root, "editable": editable})
+    if not editable:
+        handler_cls.do_POST = lambda self: self._json(403, {"error": "this viewer is read-only"})
+    handler = functools.partial(handler_cls, directory=str(root))
     httpd = http.server.ThreadingHTTPServer(("127.0.0.1", port), handler)
     url = f"http://127.0.0.1:{port}/dataop/view/"
     print(f"Serving {root.name} at {url}  (Ctrl+C to stop)")

@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pyarrow.parquet as pq
 
-from . import adapter, store
+from . import adapter, review as rv, store
 from .validate import TICK_COLUMNS, validate
 
 ACTION_COLS = ("base_action", "expert_action", "sent_action")
@@ -42,7 +42,8 @@ class DataopDataset:
                     cols[c] = t.column(c).to_pylist()
                 else:
                     cols[c] = t.column(c).to_numpy(zero_copy_only=False)
-            self.runs[m["episode_index"]] = {"run_id": m["run_id"], "dim": dim, "cols": cols}
+            mask = rv.train_mask(m, rv.load(run_path), cols["control_mode"])
+            self.runs[m["episode_index"]] = {"run_id": m["run_id"], "dim": dim, "cols": cols, "train_mask": mask}
         feat = lerobot_dataset.meta.features.get("action", {})
         self.fallback_dim = int(np.prod(feat.get("shape", (0,)))) if feat else 0
 
@@ -91,17 +92,18 @@ class DataopDataset:
             side.update({c: False for c in ("base_valid", "expert_valid", "safety_modified", "reward_valid",
                                             "terminated", "truncated")})
             side.update(control_mode="none", expert_source=None, blend_weight=0.0, inference_id=-1, chunk_offset=-1,
-                        obs_ns=-1, obs_skew_ns=-1, sent_ns=-1, reward=0.0, run_bound=False, run_id=None)
+                        obs_ns=-1, obs_skew_ns=-1, sent_ns=-1, reward=0.0, run_bound=False, run_id=None,
+                        train_mask=False)
         else:
             c = run["cols"]
             side = {k: c[k][fi] for k in TICK_COLUMNS if k != "frame_index"}
-            side.update(run_bound=True, run_id=run["run_id"])
-        bv, ev = bool(side["base_valid"]), bool(side["expert_valid"])
-        targets = {
-            "dagger_label": side["expert_action"], "dagger_mask": ev,
-            "expert_residual": side["expert_action"] - side["base_action"], "expert_residual_mask": bv and ev,
+            side.update(run_bound=True, run_id=run["run_id"], train_mask=bool(run["train_mask"][fi]))
+        bv, ev, keep = bool(side["base_valid"]), bool(side["expert_valid"]), bool(side["train_mask"])
+        targets = {   # review edits (excluded spans, rejected runs) switch every target off via train_mask
+            "dagger_label": side["expert_action"], "dagger_mask": ev and keep,
+            "expert_residual": side["expert_action"] - side["base_action"], "expert_residual_mask": bv and ev and keep,
             "executed_residual": side["sent_action"] - side["base_action"],
-            "executed_residual_mask": bv and not bool(side["safety_modified"]),
+            "executed_residual_mask": bv and not bool(side["safety_modified"]) and keep,
         }
         try:
             import torch

@@ -27,4 +27,4 @@ dataop-logger = "dataop_logger.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-dataop_logger = ["viewer.html"]
+dataop_logger = ["viewer.html", "viewer.js"]

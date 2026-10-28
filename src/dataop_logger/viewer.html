@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>dataop runs</title>
+<link rel="icon" href="data:,">
 <style>
 /* Layout: run list on the left, the selected run's videos and control timeline on the right. */
 :root {
@@ -58,6 +59,8 @@ th { text-align: left; font-weight: 500; color: var(--ink-3); font-size: 11px; t
 .pill.warn { color: var(--warn); background: var(--warn-bg); }
 .pill.tag { color: var(--ink-2); background: var(--bg); border: 1px solid var(--line); }
 #detail { overflow: auto; padding: 18px 22px 40px; display: flex; flex-direction: column; gap: 16px; }
+#detail > * { flex-shrink: 0; }
+[hidden] { display: none !important; }
 .title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .title h2 { margin: 0 8px 0 0; font-size: 17px; font-weight: 600; }
 .task { color: var(--ink-2); }
@@ -101,6 +104,41 @@ dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .fm small { color: var(--ink-3); grid-column: 1 / -1; }
 .sub { display: block; color: var(--ink-3); font-size: 11px; margin-top: 2px; }
 .empty { color: var(--ink-3); padding: 40px; text-align: center; }
+.views { display: flex; gap: 6px; margin-left: auto; }
+.done { color: var(--ok); font-weight: 600; }
+.banner { background: var(--bg); border: 1px dashed var(--ink-3); color: var(--ink-2); padding: 8px 12px; border-radius: 6px; }
+.timeline.dim .track, .timeline.dim .lane { opacity: .35; }
+.ex { position: absolute; top: 28px; height: 22px; pointer-events: none; border-radius: 3px;
+  background: repeating-linear-gradient(135deg, var(--ink-3) 0 2px, transparent 2px 7px); opacity: .9; }
+.ex.prop { opacity: .5; outline: 1px dashed var(--ink-2); }
+.hatch { background: repeating-linear-gradient(135deg, var(--ink-3) 0 2px, transparent 2px 5px) !important; }
+.fs { position: absolute; top: 0; height: 58px; width: 0; border-left: 2px solid var(--bad); }
+.fs.prop { border-left-style: dashed; }
+.fs.pend { border-left: 2px dotted var(--accent); }
+.knob { position: absolute; left: -7px; bottom: -6px; width: 12px; height: 12px; border-radius: 50%; background: var(--bad);
+  border: 2px solid var(--panel); cursor: ew-resize; touch-action: none; }
+.fs.prop .knob { background: var(--panel); border-color: var(--bad); }
+.bknob { position: absolute; top: 1px; width: 8px; height: 18px; margin-left: -4px; border-radius: 3px; background: var(--ink-2);
+  cursor: ew-resize; touch-action: none; opacity: .75; }
+.bknob:hover, .knob:hover { opacity: 1; transform: scale(1.15); }
+.review { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 8px; border-color: var(--accent); }
+.rvsec { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); margin-top: 4px; }
+.prow { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 6px 12px;
+  padding: 6px 8px; border-radius: 6px; background: var(--bg); }
+.btns, .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.btn.sm { padding: 3px 9px; font-size: 12px; }
+.btn.ok { border-color: var(--ok); color: var(--ok); }
+.btn.bad { border-color: var(--bad); color: var(--bad); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--panel); font-weight: 500; }
+.btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+kbd { font-family: var(--mono); font-size: 10px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 3px;
+  padding: 0 4px; margin-left: 4px; color: var(--ink-2); background: var(--panel); }
+.btn.primary kbd { color: inherit; background: transparent; border-color: currentColor; }
+.rvfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
+.rvstatus { font-size: 12px; color: var(--ink-3); }
+.rvstatus.bad { color: var(--bad); }
+.keys { font-size: 11px; color: var(--ink-3); }
 </style>
 </head>
 <body>
@@ -113,192 +151,12 @@ dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
     <div class="fails" id="fails" hidden></div>
     <div class="filters" id="filters"></div>
     <table>
-      <thead><tr><th>Run</th><th>Outcome</th><th>Who drove</th><th>Length</th></tr></thead>
+      <thead><tr><th>Run</th><th>Outcome</th><th>Who drove</th><th id="head3">Length</th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
   </section>
   <section id="detail" aria-live="polite"><div class="empty">Select a run.</div></section>
 </main>
-<script>
-const DATA = /*__DATA__*/null;
-const MODE = { base: "Policy", expert: "Expert", blend: "Blend", none: "Nobody" };
-const color = m => `var(--${m})`;
-const fmt = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`;
-const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const runs = DATA.runs;
-let filter = "all", current = null;
-
-function outcomePill(r) {
-  if (r.outcome === "success") return `<span class="pill ok">success</span>`;
-  if (r.labels.includes("rescued")) return `<span class="pill warn">rescued</span>`;
-  return `<span class="pill bad">${esc(r.outcome)}</span>`;
-}
-const runNo = r => esc(r.env.run ?? r.episode + 1);
-function frac(r, mode) { return r.segments.filter(s => s[2] === mode).reduce((a, s) => a + s[1] - s[0], 0) / r.length; }
-
-document.getElementById("ds").textContent = DATA.dataset;
-(function stats() {
-  const n = runs.length, ok = runs.filter(r => r.outcome === "success").length;
-  const take = runs.reduce((a, r) => a + r.takeovers.length, 0);
-  const min = m => runs.reduce((a, r) => a + r.segments.filter(s => s[2] === m).reduce((b, s) => b + s[1] - s[0], 0) / r.fps, 0) / 60;
-  document.getElementById("stats").innerHTML = [
-    [n, "runs"], [n ? Math.round(100 * ok / n) + "%" : "–", "policy success"], [take, "takeovers"],
-    [min("base").toFixed(1), "min policy"], [min("expert").toFixed(1), "min expert"]
-  ].map(([v, l]) => `<span class="stat"><b>${v}</b>${l}</span>`).join("");
-})();
-
-function drawFails() {
-  const el = document.getElementById("fails");
-  const groups = {};
-  runs.filter(r => r.failure_mode).forEach(r => {
-    const g = groups[r.failure_mode] ||= { n: 0, steps: {} };
-    g.n++;
-    const sg = r.subgoals.find(s => s.status === "failed");
-    if (sg) g.steps[sg.name] = (g.steps[sg.name] || 0) + 1;
-  });
-  const rows = Object.entries(groups).sort((a, b) => b[1].n - a[1].n);
-  if (!rows.length) { el.hidden = true; return; }
-  const max = rows[0][1].n, failed = runs.filter(r => r.outcome !== "success").length;
-  el.hidden = false;
-  el.innerHTML = `<h3>Failure modes · ${failed} failed runs</h3>` + rows.map(([m, g]) => `
-    <button class="fm" data-fm="${esc(m)}" aria-pressed="${filter === "fm:" + m}">
-      <span>${esc(m.replace(/_/g, " "))}</span><span class="num">${g.n}</span>
-      <span class="bar" style="width:${100 * g.n / max}%"></span>
-      ${Object.keys(g.steps).length ? `<small>failed at ${Object.entries(g.steps).map(([k, v]) => esc(k) + " " + v).join(", ")}</small>` : ""}
-    </button>`).join("");
-}
-document.getElementById("fails").onclick = e => {
-  const b = e.target.closest("[data-fm]"); if (!b) return;
-  filter = filter === "fm:" + b.dataset.fm ? "all" : "fm:" + b.dataset.fm;
-  drawFails(); drawFilters(); drawRows();
-};
-const FILTERS = [["all", "All runs"], ["success", "Success"], ["failure", "Failed"]];
-function drawFilters() {
-  document.getElementById("filters").innerHTML = FILTERS.map(([k, l]) =>
-    `<button class="chip" data-f="${esc(k)}" aria-pressed="${k === filter}">${esc(l)}</button>`).join("");
-}
-document.getElementById("filters").onclick = e => {
-  const b = e.target.closest("[data-f]"); if (!b) return;
-  filter = b.dataset.f; drawFails(); drawFilters(); drawRows();
-};
-function visible() {
-  return runs.filter(r => filter === "all" ? true : filter.startsWith("fm:") ? r.failure_mode === filter.slice(3)
-    : filter.startsWith("label:") ? r.labels.includes(filter.slice(6))
-    : filter === "success" ? r.outcome === "success" : r.outcome !== "success");
-}
-function drawRows() {
-  document.getElementById("rows").innerHTML = visible().map(r => `
-    <tr class="row" tabindex="0" data-id="${r.run_id}" aria-selected="${current && current.run_id === r.run_id}">
-      <td><b>${runNo(r)}</b></td>
-      <td>${outcomePill(r)}${r.failure_mode ? `<span class="sub">${esc(r.failure_mode.replace(/_/g, " "))}</span>` : ""}</td>
-      <td><div class="mini" title="${r.segments.map(s => MODE[s[2]] + " " + s[0] + "–" + s[1]).join(", ")}">
-        ${r.segments.map(s => `<div style="width:${100 * (s[1] - s[0]) / r.length}%;background:${color(s[2])}"></div>`).join("")}</div></td>
-      <td class="num">${(r.length / r.fps).toFixed(1)}s</td>
-    </tr>`).join("") || `<tr><td colspan="4" class="empty">No runs match.</td></tr>`;
-}
-document.getElementById("rows").addEventListener("click", e => { const t = e.target.closest(".row"); if (t) select(t.dataset.id); });
-document.getElementById("rows").addEventListener("keydown", e => {
-  const t = e.target.closest(".row"); if (!t) return;
-  if (e.key === "Enter") select(t.dataset.id);
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault(); const n = e.key === "ArrowDown" ? t.nextElementSibling : t.previousElementSibling;
-    if (n && n.dataset.id) { n.focus(); select(n.dataset.id); }
-  }
-});
-
-function select(id) {
-  current = runs.find(r => r.run_id === id);
-  drawRows();
-  const r = current, dur = r.length / r.fps;
-  const take = r.takeovers[0];
-  const extras = Object.entries(r.env).filter(([k]) => k !== "run");
-  document.getElementById("detail").innerHTML = `
-    <div class="title"><h2>Run ${runNo(r)}</h2>${outcomePill(r)}
-      <span class="task">${esc(r.task)}</span></div>
-    <div class="videos">${r.videos.map(v => `<figure><video muted playsinline preload="auto" data-t0="${v.t0}" src="../../${esc(v.src)}"></video>
-      <figcaption>${esc(v.key)}</figcaption></figure>`).join("") || `<div class="empty">This episode has no video.</div>`}</div>
-    <div class="controls">
-      <button class="btn" id="play">Play</button>
-      <button class="btn" id="speed" title="Playback speed">1×</button>
-      <span class="time" id="time">0:00.0 / ${fmt(dur)} · frame 0</span>
-      <div class="legend">${["base", "expert", "blend", "none"].filter(m => frac(r, m) > 0)
-        .map(m => `<span><i style="background:${color(m)}"></i>${MODE[m]} ${Math.round(100 * frac(r, m))}%</span>`).join("")}</div>
-    </div>
-    <div class="timeline" id="tl" role="slider" aria-label="Episode position" tabindex="0">
-      <div class="lane">${r.subgoals.map(s => `<div class="sg ${s.status}" style="left:${100 * s.start_frame / r.length}%;width:${100 * (s.end_frame - s.start_frame) / r.length}%"
-        title="${esc(s.name)}: ${s.status}${s.reason ? " (" + esc(s.reason) + ")" : ""}, frames ${s.start_frame}–${s.end_frame}">${esc(s.name)}</div>`).join("")}</div>
-      <div class="track">${r.segments.map(s => `<div style="width:${100 * (s[1] - s[0]) / r.length}%;background:${color(s[2])}"
-        title="${MODE[s[2]]}${s[3] ? " (" + esc(s[3]) + ")" : ""}: frames ${s[0]}–${s[1]}"></div>`).join("")}</div>
-      ${r.events.map(e => `<div class="mark" style="left:${100 * e.frame / r.length}%"></div>`).join("")}
-      <div class="head" id="head" style="left:0"></div>
-    </div>
-    <div class="cols">
-      <div class="card"><h3>Run</h3><dl>
-        <dt>Episode</dt><dd>${r.episode} in the LeRobot dataset</dd>
-        ${r.labels.length ? `<dt>Labels</dt><dd>${r.labels.map(l => esc(l.replace(/_/g, " "))).join(", ")}</dd>` : ""}
-        <dt>Frames</dt><dd>${r.length} at ${r.fps} fps (${dur.toFixed(1)} s)</dd>
-        <dt>Takeover</dt><dd>${take ? `frame ${take.start_frame} (${(take.start_frame / r.fps).toFixed(1)} s) by ${esc(take.expert_source)}` : "none"}</dd>
-        <dt>Safety-modified</dt><dd>${r.safety_modified} frames</dd>
-        <dt>Policy</dt><dd>${esc(r.policy || "–")}</dd>
-        ${extras.map(([k, v]) => `<dt>${esc(k.replace(/_/g, " "))}</dt><dd>${esc(v)}</dd>`).join("")}
-        <dt>Run id</dt><dd class="num">${r.run_id}</dd>
-      </dl></div>
-      ${r.subgoals.length ? `<div class="card"><h3>Steps</h3>${r.subgoals.map(s => `<div class="ev" tabindex="0" data-frame="${s.end_frame - 1}">
-        <span class="time">${fmt(s.start_frame / r.fps)}</span><span><b>${esc(s.name)}</b>
-        <span class="pill ${s.status === "completed" ? "ok" : s.status === "failed" ? "bad" : "tag"}">${s.status}</span> ${esc(s.reason || "")}</span></div>`).join("")}
-        ${r.failure_mode ? `<div class="task" style="margin-top:6px">Failure mode: <b>${esc(r.failure_mode.replace(/_/g, " "))}</b></div>` : ""}</div>` : ""}
-      <div class="card"><h3>Events</h3>${r.events.map((e, i) => `<div class="ev" tabindex="0" data-frame="${e.frame}">
-        <span class="time">${fmt(e.frame / r.fps)}</span><span><b>${esc(e.kind)}</b> ${esc([e.source, e.reason, e.text].filter(Boolean).join(" · "))}</span></div>`).join("")
-        || `<div class="task">No events in this run.</div>`}</div>
-    </div>`;
-  wire(r);
-}
-
-function wire(r) {
-  const vids = [...document.querySelectorAll("#detail video")];
-  const dur = r.length / r.fps, head = document.getElementById("head"), tl = document.getElementById("tl");
-  const playBtn = document.getElementById("play"), speedBtn = document.getElementById("speed");
-  let t = 0, playing = false, rate = 1, last = 0;
-  const seek = s => {
-    t = Math.max(0, Math.min(dur, s));
-    vids.forEach(v => { v.currentTime = +v.dataset.t0 + t; });
-    paint();
-  };
-  const paint = () => {
-    head.style.left = (100 * t / dur) + "%";
-    document.getElementById("time").textContent = `${fmt(t)} / ${fmt(dur)} · frame ${Math.min(r.length - 1, Math.floor(t * r.fps))}`;
-  };
-  const tick = now => {
-    if (!playing || current !== r) return;
-    const v = vids[0];
-    t = v ? v.currentTime - +v.dataset.t0 : t + (now - last) / 1000 * rate;
-    last = now;
-    if (t >= dur) { pause(); seek(dur); return; }
-    paint(); requestAnimationFrame(tick);
-  };
-  const pause = () => { playing = false; vids.forEach(v => v.pause()); playBtn.textContent = "Play"; };
-  playBtn.onclick = () => {
-    if (playing) return pause();
-    if (t >= dur - 0.05) seek(0);
-    playing = true; playBtn.textContent = "Pause";
-    vids.forEach(v => { v.playbackRate = rate; v.play(); });
-    last = performance.now(); requestAnimationFrame(tick);
-  };
-  speedBtn.onclick = () => { rate = rate === 1 ? 2 : rate === 2 ? 4 : 1; speedBtn.textContent = rate + "×"; vids.forEach(v => v.playbackRate = rate); };
-  const fromX = e => { const b = tl.getBoundingClientRect(); return (e.clientX - b.left) / b.width * dur; };
-  tl.onpointerdown = e => { tl.setPointerCapture(e.pointerId); seek(fromX(e)); tl.onpointermove = m => seek(fromX(m)); };
-  tl.onpointerup = () => { tl.onpointermove = null; };
-  tl.onkeydown = e => { if (e.key === "ArrowRight") seek(t + 1 / r.fps * 15); if (e.key === "ArrowLeft") seek(t - 1 / r.fps * 15); };
-  document.querySelectorAll(".ev").forEach(el => {
-    const go = () => seek(Math.max(0, +el.dataset.frame / r.fps - 1));
-    el.onclick = go; el.onkeydown = e => { if (e.key === "Enter") go(); };
-  });
-  vids.forEach(v => v.addEventListener("loadedmetadata", () => { v.currentTime = +v.dataset.t0 + t; }, { once: true }));
-}
-
-drawFails(); drawFilters(); drawRows();
-const firstRescue = runs.find(r => r.labels.includes("rescued")) || runs[0];
-if (firstRescue) select(firstRescue.run_id);
-</script>
+<script src="viewer.js"></script>
 </body>
 </html>
