@@ -71,11 +71,16 @@ figcaption { position: absolute; left: 8px; top: 6px; color: #fff; font-size: 11
   font: inherit; cursor: pointer; }
 .btn:hover { background: var(--hover); }
 .time { font-family: var(--mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.timeline { position: relative; height: 34px; cursor: pointer; user-select: none; }
-.track { position: absolute; left: 0; right: 0; top: 10px; height: 14px; border-radius: 4px; overflow: hidden; display: flex; background: var(--none); }
+.timeline { position: relative; height: 58px; cursor: pointer; user-select: none; }
+.lane { position: absolute; left: 0; right: 0; top: 0; height: 20px; }
+.sg { position: absolute; top: 0; height: 20px; border-radius: 4px; font-size: 11px; line-height: 20px; padding: 0 6px;
+  overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink); border: 1px solid var(--line); background: var(--panel); }
+.sg.completed { background: var(--ok-bg); color: var(--ok); border-color: transparent; }
+.sg.failed { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+.track { position: absolute; left: 0; right: 0; top: 32px; height: 14px; border-radius: 4px; overflow: hidden; display: flex; background: var(--none); }
 .track div { height: 100%; }
-.mark { position: absolute; top: 2px; width: 2px; height: 30px; background: var(--ink); opacity: .55; pointer-events: none; }
-.head { position: absolute; top: 0; width: 2px; height: 34px; background: var(--accent); pointer-events: none; }
+.mark { position: absolute; top: 28px; width: 2px; height: 22px; background: var(--ink); opacity: .55; pointer-events: none; }
+.head { position: absolute; top: 0; width: 2px; height: 58px; background: var(--accent); pointer-events: none; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--ink-2); font-size: 12px; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
@@ -86,6 +91,15 @@ dt { color: var(--ink-3); }
 dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .ev { display: flex; gap: 10px; padding: 6px 4px; border-radius: 4px; cursor: pointer; }
 .ev:hover { background: var(--hover); }
+.fails { padding: 12px; border-bottom: 1px solid var(--line); display: flex; flex-direction: column; gap: 6px; }
+.fails h3 { margin: 0 0 2px; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); }
+.fm { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; align-items: center; cursor: pointer; padding: 4px 6px;
+  border-radius: 6px; border: 1px solid transparent; background: transparent; color: inherit; font: inherit; text-align: left; }
+.fm:hover { background: var(--hover); }
+.fm[aria-pressed="true"] { border-color: var(--accent); background: var(--hover); }
+.fm .bar { grid-column: 1 / -1; height: 4px; border-radius: 2px; background: var(--bad); opacity: .7; }
+.fm small { color: var(--ink-3); grid-column: 1 / -1; }
+.sub { display: block; color: var(--ink-3); font-size: 11px; margin-top: 2px; }
 .empty { color: var(--ink-3); padding: 40px; text-align: center; }
 </style>
 </head>
@@ -96,6 +110,7 @@ dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 </header>
 <main>
   <section id="list" aria-label="Runs">
+    <div class="fails" id="fails" hidden></div>
     <div class="filters" id="filters"></div>
     <table>
       <thead><tr><th>Run</th><th>Outcome</th><th>Who drove</th><th>Length</th></tr></thead>
@@ -131,6 +146,31 @@ document.getElementById("ds").textContent = DATA.dataset;
   ].map(([v, l]) => `<span class="stat"><b>${v}</b>${l}</span>`).join("");
 })();
 
+function drawFails() {
+  const el = document.getElementById("fails");
+  const groups = {};
+  runs.filter(r => r.failure_mode).forEach(r => {
+    const g = groups[r.failure_mode] ||= { n: 0, steps: {} };
+    g.n++;
+    const sg = r.subgoals.find(s => s.status === "failed");
+    if (sg) g.steps[sg.name] = (g.steps[sg.name] || 0) + 1;
+  });
+  const rows = Object.entries(groups).sort((a, b) => b[1].n - a[1].n);
+  if (!rows.length) { el.hidden = true; return; }
+  const max = rows[0][1].n, failed = runs.filter(r => r.outcome !== "success").length;
+  el.hidden = false;
+  el.innerHTML = `<h3>Failure modes · ${failed} failed runs</h3>` + rows.map(([m, g]) => `
+    <button class="fm" data-fm="${esc(m)}" aria-pressed="${filter === "fm:" + m}">
+      <span>${esc(m.replace(/_/g, " "))}</span><span class="num">${g.n}</span>
+      <span class="bar" style="width:${100 * g.n / max}%"></span>
+      ${Object.keys(g.steps).length ? `<small>failed at ${Object.entries(g.steps).map(([k, v]) => esc(k) + " " + v).join(", ")}</small>` : ""}
+    </button>`).join("");
+}
+document.getElementById("fails").onclick = e => {
+  const b = e.target.closest("[data-fm]"); if (!b) return;
+  filter = filter === "fm:" + b.dataset.fm ? "all" : "fm:" + b.dataset.fm;
+  drawFails(); drawFilters(); drawRows();
+};
 const labels = [...new Set(runs.flatMap(r => r.labels))].sort();
 const FILTERS = [["all", "All"], ["success", "Success"], ["failure", "Failed"], ...labels.map(l => ["label:" + l, l.replace(/_/g, " ")])];
 function drawFilters() {
@@ -139,17 +179,18 @@ function drawFilters() {
 }
 document.getElementById("filters").onclick = e => {
   const b = e.target.closest("[data-f]"); if (!b) return;
-  filter = b.dataset.f; drawFilters(); drawRows();
+  filter = b.dataset.f; drawFails(); drawFilters(); drawRows();
 };
 function visible() {
-  return runs.filter(r => filter === "all" ? true : filter.startsWith("label:") ? r.labels.includes(filter.slice(6))
+  return runs.filter(r => filter === "all" ? true : filter.startsWith("fm:") ? r.failure_mode === filter.slice(3)
+    : filter.startsWith("label:") ? r.labels.includes(filter.slice(6))
     : filter === "success" ? r.outcome === "success" : r.outcome !== "success");
 }
 function drawRows() {
   document.getElementById("rows").innerHTML = visible().map(r => `
     <tr class="row" tabindex="0" data-id="${r.run_id}" aria-selected="${current && current.run_id === r.run_id}">
       <td><b>${esc(r.env.run ?? r.episode)}</b> <span class="num">ep ${r.episode}</span></td>
-      <td>${outcomePill(r)}</td>
+      <td>${outcomePill(r)}${r.failure_mode ? `<span class="sub">${esc(r.failure_mode.replace(/_/g, " "))}</span>` : ""}</td>
       <td><div class="mini" title="${r.segments.map(s => MODE[s[2]] + " " + s[0] + "–" + s[1]).join(", ")}">
         ${r.segments.map(s => `<div style="width:${100 * (s[1] - s[0]) / r.length}%;background:${color(s[2])}"></div>`).join("")}</div></td>
       <td class="num">${(r.length / r.fps).toFixed(1)}s</td>
@@ -185,6 +226,8 @@ function select(id) {
         .map(m => `<span><i style="background:${color(m)}"></i>${MODE[m]} ${Math.round(100 * frac(r, m))}%</span>`).join("")}</div>
     </div>
     <div class="timeline" id="tl" role="slider" aria-label="Episode position" tabindex="0">
+      <div class="lane">${r.subgoals.map(s => `<div class="sg ${s.status}" style="left:${100 * s.start_frame / r.length}%;width:${100 * (s.end_frame - s.start_frame) / r.length}%"
+        title="${esc(s.name)}: ${s.status}${s.reason ? " (" + esc(s.reason) + ")" : ""}, frames ${s.start_frame}–${s.end_frame}">${esc(s.name)}</div>`).join("")}</div>
       <div class="track">${r.segments.map(s => `<div style="width:${100 * (s[1] - s[0]) / r.length}%;background:${color(s[2])}"
         title="${MODE[s[2]]}${s[3] ? " (" + esc(s[3]) + ")" : ""}: frames ${s[0]}–${s[1]}"></div>`).join("")}</div>
       ${r.events.map(e => `<div class="mark" style="left:${100 * e.frame / r.length}%"></div>`).join("")}
@@ -199,6 +242,10 @@ function select(id) {
         ${extras.map(([k, v]) => `<dt>${esc(k.replace(/_/g, " "))}</dt><dd>${esc(v)}</dd>`).join("")}
         <dt>Run id</dt><dd class="num">${r.run_id}</dd>
       </dl></div>
+      ${r.subgoals.length ? `<div class="card"><h3>Steps</h3>${r.subgoals.map(s => `<div class="ev" tabindex="0" data-frame="${s.end_frame - 1}">
+        <span class="time">${fmt(s.start_frame / r.fps)}</span><span><b>${esc(s.name)}</b>
+        <span class="pill ${s.status === "completed" ? "ok" : s.status === "failed" ? "bad" : "tag"}">${s.status}</span> ${esc(s.reason || "")}</span></div>`).join("")}
+        ${r.failure_mode ? `<div class="task" style="margin-top:6px">Failure mode: <b>${esc(r.failure_mode.replace(/_/g, " "))}</b></div>` : ""}</div>` : ""}
       <div class="card"><h3>Events</h3>${r.events.map((e, i) => `<div class="ev" tabindex="0" data-frame="${e.frame}">
         <span class="time">${fmt(e.frame / r.fps)}</span><span><b>${esc(e.kind)}</b> ${esc([e.source, e.reason, e.text].filter(Boolean).join(" · "))}</span></div>`).join("")
         || `<div class="task">No events in this run.</div>`}</div>
@@ -248,7 +295,7 @@ function wire(r) {
   vids.forEach(v => v.addEventListener("loadedmetadata", () => { v.currentTime = +v.dataset.t0 + t; }, { once: true }));
 }
 
-drawFilters(); drawRows();
+drawFails(); drawFilters(); drawRows();
 const firstRescue = runs.find(r => r.labels.includes("rescued")) || runs[0];
 if (firstRescue) select(firstRescue.run_id);
 </script>

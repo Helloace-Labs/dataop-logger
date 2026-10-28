@@ -16,8 +16,8 @@ import pyarrow as pa
 
 from . import adapter, store
 from .fingerprint import fingerprint
-from .schema import (CONTROL_MODES, SCHEMA_VERSION, TERMINAL_FLAG, TERMINATION_REASONS, ActionSchema,
-                     EnvInfo, PolicyInfo)
+from .schema import (CONTROL_MODES, SCHEMA_VERSION, SUBGOAL_STATUSES, TERMINAL_FLAG, TERMINATION_REASONS,
+                     ActionSchema, EnvInfo, PolicyInfo)
 
 try:                                                     # recorded in manifests
     from importlib.metadata import version as _pkg_version
@@ -248,6 +248,15 @@ class Run:
                              "frame_index": len(self._rows) - 1, "kind": kind, "source": source,
                              "reason": reason, "text": text})
 
+    def subgoal(self, name: str, status: str, reason: str | None = None) -> None:
+        """Mark a step of the task. Call "started" just before its first frame, "completed" or "failed" just after its
+        last. A step with no "started" begins where the previous step ended. Summarised as manifest["subgoals"]."""
+        if not isinstance(name, str) or not name:
+            raise ValueError("subgoal name must be a non-empty string")
+        if status not in SUBGOAL_STATUSES:
+            raise ValueError(f"subgoal status must be one of {SUBGOAL_STATUSES}")
+        self.event("subgoal", source=name, reason=reason, text=status)
+
     def predictions(self, inference_id: int, action_chunk, obs_frame_index: int, infer_start_ns: int,
                     infer_end_ns: int, valid_len: int | None = None) -> None:
         self._require("active")
@@ -275,7 +284,8 @@ class Run:
 
     # ── ending ───────────────────────────────────────────────────────────────
 
-    def end(self, termination_reason: str, task_success: bool | None = None, labels: list[str] | None = None) -> None:
+    def end(self, termination_reason: str, task_success: bool | None = None, labels: list[str] | None = None,
+            failure_mode: str | None = None) -> None:
         """Seal and stage the run. The final tick's terminated/truncated flag is set from the reason.
 
         Saving to LeRobot and commit happen when the run block exits; do not touch the dataset in between.
@@ -295,7 +305,10 @@ class Run:
         self._check_rows()
         self._check_buffer()
         self.ended_at = _now_iso()
+        if failure_mode is not None and (not isinstance(failure_mode, str) or not failure_mode):
+            raise ValueError("failure_mode must be a non-empty string or None")
         self._end = {"termination_reason": termination_reason, "task_success": task_success,
+                     "failure_mode": failure_mode,
                      "labels": sorted(set(labels or [])),
                      "rl_ready": all(r["reward_valid"] for r in self._rows)}
         self._write_files("staged")
@@ -377,6 +390,7 @@ class Run:
             **self._end,
             "fingerprint": fingerprint(self.schema.id, self.task, sent),
             "events": self._events, "takeovers": derive_takeovers(self._rows),
+            "subgoals": derive_subgoals(self._events, len(self._rows)),
             "policy": asdict(self.policy) if self.policy else None,
             "env": {**asdict(self.env), "software": {"lerobot": _lerobot_version(), "dataop_logger": _DATAOP_VERSION}},
             "action_schema": {**self.schema.to_dict(), "id": self.schema.id},
@@ -446,3 +460,23 @@ def derive_takeovers(rows) -> list[dict]:
                             "expert_source": r0["expert_source"]})
             start = i
     return out
+
+
+def derive_subgoals(events, length: int) -> list[dict]:
+    """Spans of the task's steps from subgoal events: [{name, start_frame, end_frame, status, reason}], end exclusive.
+    A step still open when the run ends is "unfinished"."""
+    out, open_, prev_end = [], {}, 0
+    for e in events:
+        if e.get("kind") != "subgoal":
+            continue
+        name, status, f = e["source"], e["text"], e["frame_index"]
+        if status == "started":
+            open_[name] = f + 1
+            continue
+        start = open_.pop(name, prev_end)
+        end = max(start, f + 1)
+        out.append({"name": name, "start_frame": start, "end_frame": end, "status": status, "reason": e.get("reason")})
+        prev_end = end
+    for name, start in open_.items():
+        out.append({"name": name, "start_frame": start, "end_frame": length, "status": "unfinished", "reason": None})
+    return sorted(out, key=lambda s: (s["start_frame"], s["end_frame"]))

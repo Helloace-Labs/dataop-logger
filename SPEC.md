@@ -73,6 +73,8 @@ v0 cannot separate the arbitration output from a safety-filter correction, and d
 - `task`, `started_at`/`ended_at` (wall clock, for humans only)
 - `termination_reason`: `success`, `failure`, `timeout`, `operator_abort`, `system_error`; `task_success`: bool or null; `labels`: list of namespaced strings (`failure:dropped`, `safety:collision`)
 - `events`: typed list `{event_id, ns, frame_index, kind, source, reason, text}` for takeover requests, handbacks, drops
+- `subgoals`: derived summary of the task's steps from `subgoal` events, `{name, start_frame, end_frame, status, reason}` with `end_frame` exclusive and status `completed`, `failed` or `unfinished`
+- `failure_mode`: free-text name for how the run failed (`dropped_after_lift`, `no_grasp`), or null; groups failures across runs
 - `takeovers`: derived summary of half-open ranges `[start_frame, end_frame)` per `control_mode` and `expert_source`
 - `policy`: family, hub repo and revision or artifact sha256, code revision, config digest, chunk size, temporal ensembling, device and precision
 - `env`: typed `robot_id`, `calibration_digest`, `operator` (pseudonym), `software` (lerobot and dataop-logger versions), plus free-form `extras` (lighting, etc.)
@@ -107,7 +109,7 @@ with log.run(task="pick up the tube", policy=policy_info, env=env) as run:
 - `run.discard()` clears both the LeRobot episode buffer and the staged run (re-record).
 - Crash recovery with `validate --repair` is non-destructive: an exact unique fingerprint match is committed; no match or several matches move the run to `dataop/quarantine/<run_id>/` and are reported; deletion only with `--delete-unmatched`.
 - Crash points: before stage, nothing written; after stage and before or during save, a staged run with no matching episode goes to quarantine; after save and before commit, the staged run matches and is committed; after commit and before the index rebuild, the index is rebuilt from manifests.
-- `run.event(kind, source, reason, text)` adds a typed event. `run.predictions(inference_id, chunk, ...)` logs a chunk.
+- `run.event(kind, source, reason, text)` adds a typed event. `run.subgoal(name, status, reason)` adds a `subgoal` event (`started`, `completed` or `failed`); a step with no `started` begins where the previous one ended. `run.end(..., failure_mode=...)` names the failure. `run.predictions(inference_id, chunk, ...)` logs a chunk.
 - Local filesystem only in v0; temp files in the destination directory, fsync, then rename. Remote URIs raise.
 
 ## CLI

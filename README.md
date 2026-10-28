@@ -91,6 +91,20 @@ Typed events mark moments worth finding later:
 run.event("takeover", source="human", reason="tube slipping")
 ```
 
+## Task steps and failure modes
+
+Pass-fail hides why a run failed. Mark the task's steps as they happen, and name the failure when the run ends:
+
+```python
+run.subgoal("grasp", "started")          # just before the step's first frame
+...
+run.subgoal("grasp", "completed")        # just after its last frame; the next step starts here
+run.subgoal("lift", "failed", reason="tube slipped")
+run.end(termination_reason="failure", failure_mode="dropped_during_lift")
+```
+
+The manifest gets a `subgoals` list of frame spans with their status. `inspect` counts failure modes and failed steps across runs, and the viewer groups failed runs by failure mode and draws each run's steps above its timeline. Steps can come from anything your stack already knows: a success detector, gripper and height thresholds, or a person's label.
+
 ## Rewards for RL
 
 Pass `reward=` on `add_frame`, or, if your reward arrives one loop late, attach it to the previous tick:
@@ -137,6 +151,8 @@ dataop-logger view <dataset_root>      # opens http://127.0.0.1:8765/dataop/view
 A local, read-only page: every run with its outcome and a strip showing who drove each frame, then the selected run's camera videos in sync with a control-mode timeline. Click the timeline or an event to jump to that moment. Nothing leaves your machine. `--build-only` writes `dataop/view/index.html` without starting a server.
 
 ![viewer](docs/viewer.png)
+
+When runs carry `failure_mode` and `subgoals`, the run list opens with failed runs grouped by failure mode. Click a group to filter the list.
 
 ## Training with the extra fields
 

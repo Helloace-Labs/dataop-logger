@@ -569,3 +569,30 @@ def test_more_episodes_than_lerobot_metadata_buffer(tmp_path):
     ds.finalize()
     assert all(r.state == "committed" for r in runs)
     assert V.validate(ds.root)["ok"]
+
+
+def test_subgoals_and_failure_mode(tmp_path):
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        with log.run(task=TASK) as run:
+            run.subgoal("grasp", "started")
+            for i in range(10):
+                if i == 4:
+                    run.subgoal("grasp", "completed")
+                    run.subgoal("lift", "started")
+                run.add_frame(frame(i), sent_action=np.zeros(6), base_action=np.zeros(6), control_mode="base",
+                              inference_id=i, chunk_offset=0, **ts())
+            run.subgoal("lift", "failed", reason="tube slipped")
+            with pytest.raises(ValueError):
+                run.subgoal("lift", "done")
+            run.end(termination_reason="failure", failure_mode="dropped_during_lift")
+        record(log, 5)
+    ds.finalize()
+    m = store.read_manifest(run.run_path)
+    assert m["failure_mode"] == "dropped_during_lift"
+    assert m["subgoals"] == [
+        {"name": "grasp", "start_frame": 0, "end_frame": 4, "status": "completed", "reason": None},
+        {"name": "lift", "start_frame": 4, "end_frame": 10, "status": "failed", "reason": "tube slipped"}]
+    assert V.validate(ds.root)["ok"]
+    info = V.inspect(ds.root)
+    assert info["failure_modes"] == {"dropped_during_lift": 1} and info["failed_subgoals"] == {"lift": 1}

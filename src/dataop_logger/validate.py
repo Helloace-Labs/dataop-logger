@@ -171,7 +171,13 @@ def _check_run(run_path: Path, m: dict, episodes: dict, errors: list) -> bool:
     from .logger import derive_takeovers
     if derive_takeovers(rows) != m["takeovers"]:
         err("takeovers summary does not match the per-tick control modes")
+    from .logger import derive_subgoals
+    from .schema import SUBGOAL_STATUSES
+    if "subgoals" in m and derive_subgoals(m["events"], n) != m["subgoals"]:
+        err("subgoals summary does not match the subgoal events")
     for ev_ in m["events"]:
+        if ev_.get("kind") == "subgoal" and (not ev_.get("source") or ev_.get("text") not in SUBGOAL_STATUSES):
+            err(f"event {ev_.get('event_id')} is a subgoal without a name or a valid status")
         if not -1 <= ev_.get("frame_index", -2) < n:
             err(f"event {ev_.get('event_id')} frame_index out of range")
         if not isinstance(ev_.get("ns"), int) or ev_["ns"] < 0:
@@ -339,15 +345,22 @@ def repair(root: Path, delete_unmatched: bool = False, action_key: str = "action
 def inspect(root: Path) -> dict:
     root = Path(root)
     outcomes, minutes, takeovers, runs = defaultdict(int), defaultdict(float), 0, 0
+    failure_modes, failed_subgoals = defaultdict(int), defaultdict(int)
     for run_path, m in store.iter_manifests(root, "committed"):
         runs += 1
         outcomes[m["termination_reason"]] += 1
         takeovers += len(m.get("takeovers", []))
+        if m.get("failure_mode"):
+            failure_modes[m["failure_mode"]] += 1
+        for sg in m.get("subgoals", []):
+            if sg["status"] == "failed":
+                failed_subgoals[sg["name"]] += 1
         rate = m["action_schema"]["rate_hz"]
         modes = pq.read_table(run_path / "ticks.parquet", columns=["control_mode"]).column("control_mode").to_pylist()
         for mode in modes:
             minutes[mode] += 1 / rate / 60
     return {"runs": runs, "outcomes": dict(outcomes), "takeovers": takeovers,
+            "failure_modes": dict(failure_modes), "failed_subgoals": dict(failed_subgoals),
             "minutes_by_control_mode": {k: round(v, 2) for k, v in minutes.items()}}
 
 

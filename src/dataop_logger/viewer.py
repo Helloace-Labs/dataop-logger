@@ -59,9 +59,11 @@ def collect(root: Path) -> dict:
             "run_id": m["run_id"], "episode": m["episode_index"], "task": m["task"], "length": m["length"],
             "fps": m["action_schema"]["rate_hz"], "outcome": m["termination_reason"],
             "task_success": m.get("task_success"), "labels": m.get("labels", []),
+            "failure_mode": m.get("failure_mode"), "subgoals": m.get("subgoals", []),
             "takeovers": m.get("takeovers", []),
             "events": [{"frame": e["frame_index"], "kind": e["kind"], "source": e.get("source"),
-                        "reason": e.get("reason"), "text": e.get("text")} for e in m.get("events", [])],
+                        "reason": e.get("reason"), "text": e.get("text")} for e in m.get("events", [])
+                       if e["kind"] != "subgoal"],
             "segments": _segments(modes, sources),
             "safety_modified": int(sum(t.column("safety_modified").to_pylist())),
             "policy": (m.get("policy") or {}).get("source"),

@@ -103,9 +103,11 @@ run.event("takeover", source="human", reason="tube slipping")
 
 Call it just before adding the first frame it describes; it is attached to the last frame already added. `kind`, `source` and `reason` are free text. Takeovers are also derived from `control_mode` on their own, so the event is for search and context.
 
+If the project already detects task steps (grasped, lifted, placed), mark them with `run.subgoal(name, "started" | "completed" | "failed", reason=None)`: "started" just before a step's first frame, "completed" or "failed" just after its last. Do not invent step detection the project does not have.
+
 ## 6. End each run truthfully
 
-Call `run.end(termination_reason=...)` with one of `success`, `failure`, `timeout`, `operator_abort` or `system_error`, from whatever the project already knows (a success detector, a timeout, the operator's key). Pass `task_success=` and `labels=[...]` when known. If the project has no success signal, ask the user how a run's outcome is decided. If you cannot ask, pick the closest rule the code supports (for example, a run with a takeover is a `failure`), write it as a comment next to `run.end`, and list it in your report as an assumption.
+Call `run.end(termination_reason=...)` with one of `success`, `failure`, `timeout`, `operator_abort` or `system_error`, from whatever the project already knows (a success detector, a timeout, the operator's key). Pass `task_success=`, `labels=[...]` and `failure_mode="<how it failed>"` when known. If the project has no success signal, ask the user how a run's outcome is decided. If you cannot ask, pick the closest rule the code supports (for example, a run with a takeover is a `failure`), write it as a comment next to `run.end`, and list it in your report as an assumption.
 
 If an exception escapes the `run` block, or the block ends without `run.end()`, the episode is discarded from both LeRobot and the sidecar, never half-saved.
 

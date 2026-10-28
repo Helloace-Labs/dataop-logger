@@ -11,6 +11,7 @@ SCHEMA_VERSION = 1
 KNOWN_SPACES = {"joint_position", "joint_velocity", "ee_delta", "ee_pose"}
 CONTROL_MODES = ("base", "expert", "blend", "none")
 TERMINATION_REASONS = ("success", "failure", "timeout", "operator_abort", "system_error")
+SUBGOAL_STATUSES = ("started", "completed", "failed")
 TERMINAL_FLAG = {"success": "terminated", "failure": "terminated",          # final-tick flag each reason implies
                  "timeout": "truncated", "operator_abort": "truncated", "system_error": "truncated"}
 
