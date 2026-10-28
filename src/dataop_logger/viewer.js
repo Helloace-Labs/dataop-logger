@@ -307,7 +307,7 @@ function render(r, t0) {
       ${editable && undoList().length ? `<button class="btn undobtn" data-act="undo" title="Undo ${esc(undoList().slice(-1)[0].what)} (Cmd/Ctrl+Z)">↶ Undo</button>` : ""}
       ${canEdit(r) ? `<button class="btn ${editing ? "primary" : ""} editbtn" id="edit" title="E">${editing ? "Done" : "Edit"}</button>` : ""}
     </div>
-    <div class="timeline ${editing ? "editing" : ""}" id="tl">
+    <div class="timeline ${editing ? "editing" : ""}" id="tl" style="--pinrows:${Math.max(1, ...pinRows(r).map(m => m.row + 1))}">
       <div class="lblane">${e.labels.map(l => `<div class="lb ${l.interpretation && l.interpretation.train === "exclude" ? "out" : ""} ${sel && sel.id === l.id ? "on" : ""}"
         data-label="${esc(l.id)}" style="left:${pct(l.start)}%;width:${pct(l.end - l.start)}%"
         title="${esc([l.text, l.driver, l.segment].filter(Boolean).join(" · "))}">${esc(l.segment || l.text)}</div>`).join("")}</div>
@@ -318,10 +318,10 @@ function render(r, t0) {
       ${sug.map(x => `<div class="sugg-span" style="left:${pct(x.payload.start)}%;width:${pct(x.payload.end - x.payload.start)}%" title="${esc(x.reason || "")}"></div>`).join("")}
       ${cs.map(c => `<div class="cut ${sel && sel.cutId === c.id ? "on" : ""}" data-cut-id="${esc(c.id)}" style="left:${pct(c.start)}%;width:${pct(c.end - c.start)}%" title="Cut${c.reason ? ": " + esc(c.reason) : ""}"></div>`).join("")}
       ${majorEvents(r).filter(m => m.span).map(m => `<div class="attnspan" style="left:${pct(m.span[0])}%;width:${pct(m.span[1] - m.span[0])}%" title="${esc(m.text)}"></div>`).join("")}
-      <div class="pins">${pinGroups(r).map(g => {
-        const desc = g.items.map(m => `${m.n}. ${m.frame < 0 ? "before recording" : fmt(m.frame / r.fps)} ${m.text}`).join("; ");
-        return `<button class="pin ${g.tone}" data-pin="${g.nums.join(",")}" data-frame="${g.frame}"
-          style="left:clamp(14px, ${pct(g.frame)}%, calc(100% - 14px))" title="${esc(desc)}" aria-label="${esc("Event " + desc)}">${g.nums.length > 1 ? g.nums[0] + "+" : g.nums[0]}</button>`;
+      <div class="pins">${pinRows(r).map(m => {
+        const desc = `${m.n}. ${m.frame < 0 ? "before recording" : fmt(m.frame / r.fps)} ${m.text}`;
+        return `<button class="pin ${m.tone}" data-pin="${m.n}" data-frame="${m.at}" style="left:clamp(10px, ${pct(m.at)}%, calc(100% - 10px));top:${m.row * 20}px;--row:${m.row}"
+          title="${esc(desc)}" aria-label="${esc("Event " + desc)}">${m.n}</button>`;
       }).join("")}</div>
       ${sel && editing && !sel.cutId ? `<div class="selbox" id="selbox" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%" title="Drag to move, drag an edge to resize. Keys [ and ] set the start and end at the playhead." role="group" aria-label="Selected frames ${sel ? sel.start : 0} to ${sel ? sel.end - 1 : 0}. Press [ or ] to set the start or end at the playhead.">
         <span class="hdl l" data-edge="start"></span><span class="hdl r" data-edge="end"></span></div>` : sel ? `<div class="selbox fixed" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%"></div>` : ""}
@@ -406,15 +406,15 @@ function majorEvents(r) {
 }
 // Each major event gets a number; the same number sits on the run bar at that moment.
 function numbered(r) { return majorEvents(r).map((m, i) => ({ ...m, n: i + 1 })); }
-function pinGroups(r) {         // events close together share one pin so the bar stays readable
-  const near = Math.max(1, Math.round(r.length * 0.012)), groups = [];
-  numbered(r).forEach(m => {
+function pinRows(r) {           // one pin per event at its exact moment; pins that would overlap move down a row
+  const near = Math.max(1, Math.round(r.length * 0.022)), lastInRow = [];
+  return numbered(r).map(m => {
     const f = Math.max(0, m.frame);             // events before recording sit at the left edge
-    const g = groups[groups.length - 1];
-    if (g && f - g.frame <= near) { g.items.push(m); g.nums.push(m.n); if (m.tone === "bad") g.tone = "bad"; }
-    else groups.push({ frame: f, items: [m], nums: [m.n], tone: m.tone });
+    let row = lastInRow.findIndex(x => f - x > near);
+    if (row < 0) row = lastInRow.length;
+    lastInRow[row] = f;
+    return { ...m, at: f, row };
   });
-  return groups;
 }
 function eventsCard(r) {
   return `<div class="card major"><h3>Major events</h3>${numbered(r).map(m => `
