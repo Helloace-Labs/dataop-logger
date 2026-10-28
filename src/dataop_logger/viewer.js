@@ -424,14 +424,15 @@ function aboutCard(r) {
   const drove = share + (take ? ` · ${ivs.length} intervention${ivs.length > 1 ? "s" : ""}, first at ${fmt(take.start / r.fps)}${take.sources.length ? " by " + esc(take.sources.join(", ")) : ""}` : "");
   const when = r.started_at ? new Date(r.started_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : null;
   const L = r.latency_ms || {};
+  // Data warnings: shown only when something could make the training data wrong.
+  const frameMs = 1000 / r.fps;
   const checks = [
-    L.measured ? `Frame to command: ${L.p50} ms median, ${L.p95} ms p95${L.timed < L.frames ? ` (${L.timed} of ${L.frames} frames timed)` : ""}`
-               : "Frame to command: not measured (frame and command times are equal)",
-    `Safety filter changed ${r.safety_modified} frame${r.safety_modified === 1 ? "" : "s"}`,
-    cuts(r).length ? `${(cutFrames(r) / r.fps).toFixed(1)} s cut from training` : "Nothing cut",
-  ];
+    L.measured && L.p95 > 2 * frameMs && `Slow control loop: commands arrive ${L.p95} ms after the frame (p95), more than two frames late, so actions are paired with stale images`,
+    r.safety_modified > 0 && `The safety filter changed ${r.safety_modified} command${r.safety_modified === 1 ? "" : "s"}: the robot did not do exactly what the policy said there, so those frames are left out of residual targets`,
+    L.measured && L.timed < L.frames && `${L.frames - L.timed} of ${L.frames} frames have no timing`,
+  ].filter(Boolean);
   const row = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : "";
-  return `<div class="card about"><h3>Run</h3><dl>
+  return `<details class="card about" ${aboutOpen ? "open" : ""}><summary><h3>Run details</h3>${checks.length ? ` <span class="pill warn">${checks.length} data warning${checks.length > 1 ? "s" : ""}</span>` : ""}</summary><dl>
       ${row("Result", result)}
       ${row("Policy", r.policy && esc(r.policy) + (r.policy_revision ? ` <span class="sub inl">${esc(String(r.policy_revision).slice(0, 12))}</span>` : ""))}
       ${row("Robot", r.robot && esc(r.robot))}
@@ -440,10 +441,12 @@ function aboutCard(r) {
       ${row("Drive mode", drove)}
     </dl>
     ${conditions(r)}
-    <h3 class="sub2">Data check</h3><ul class="checks">${checks.map(c => `<li>${c}</li>`).join("")}</ul>
+    ${checks.length ? `<h3 class="sub2">Data warnings</h3><ul class="checks">${checks.map(c => `<li>${c}</li>`).join("")}</ul>` : ""}
     <div class="ids" title="run ${esc(r.run_id)}">episode ${r.episode} · run ${esc(r.run_id.slice(0, 8))}</div>
-  </div>`;
+  </details>`;
 }
+let aboutOpen = false;
+document.addEventListener("toggle", e => { if (e.target.classList && e.target.classList.contains("about")) aboutOpen = e.target.open; }, true);
 function conditions(r) {
   const c = Object.entries(r.conditions || {});
   return c.length ? `<h3 class="sub2">Conditions</h3><dl>${c.map(([k, v]) =>
