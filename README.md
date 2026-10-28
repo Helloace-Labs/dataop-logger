@@ -156,14 +156,13 @@ The recorded data is never changed. Labels and cuts you make in the page are sav
 
 When runs carry `failure_mode` and `subgoals`, the run list opens with failed runs grouped by failure mode. Click a group to filter the list.
 
-## Labelling and cutting runs
+## Editing runs
 
-Open a run in the viewer and press **Edit** (or E). A two-second selection starts at the playhead. Drag inside it to move it, drag either edge to resize it (an edge can cross the other), or drag anywhere else on the bar to select new frames. The playhead has its own strip under the bar, so selecting frames never moves it. Then either:
+Open a run in the viewer and press **Edit** (or E).
 
-- **Cut** them. Cut frames stay in the recording but are left out of training. Click a cut to undo it.
-- **Label** them. Say what happens in plain words. The **drive mode** (policy, rescue, or one you add) and the **task segment** (the recorded steps, or one you add) start from what was recorded in those frames; change them if they're wrong. Segments help on long tasks. Click a label to change or delete it, or drag again to change its span.
-
-**Undo.** Cmd+Z (Ctrl+Z on Windows and Linux) or the Undo button reverts your last change in the page, one step at a time: a cut, a label, a deleted label, "Cut all", or a run of the idle finder. Each step is recorded in the run's `review.json`, and a step can only be undone if nothing changed those edits since. Inside the text box, Cmd+Z undoes typing as usual.
+- **Task segments:** drag the handles on the segment lane above the run bar. The line between two segments moves both sides together, and the outer start and end of a segment can move up to its neighbour. A table below the bar updates live while you drag. For each segment it shows the start, end, length and frames, how they changed from the recording, who drove during it, and whether the policy fails inside it. Click a segment to select its frames.
+- **Policy fails:** drag the red marker to where the policy actually started to fail. The two seconds before it are underlined, since those frames matter most for training data.
+- **Cut:** drag across the run bar to select frames, then **Cut**. Cut frames stay in the recording but are left out of training. Click a cut to undo it.
 
 **AI feature: find idle frames.** In Edit, **✦ Find idle frames** runs the built-in idle finder on the run. It marks stretches where the arm barely moves for over a second in light grey, each with a short description. You can cut them all, or cut or keep them one by one. Your own agent can make the same kind of suggestion:
 

@@ -156,6 +156,14 @@ textarea { width: 100%; resize: vertical; }
 .lbfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .lbstatus { font-size: 12px; color: var(--ink-3); }
 .lbstatus.bad { color: var(--bad); }
+.segtable { max-width: 980px; }
+.segtable .tablewrap { overflow-x: auto; }
+.segtable table { font-variant-numeric: tabular-nums; }
+.segtable td { padding: 5px 12px 5px 0; border-top: 1px solid var(--line); white-space: nowrap; }
+.segtable th { padding: 4px 12px 4px 0; }
+.segtable tr.moving td { background: var(--hover); }
+.segtable .delta { color: var(--accent); font-size: 11px; margin-left: 4px; }
+.segtable i.sw { position: static; display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; vertical-align: -1px; box-shadow: none; }
 .about { grid-column: span 1; }
 .major { grid-column: span 2; }
 .major .ev { align-items: baseline; }

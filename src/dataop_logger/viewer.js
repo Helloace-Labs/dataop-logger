@@ -68,12 +68,11 @@ document.getElementById("ds").textContent = DATA.dataset;
 function drawStats() {
   const n = runs.length, ok = runs.filter(r => eff(r).termination_reason === "success").length;
   const take = runs.reduce((a, r) => a + interventions(r).length, 0);
-  const labels = runs.reduce((a, r) => a + eff(r).labels.length, 0);
   const cutS = runs.reduce((a, r) => a + cutFrames(r) / r.fps, 0);
   const min = m => runs.reduce((a, r) => a + r.segments.filter(s => s[2] === m).reduce((b, s) => b + s[1] - s[0], 0) / r.fps, 0) / 60;
   document.getElementById("stats").innerHTML = [
     [n, "runs"], [n ? Math.round(100 * ok / n) + "%" : "–", "policy success"], [take, "interventions"],
-    [min("base").toFixed(1), "min policy"], [min("expert").toFixed(1), "min rescue"], [labels, "labels"],
+    [min("base").toFixed(1), "min policy"], [min("expert").toFixed(1), "min rescue"],
     [cutS.toFixed(1), "s cut"]
   ].map(([v, l]) => `<span class="stat"><b>${v}</b>${l}</span>`).join("");
 }
@@ -103,7 +102,7 @@ document.getElementById("fails").onclick = e => {
   filter = filter === "fm:" + b.dataset.fm ? "all" : "fm:" + b.dataset.fm;
   redrawList();
 };
-const FILTERS = [["all", "All runs"], ["success", "Success"], ["failure", "Failed"], ["labelled", "Labelled"], ["suggested", "Suggested cuts"]];
+const FILTERS = [["all", "All runs"], ["success", "Success"], ["failure", "Failed"], ["suggested", "Suggested cuts"]];
 function drawFilters() {
   document.getElementById("filters").innerHTML = FILTERS.map(([k, l]) =>
     `<button class="chip" data-f="${esc(k)}" aria-pressed="${k === filter}">${esc(l)}</button>`).join("");
@@ -114,14 +113,13 @@ document.getElementById("filters").onclick = e => {
 };
 function visible() {
   return runs.filter(r => filter === "all" ? true : filter.startsWith("fm:") ? eff(r).failure_mode === filter.slice(3)
-    : filter === "labelled" ? eff(r).labels.length > 0
     : filter === "suggested" ? suggestions(r).length > 0
     : filter === "success" ? eff(r).termination_reason === "success" : eff(r).termination_reason !== "success");
 }
 function drawRows() {
   document.getElementById("rows").innerHTML = visible().map(r => `
     <tr class="row" tabindex="0" data-id="${esc(r.run_id)}" aria-selected="${current && current.run_id === r.run_id}">
-      <td><b>${runNo(r)}</b>${eff(r).labels.length ? ` <span class="lbcount" title="${eff(r).labels.length} labels">${eff(r).labels.length}</span>` : ""}</td>
+      <td><b>${runNo(r)}</b></td>
       <td>${outcomePill(r)}${eff(r).failure_mode ? `<span class="sub">${human(eff(r).failure_mode)}</span>` : ""}</td>
       <td><div class="mini" title="${r.segments.map(s => MODE[s[2]] + " " + s[0] + "–" + s[1]).join(", ")}">
         ${r.segments.map(s => `<div style="width:${100 * (s[1] - s[0]) / r.length}%;background:${color(s[2])}"></div>`).join("")}</div></td>
@@ -215,27 +213,47 @@ function selPanel(r) {
     return `<div class="card lbpanel">${span}
       <div class="lbfoot"><button class="btn" data-act="uncut">Undo cut</button><button class="btn" data-act="cancel">Close</button>${status}</div></div>`;
   }
-  const names = segmentNames(r);
-  const lb = sel.id ? eff(r).labels.find(l => l.id === sel.id) : null;
-  const it = lb && lb.interpretation;
   return `<div class="card lbpanel">${span}
-    <textarea id="lbtext" rows="2" maxlength="2000" placeholder="What happens here?">${esc(sel.text)}</textarea>
-    <div class="lbrow"><span class="lbq">Drive mode</span>
-      ${driveModes(r).map(d => `<button class="chip" data-driver="${esc(d)}" aria-pressed="${!sel.newdrive && sel.driver === d}">${esc(d)}</button>`).join("")}
-      <input id="lbnewdrive" class="segin" maxlength="50" placeholder="+ drive mode" value="${esc(sel.newdrive || "")}"></div>
-    <div class="lbrow"><span class="lbq">Task segment</span>
-      ${names.map(n => `<button class="chip" data-seg="${esc(n)}" aria-pressed="${!sel.newseg && sel.segment === n}">${esc(n)}</button>`).join("")}
-      <input id="lbnewseg" class="segin" maxlength="100" placeholder="+ task segment" value="${esc(sel.newseg)}"></div>
-    ${it ? `<div class="interp" title="Changing the label clears this until the agent reads it again">Agent: ${it.train === "exclude" ? "leave out" : "keep"} · ${esc(it.meaning)}</div>` : ""}
     <div class="lbfoot">
-      <button class="btn primary" data-act="save" title="Save the label (Cmd/Ctrl+Enter)">Save</button>
-      ${sel.id ? "" : `<button class="btn" data-act="cut" title="Leave these frames out of training. The recording is not changed.">Cut</button>`}
-      ${sel.id ? "" : `<button class="btn" data-act="failhere" title="Mark the start of the selection as the moment the policy fails">Policy fails here</button>`}
+      <button class="btn primary" data-act="cut" title="Leave these frames out of training. The recording is not changed.">Cut</button>
+      <button class="btn" data-act="failhere" title="Mark the start of the selection as the moment the policy fails">Policy fails here</button>
       <button class="btn" data-act="cancel">Cancel</button>
-      ${sel.id ? `<button class="btn bad" data-act="delete">Delete</button>` : ""}
       ${status}
     </div>
   </div>`;
+}
+
+// Live table of task segments while editing: where each starts and ends, how long, how it changed from the recording,
+// who drove during it, and whether the policy fails inside it.
+function segTable(r, live) {
+  const segs = (r.review.segments || []).map(x => ({ ...x }));
+  if (!segs.length) return "";
+  if (live) {                                  // a drag in progress: show where the edges would land
+    const a = segs.find(x => x.index === live.index);
+    if (a && live.kind === "step_boundary") { const b = segs.find(x => x.index === live.index + 1); a.end = live.frame; if (b) b.start = live.frame; }
+    else if (a) a[live.edge] = live.frame;
+  }
+  const rec = r.subgoals || [];
+  const fail = (r.review.major || []).find(m => m.kind === "failure");
+  const drive = sg => {
+    const n = {}; r.segments.forEach(([a, b, m]) => { const k = Math.min(b, sg.end) - Math.max(a, sg.start); if (k > 0) n[m] = (n[m] || 0) + k; });
+    const tot = sg.end - sg.start;
+    return Object.entries(n).map(([m, k]) => `${MODE[m].toLowerCase()} ${Math.round(100 * k / tot)}%`).join(" · ");
+  };
+  const delta = (now, was) => was === undefined || now === was ? "" : ` <span class="delta">${now > was ? "+" : "−"}${(Math.abs(now - was) / r.fps).toFixed(1)} s</span>`;
+  return `<div class="card segtable"><h3>Task segments</h3><div class="tablewrap"><table>
+    <thead><tr><th>Segment</th><th>Start</th><th>End</th><th>Length</th><th>Frames</th><th>Who drove</th><th></th></tr></thead><tbody>
+    ${segs.map(sg => {
+      const o = rec[sg.index], moved = live && sg.index !== null && (sg.index === live.index || (live.kind === "step_boundary" && sg.index === live.index + 1));
+      return `<tr class="${moved ? "moving" : ""}"><td><i class="sw sg shade${segShade(sg.name)}"></i>${esc(sg.name)}</td>
+        <td class="num">${fmt(sg.start / r.fps)}${o ? delta(sg.start, o.start_frame) : ""}</td>
+        <td class="num">${fmt(sg.end / r.fps)}${o ? delta(sg.end, o.end_frame) : ""}</td>
+        <td class="num">${((sg.end - sg.start) / r.fps).toFixed(1)} s</td>
+        <td class="num">${sg.end - sg.start}</td>
+        <td>${drive(sg)}</td>
+        <td>${fail && fail.frame >= sg.start && fail.frame < sg.end ? `<span class="pill bad">policy fails</span>` : ""}</td></tr>`;
+    }).join("")}</tbody></table></div>
+    <div class="sub">Changes are compared with the recording. Drag the handles on the segment lane to adjust.</div></div>`;
 }
 
 function setSpan(r, lo, hi) {           // new selection, or move/resize the open one; untouched defaults follow
@@ -315,9 +333,6 @@ function render(r, t0) {
       ${canEdit(r) ? `<button class="btn ${editing ? "primary" : ""} editbtn" id="edit" title="E">${editing ? "Done" : "Edit"}</button>` : ""}
     </div>
     <div class="timeline ${editing ? "editing" : ""}" id="tl" style="--pinrows:${(r.review.major || []).some(m => m.kind === "failure") ? 1 : 0}">
-      <div class="lblane">${e.labels.map(l => `<div class="lb ${l.interpretation && l.interpretation.train === "exclude" ? "out" : ""} ${sel && sel.id === l.id ? "on" : ""}"
-        data-label="${esc(l.id)}" style="left:${pct(l.start)}%;width:${pct(l.end - l.start)}%"
-        title="${esc([l.text, l.driver, l.segment].filter(Boolean).join(" · "))}">${esc(l.segment || l.text)}</div>`).join("")}</div>
       <div class="lane" aria-label="Task segments">${(r.review.segments || []).map(sg => {
         const shade = segShade(sg.name);
         const tip = `Task segment: ${sg.name} · ${fmt(sg.start / r.fps)}–${fmt(sg.end / r.fps)}${sg.status === "failed" ? " · failed" : ""}${sg.from_label ? " · from a label" : ""}`;
@@ -339,6 +354,7 @@ function render(r, t0) {
     </div>
     ${aiBar(r)}
     ${selPanel(r)}
+    ${editing ? segTable(r) : ""}
     <div class="cols">
       ${aboutCard(r)}
       ${corrections(r).length || otherProposals(r).length ? `<div class="card"><h3>Other corrections</h3>
@@ -499,7 +515,7 @@ function wire(r, t0) {
   if (editBtn) editBtn.onclick = () => {
     editing = !editing; notice = "";
     if (!editing) { discard(r); return render(r, p.t); }
-    if (!sel) defaultSelection(r); else render(r, p.t);
+    render(r, p.t);
   };
 
   const toFrame = x => { const b = tl.getBoundingClientRect(); return Math.max(0, Math.min(r.length, Math.round((x - b.left) / b.width * r.length))); };
@@ -508,7 +524,20 @@ function wire(r, t0) {
     tl.setPointerCapture(ev.pointerId);
     const el = bnd || fm, lo = bnd ? +bnd.dataset.lo : 0, hi = bnd ? +bnd.dataset.hi : r.length - 1;
     let f = null;
-    tl.onpointermove = m => { f = Math.max(lo, Math.min(hi, toFrame(m.clientX))); el.style.left = (100 * f / r.length) + "%"; };
+    tl.onpointermove = m => {
+      f = Math.max(lo, Math.min(hi, toFrame(m.clientX))); el.style.left = (100 * f / r.length) + "%";
+      const t = document.querySelector(".segtable");
+      if (bnd && t) t.outerHTML = segTable(r, { kind: bnd.dataset.kind, index: +bnd.dataset.index, edge: bnd.dataset.edge, frame: f });
+      if (bnd) {                                 // resize the segments on the lane as the edge moves
+        const segs = r.review.segments || [], i = +bnd.dataset.index;
+        const el = sg => sg && document.querySelector(`.sg[data-segkey="${CSS.escape("segment:" + sg.name + "@" + sg.start)}"]`);
+        const put = (sg, a, b) => { const e = el(sg); if (e) { e.style.left = (100 * a / r.length) + "%"; e.style.width = (100 * (b - a) / r.length) + "%"; } };
+        const A = segs.find(x => x.index === i), B = segs.find(x => x.index === i + 1);
+        if (bnd.dataset.kind === "step_boundary") { put(A, A.start, f); if (B) put(B, f, B.end); }
+        else if (bnd.dataset.edge === "start") put(A, f, A.end);
+        else put(A, A.start, f);
+      }
+    };
     tl.onpointerup = () => {
       tl.onpointermove = tl.onpointerup = null;
       if (f === null) return;
@@ -624,7 +653,8 @@ document.addEventListener("keydown", e => {
   else if (k === "k" || k === "ArrowUp") { e.preventDefault(); step(-1); }
   else if (k === "e" && canEdit(r)) {
     editing = !editing;
-    if (!editing) { discard(r); render(r, player.t); } else if (!sel) defaultSelection(r); else render(r, player.t);
+    if (!editing) discard(r);
+    render(r, player.t);
   }
   else if ((k === "[" || k === "]") && editing && sel && !sel.cutId) {      // set an edge of the selection at the playhead
     const f = frameOf(r);
