@@ -1528,3 +1528,47 @@ def test_malformed_batch_fields_are_validation_errors(tmp_path, breakage):
     p.write_text(json.dumps(d))
     res = V.validate(ds.root)
     assert not res["ok"] and any("batches" in e for e in res["errors"])
+
+
+def test_runs_by_root_keeps_dataset_copies_apart(tmp_path):
+    import shutil
+    from dataop_logger import export as X
+    ds, ok, bad = _locked_batch(tmp_path / "a")
+    copy = tmp_path / "b"
+    shutil.copytree(ds.root, copy)                                 # same run ids in both
+    rep = X.export([(ds.root, "round 1"), (copy, "round 1")], "dagger", str(tmp_path / "x"), dry_run=True,
+                   runs_by_root={str(ds.root): [bad.run_id], str(copy): [ok.run_id]})
+    assert sorted((r["root"], r["run_id"]) for r in rep["runs"]) == sorted(
+        [(str(Path(ds.root)), bad.run_id), (str(copy), ok.run_id)])
+
+
+def test_training_set_out_of_date_seen_from_every_source(tmp_path):
+    from dataop_logger import batches as B, export as X, review as rv
+    a, a_ok, a_bad = _locked_batch(tmp_path / "a")
+    b, _, _ = _locked_batch(tmp_path / "b")
+    for d in (a, b):
+        B.set_status(d.root, "round 1", "reviewing", reason="allow edits")
+    X.export([(a.root, "round 1"), (b.root, "round 1")], "dagger", str(tmp_path / "both"), allow_unlocked=True)
+    assert not X.training_sets(a.root)[0]["out_of_date"] and not X.training_sets(b.root)[0]["out_of_date"]
+    m = store.read_manifest(a_bad.run_path)
+    rv.add_edit(a_bad.run_path, m, "exclude", {"start": 7, "end": 8})
+    assert X.training_sets(a.root)[0]["out_of_date"] and X.training_sets(b.root)[0]["out_of_date"]
+
+
+def test_lora_keeps_blend_runs_as_dagger():
+    from dataop_logger.export import select
+    s = {"n": 2, "effective": {"rejected": False, "termination_reason": "success"}, "train_mask": np.ones(2, bool),
+         "sent": np.ones((2, 1), np.float32), "expert": np.full((2, 1), 2, np.float32),
+         "mode": np.array(["blend", "blend"], object), "expert_valid": np.ones(2, bool), "segments": []}
+    for recipe in ("dagger", "lora"):
+        assert select(s, recipe, {}, {"task_segments": []})[0].sum() == 2
+    s["mode"] = np.array(["expert", "expert"], object)
+    assert select(s, "lora", {}, {"task_segments": []})[0].sum() == 2          # teleop run
+    assert select(s, "dagger", {}, {"task_segments": []})[0].sum() == 0
+
+
+def test_cli_export_accepts_lora(tmp_path):
+    from dataop_logger import cli
+    ds, _, _ = _locked_batch(tmp_path)
+    assert cli.main(["export", "--batch", f"{ds.root}:round 1", "--recipe", "lora", "--into", str(tmp_path / "l"),
+                     "--dry-run"]) == 0

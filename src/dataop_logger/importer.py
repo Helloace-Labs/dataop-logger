@@ -450,6 +450,8 @@ def import_dataset(source: str, into: str | None = None, preset: str | None = "p
               "to_bind": len(p["episodes"]), "skipped": p["skipped"], "dry_run": dry_run, "runs": []}
     results = {k: _results(p["mapping"][k], Path(p["root"])) if isinstance(p["mapping"].get(k), dict)
                and "file" in p["mapping"][k] else {} for k in ("outcome", "failure_mode")}
+    report["missing_files"] = [k for k in ("outcome", "failure_mode") if isinstance(p["mapping"].get(k), dict)
+                               and "file" in p["mapping"][k] and not results[k]]
     for e in p["episodes"]:
         try:
             m, table, notes = _build_run(p, e, results)

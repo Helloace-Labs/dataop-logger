@@ -130,7 +130,8 @@ def _main(argv=None) -> int:
     xp = sub.add_parser("export", help="generate a training set (LeRobot dataset) from locked batches; no AI involved")
     xp.add_argument("--batch", action="append", required=True, metavar="ROOT:BATCH",
                     help="dataset folder and batch name or id, e.g. data/round3:'round 3'; repeat to combine")
-    xp.add_argument("--recipe", required=True, choices=["teleop", "filtered", "dagger", "residual"])
+    xp.add_argument("--recipe", required=True, choices=["teleop", "dagger", "lora", "filtered", "residual"],
+                    help="teleop, dagger, lora (teleop + dagger, for a LoRA fine-tune), filtered or residual")
     xp.add_argument("--into", required=True, help="new folder for the training set")
     xp.add_argument("--with-success", action="store_true", help="dagger: add the policy's own successful runs")
     xp.add_argument("--zero-on-success", action="store_true",

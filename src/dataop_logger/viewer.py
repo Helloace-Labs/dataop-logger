@@ -146,8 +146,9 @@ def _pickable(root: Path, current: bool = False) -> dict:
         runs.append({"run_id": m["run_id"], "episode": m["episode_index"], "batch_id": d["members"][m["run_id"]],
                      "outcome": outcome, "reviewed": reviewed, "length": m["length"],
                      "fps": m["action_schema"]["rate_hz"],
-                     "drove": "teleop" if "base" not in modes and "expert" in modes
-                              else "rescued" if "expert" in modes else "policy" if "base" in modes else "unknown"})
+                     "drove": "teleop" if not {"base", "blend"} & set(modes) and "expert" in modes
+                              else "rescued" if {"expert", "blend"} & set(modes)
+                              else "policy" if "base" in modes else "unknown"})
     runs.sort(key=lambda x: x["episode"])
     return {"root": str(root), "name": root.name, "current": current, "runs": runs,
             "batches": [{"batch_id": b["batch_id"], "name": b["name"], "status": b["status"]}
@@ -353,12 +354,18 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
             preset = req.get("preset") or "auto"
             into = req.get("into") or (None if local else str(root.parent / source.replace("/", "_")))
             batch = (req.get("batch") or "").strip() or None
+            mapping = req.get("mapping")
+            if mapping is not None and not isinstance(mapping, dict):
+                raise I.ImportError_("mapping must be an object (the --map format)")
             if op == "import_preview":
                 if not local:
                     return {"preview": {"hub": True, "into": into, "source": source}}
                 if preset == "auto":
                     preset = I.detect(Path(source).expanduser())
-                rep = I.import_dataset(source, into=into, preset=preset, batch=batch, dry_run=True, by="person")
+                rep = I.import_dataset(source, into=into, preset=preset, mapping=mapping, batch=batch, dry_run=True,
+                                       by="person")
+                notes = sorted({n.split(":")[0] for r in rep["runs"] for n in r["notes"] if "no file" in n}
+                               | set(rep["missing_files"]))
                 oc = {}
                 for r in rep["runs"]:
                     oc[r["outcome"]] = oc.get(r["outcome"], 0) + 1
@@ -367,12 +374,13 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
                                     "policy_frames": sum(r["policy_frames"] for r in rep["runs"]),
                                     "outcomes": oc, "fields": rep["fields"], "skipped": len(rep["skipped"]),
                                     "skipped_why": sorted({x["why"] for x in rep["skipped"]})[:3],
-                                    "batch": batch or f"import {Path(source).name}"}}
+                                    "batch": batch or f"import {Path(source).name}",
+                                    "missing_files": notes}}
             if op != "import_start":
                 raise rv.ReviewError("unknown import operation")
 
             def work():
-                rep = I.import_dataset(source, into=into, preset=preset, batch=batch, by="person")
+                rep = I.import_dataset(source, into=into, preset=preset, mapping=mapping, batch=batch, by="person")
                 W.remember(Path(rep["dataset"]))
                 return {"root": str(Path(rep["dataset"]).resolve()), "runs": len(rep["runs"]),
                         "skipped": len(rep["skipped"]), "batch": rep.get("batch"),
@@ -414,7 +422,7 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
                 names.append(B.find(d, bid)["name"])
         drop = X.extra_features(sorted(by_root))
         opts = {"with_success": bool(req.get("with_success")), "zero_on_success": bool(req.get("zero_on_success")),
-                "allow_unlocked": True, "runs": sorted({i for ids in by_root.values() for i in ids}),
+                "allow_unlocked": True, "runs_by_root": {r: sorted(ids) for r, ids in by_root.items()},
                 "drop_features": drop or None}
         import datetime as _dt
         label = "_".join(_slug(x) for x in names[:3]) + ("_and_more" if len(names) > 3 else "")
