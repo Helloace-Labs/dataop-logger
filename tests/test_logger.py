@@ -1572,3 +1572,55 @@ def test_cli_export_accepts_lora(tmp_path):
     ds, _, _ = _locked_batch(tmp_path)
     assert cli.main(["export", "--batch", f"{ds.root}:round 1", "--recipe", "lora", "--into", str(tmp_path / "l"),
                      "--dry-run"]) == 0
+
+
+def test_runs_by_root_writer_reads_each_copys_own_actions(tmp_path):
+    import shutil
+    import pyarrow.parquet as pq
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from dataop_logger import export as X
+    ds, ok, bad = _locked_batch(tmp_path / "a")
+    copy = tmp_path / "b"
+    shutil.copytree(ds.root, copy)
+    ticks = copy / "dataop" / "runs" / bad.run_id / "ticks.parquet"            # the copy's base actions differ
+    t = pq.read_table(ticks)
+    shifted = [[v + 100 for v in row] for row in t.column("base_action").to_pylist()]
+    t = t.set_column(t.schema.get_field_index("base_action"), "base_action",
+                     pa.array(shifted, type=t.schema.field("base_action").type))
+    pq.write_table(t, ticks)
+    man = store.read_manifest(copy / "dataop" / "runs" / bad.run_id)
+    man["integrity"]["ticks_sha256"] = store.sha256(ticks.read_bytes())
+    store.atomic_write_json(copy / "dataop" / "runs" / bad.run_id / "manifest.json", man)
+    out = tmp_path / "res"
+    X.export([(ds.root, "round 1"), (copy, "round 1")], "residual", str(out), repo_id="t/res",
+             runs_by_root={str(ds.root): [bad.run_id], str(copy): [bad.run_id]})
+    got = LeRobotDataset("t/res", root=out)
+    base = np.stack([got[i]["observation.base_action"].numpy() for i in range(got.num_frames)])
+    assert got.num_episodes == 4 and (base[:got.num_frames // 2] < 50).all() and (base[got.num_frames // 2:] > 50).all()
+
+
+def test_lora_mixed_modes_count_as_dagger():
+    from dataop_logger.export import select
+    for modes in (["base", "blend"], ["base", "expert"], ["blend", "expert"]):
+        s = {"n": 2, "effective": {"rejected": False, "termination_reason": "failure"}, "train_mask": np.ones(2, bool),
+             "sent": np.ones((2, 1), np.float32), "expert": np.full((2, 1), 2, np.float32),
+             "mode": np.array(modes, object), "expert_valid": np.ones(2, bool), "segments": []}
+        keep, action, _ = select(s, "lora", {}, {"task_segments": []})
+        assert keep.sum() == 2 and (action == 2).all()                        # dagger labels, not a teleop run
+
+
+def test_import_preview_api_mapping_and_missing_side_files(tmp_path):
+    from types import SimpleNamespace
+    from dataop_logger import importer, viewer
+    ds = _plain_dataset(tmp_path, [(10, None, True), (12, 4, False)])
+    h = SimpleNamespace(dataset_root=Path(ds.root), server=SimpleNamespace(dataop_state={"root": Path(ds.root)}))
+    long = lambda req: viewer._RangeHandler._long(h, req["op"], req)
+    gone = {"outcome": {"file": str(tmp_path / "nowhere_*.json"), "key": "episode", "field": "result"}}
+    p = long({"op": "import_preview", "source": str(ds.root), "preset": "plain", "mapping": gone})["preview"]
+    assert p["missing_files"] == ["outcome"] and p["outcomes"] == {"unknown": 2}
+    mapped = {"control": {"column": "intervention"}, "outcome": {"column": "next.success"},
+              "base_action": "sent_on_policy_frames"}
+    p = long({"op": "import_preview", "source": str(ds.root), "preset": "plain", "mapping": mapped})["preview"]
+    assert p["outcomes"] == {"success": 1, "failure": 1} and p["policy_frames"] == 14 and not p["missing_files"]
+    with pytest.raises(importer.ImportError_):
+        long({"op": "import_preview", "source": str(ds.root), "mapping": "nope"})
