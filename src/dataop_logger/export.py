@@ -164,8 +164,9 @@ def _load_hook(spec: str | None):
 # ── reading source frames (generic: any features, video or not) ───────────────
 
 class _Source:
-    def __init__(self, root: Path):
+    def __init__(self, root: Path, drop: tuple = ()):
         self.root = Path(root)
+        self.drop = set(drop)
         self.info = json.loads((self.root / "meta" / "info.json").read_text())
         self.feats = self.info["features"]
         self.videos = [k for k, v in self.feats.items() if v.get("dtype") == "video"]
@@ -178,20 +179,21 @@ class _Source:
     def out_features(self) -> dict:
         out = {}
         for k, v in self.feats.items():
-            if k in RESERVED or k.startswith("next."):
+            if k in RESERVED or k.startswith("next.") or k in self.drop:
                 continue
             out[k] = {kk: vv for kk, vv in v.items() if kk != "info"}
         return out
 
     def episode(self, e: int) -> dict:
-        cols = [k for k in self.feats if k not in RESERVED and not k.startswith("next.")
+        cols = [k for k in self.feats if k not in RESERVED and not k.startswith("next.") and k not in self.drop
                 and self.feats[k].get("dtype") != "video"]
         t = self.dset.to_table(columns=["frame_index", *cols], filter=pads.field("episode_index") == e).sort_by("frame_index")
         data = {c: t.column(c).to_pylist() for c in cols}
         row = self.eps[self.eps["episode_index"] == e].iloc[0]
         n = int(row["length"])
         for k in self.videos:
-            data[k] = self._frames(k, row, n)
+            if k not in self.drop:
+                data[k] = self._frames(k, row, n)
         return {"n": n, "data": data}
 
     def _frames(self, key: str, row, n: int) -> list:
@@ -257,7 +259,8 @@ def _split(run_id: str, val: float) -> str:
 def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_success: bool = False,
            zero_on_success: bool = False, base: str | None = None, segments: list[str] | None = None,
            outcomes: list[str] | None = None, val: float = 0.0, min_span: int = 1, hook: str | None = None,
-           allow_unlocked: bool = False, dry_run: bool = False, repo_id: str | None = None, by: str = "human") -> dict:
+           allow_unlocked: bool = False, dry_run: bool = False, repo_id: str | None = None, by: str = "human",
+           drop_features: list[str] | None = None) -> dict:
     if recipe not in RECIPES:
         raise ExportError(f"recipe must be one of {RECIPES}")
     if not 0.0 <= val < 1.0:
@@ -273,6 +276,9 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
     opts = {"with_success": with_success, "zero_on_success": zero_on_success, "segments": segments,
             "outcomes": outcomes, "min_span": min_span}
     hook_fn, hook_sha = _load_hook(hook)
+    drop = tuple(drop_features or ())
+    if "action" in drop:
+        raise ExportError("the action feature cannot be dropped")
 
     # 1. resolve sources and check they can be combined
     plan_runs, src_records, first = [], [], None
@@ -282,14 +288,15 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
         b = B.find(d, ref)
         if b["status"] != "locked" and not allow_unlocked:
             raise ExportError(f"batch {b['name']!r} in {root} is {b['status']}; lock it first (or allow unlocked)")
-        src = _Source(root)
+        src = _Source(root, drop)
         sig = (src.info["fps"], src.info.get("robot_type"),
                json.dumps(src.out_features(), sort_keys=True))
         if first is None:
             first = (sig, src)
         elif sig != first[0]:
-            raise ExportError(f"{root} has a different fps, robot type or features from {first[1].root}; "
-                              "export them separately")
+            raise ExportError(f"{root} has a different fps, robot type or features from {first[1].root} "
+                              f"(features only in one: {sorted(set(src.out_features()) ^ set(first[1].out_features()))}); "
+                              "export them separately or leave extras out with drop_features")
         lists = ls.load(root)
         manifests = {p.name: (p, m) for p, m in store.iter_manifests(root, "committed")}
         members = sorted(r for r, x in d["members"].items() if x == b["batch_id"])
@@ -310,10 +317,12 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
         raise ExportError("no sources given")
     base_src = None
     if base:
-        base_src = _Source(Path(base).expanduser())
+        base_src = _Source(Path(base).expanduser(), drop)
         if (base_src.info["fps"], base_src.info.get("robot_type"), json.dumps(base_src.out_features(), sort_keys=True)) \
                 != first[0]:
-            raise ExportError(f"the base dataset {base} has a different fps, robot type or features")
+            raise ExportError(f"the base dataset {base} has a different fps, robot type or features "
+                              f"(features only in one: {sorted(set(base_src.out_features()) ^ set(first[1].out_features()))}; "
+                              "leave extras out with drop_features)")
 
     # 2. decide frames per run
     runs_out, hook_results = [], []
@@ -347,7 +356,7 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
                          "review_digest": B.review_digest(m, s["review"]),
                          "ticks_sha256": m["integrity"]["ticks_sha256"], "manifest_sha256": store.json_sha256(m),
                          "_action": action, "_src": src, "_task": m["task"]})
-    report = {"recipe": recipe, "options": {**opts, "base": base, "val": val, "hook": hook},
+    report = {"recipe": recipe, "options": {**opts, "base": base, "val": val, "hook": hook, "drop_features": list(drop)},
               "sources": src_records, "dry_run": dry_run,
               "episodes": sum(len(r["spans"]) for r in runs_out) + (len(base_src.eps) if base_src is not None else 0),
               "frames": sum(r["kept"] for r in runs_out) +
