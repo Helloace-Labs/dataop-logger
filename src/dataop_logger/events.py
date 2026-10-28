@@ -98,7 +98,7 @@ def major_events(manifest: dict, review: dict, modes: list[str], sources: list, 
             frame = first_help if first_help is not None else (failed["end_frame"] - 1 if failed else None)
         if frame is not None:
             detail = [eff["failure_mode"] and eff["failure_mode"].replace("_", " "),
-                      failed and f"{failed['name']} failed"]
+                      failed and f"{failed['name']} failed" + (f": {failed['reason']}" if failed.get("reason") else "")]
             add("failure", frame, "failure", "Policy fails", "; ".join(x for x in detail if x) or None,
                 estimated=estimated, window=[max(0, frame - int(round(2 * rate))), frame])
 
