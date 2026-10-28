@@ -599,11 +599,11 @@ function wire(r, t0) {
   document.querySelectorAll(".pin").forEach(x => {
     x.onmouseenter = x.onfocus = () => light(x.dataset.pin.split(","), true);
     x.onmouseleave = x.onblur = () => light([], false);
-    x.onclick = () => p.seek(Math.max(0, +x.dataset.frame / r.fps - 0.5));
+    x.onclick = () => p.seek(+x.dataset.frame / r.fps);
   });
   document.querySelectorAll(".major .ev").forEach(x => { x.onmouseenter = () => light([x.dataset.n], true); x.onmouseleave = () => light([], false); });
   document.querySelectorAll(".ev").forEach(el => {
-    const go = () => el.dataset.open && canEdit(r) ? openLabel(r, el.dataset.open) : p.seek(Math.max(0, +el.dataset.frame / r.fps - 1));
+    const go = () => el.dataset.open && canEdit(r) ? openLabel(r, el.dataset.open) : p.seek(+el.dataset.frame / r.fps);
     el.onclick = go; el.onkeydown = ev => { if (ev.key === "Enter") { ev.stopPropagation(); go(); } };
   });
   const text = document.getElementById("lbtext"), newseg = document.getElementById("lbnewseg"), newdrive = document.getElementById("lbnewdrive");
@@ -614,7 +614,7 @@ function wire(r, t0) {
     const b = ev.target.closest("button"); if (!b || b.id) return;
     if (b.dataset.driver) { sel.driver = sel.driver === b.dataset.driver && !sel.newdrive ? null : b.dataset.driver; sel.newdrive = ""; sel.driverSet = sel.dirty = true; return render(r, p.t); }
     if (b.dataset.seg !== undefined) { sel.segment = sel.segment === b.dataset.seg && !sel.newseg ? null : b.dataset.seg; sel.newseg = ""; sel.segmentSet = sel.dirty = true; return render(r, p.t); }
-    if (b.dataset.show !== undefined) return p.seek(Math.max(0, +b.dataset.show / r.fps - 0.5));
+    if (b.dataset.show !== undefined) return p.seek(+b.dataset.show / r.fps);
     if (b.dataset.cut) return decide(r, b.dataset.cut, true, "accept" + editSpan(r, b.dataset.cut));
     if (b.dataset.keep) return decide(r, b.dataset.keep, false, "keep" + editSpan(r, b.dataset.keep));
     if (b.dataset.uncut) return decide(r, b.dataset.uncut, false, "undo" + editSpan(r, b.dataset.uncut));
