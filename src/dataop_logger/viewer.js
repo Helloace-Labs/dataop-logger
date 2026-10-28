@@ -318,7 +318,8 @@ function render(r, t0) {
       ${sug.map(x => `<div class="sugg-span" style="left:${pct(x.payload.start)}%;width:${pct(x.payload.end - x.payload.start)}%" title="${esc(x.reason || "")}"></div>`).join("")}
       ${cs.map(c => `<div class="cut ${sel && sel.cutId === c.id ? "on" : ""}" data-cut-id="${esc(c.id)}" style="left:${pct(c.start)}%;width:${pct(c.end - c.start)}%" title="Cut${c.reason ? ": " + esc(c.reason) : ""}"></div>`).join("")}
       ${majorEvents(r).filter(m => m.span).map(m => `<div class="attnspan" style="left:${pct(m.span[0])}%;width:${pct(m.span[1] - m.span[0])}%" title="${esc(m.text)}"></div>`).join("")}
-      ${majorEvents(r).filter(m => m.tick).map(m => `<div class="mark ${m.tone}" style="left:${pct(m.frame)}%" title="${fmt(m.frame / r.fps)} ${esc(m.text)}"></div>`).join("")}
+      <div class="pins">${pinGroups(r).map(g => `<button class="pin ${g.tone}" data-pin="${g.nums.join(",")}" data-frame="${g.frame}"
+        style="left:clamp(9px, ${pct(g.frame)}%, calc(100% - 9px))" title="${esc(g.items.map(m => `${m.n}. ${fmt(m.frame / r.fps)} ${m.text}`).join("\n"))}">${g.nums.length > 1 ? g.nums[0] + "+" : g.nums[0]}</button>`).join("")}</div>
       ${sel && editing && !sel.cutId ? `<div class="selbox" id="selbox" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%" title="Drag to move, drag an edge to resize. Keys [ and ] set the start and end at the playhead." role="group" aria-label="Selected frames ${sel ? sel.start : 0} to ${sel ? sel.end - 1 : 0}. Press [ or ] to set the start or end at the playhead.">
         <span class="hdl l" data-edge="start"></span><span class="hdl r" data-edge="end"></span></div>` : sel ? `<div class="selbox fixed" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%"></div>` : ""}
       <div class="ruler" id="ruler" role="slider" tabindex="0" aria-label="Playhead frame" aria-valuemin="0" aria-valuemax="${r.length - 1}" aria-valuenow="0" title="Drag to move the playhead. Arrow keys step it."></div>
@@ -373,8 +374,9 @@ function majorEvents(r) {
     // a takeover request logged up to a second before the switch explains it
     const req = recorded.find(ev => !ev.used && ev.kind === "takeover" && ev.frame >= iv.start - fps && ev.frame <= iv.start);
     if (req) req.used = true;
-    const why = req && [req.reason, req.text, req.source && `requested by ${req.source}`,
-                        req.frame !== iv.start && `at ${req.frame < 0 ? "before recording" : fmt(req.frame / fps)}`].filter(Boolean).join(" · ");
+    const why = req && [req.reason, req.text, req.source && !iv.sources.includes(req.source) && `requested by ${req.source}`,
+                        Math.abs(req.frame - iv.start) > fps / 5 && `requested at ${req.frame < 0 ? "before recording" : fmt(req.frame / fps)}`]
+                       .filter(Boolean).join(" · ");
     const who = iv.sources.join(", ");
     if (iv.start > 0) {
       if (iv.prevMode === "base") {             // only the policy can have gone wrong right before it
@@ -399,10 +401,21 @@ function majorEvents(r) {
     e.termination_reason === "success" ? "ok" : "bad");
   return out.sort((a, b) => a.frame - b.frame || a.order - b.order);
 }
+// Each major event gets a number; the same number sits on the run bar at that moment.
+function numbered(r) { return majorEvents(r).map((m, i) => ({ ...m, n: i + 1 })); }
+function pinGroups(r) {         // events close together share one pin so the bar stays readable
+  const near = Math.max(1, Math.round(r.length * 0.012)), groups = [];
+  numbered(r).filter(m => m.frame >= 0).forEach(m => {
+    const g = groups[groups.length - 1];
+    if (g && m.frame - g.frame <= near) { g.items.push(m); g.nums.push(m.n); if (m.tone === "bad") g.tone = "bad"; }
+    else groups.push({ frame: m.frame, items: [m], nums: [m.n], tone: m.tone });
+  });
+  return groups;
+}
 function eventsCard(r) {
-  return `<div class="card major"><h3>Major events</h3>${majorEvents(r).map(m => `
-    <div class="ev ${m.tone}" tabindex="0" data-frame="${Math.max(0, Math.min(m.frame, r.length - 1))}"${m.open ? ` data-open="${esc(m.open)}"` : ""}>
-      <span class="time">${m.frame < 0 ? "before" : fmt(m.frame / r.fps)}</span><span class="dot"></span>
+  return `<div class="card major"><h3>Major events</h3>${numbered(r).map(m => `
+    <div class="ev ${m.tone}" tabindex="0" data-n="${m.n}" data-frame="${Math.max(0, Math.min(m.frame, r.length - 1))}"${m.open ? ` data-open="${esc(m.open)}"` : ""}>
+      <span class="time">${m.frame < 0 ? "before" : fmt(m.frame / r.fps)}</span><span class="num-badge">${m.n}</span>
       <span>${esc(m.text)}${m.note ? `<span class="sub">${esc(m.note)}</span>` : ""}</span></div>`).join("")}</div>`;
 }
 
@@ -528,6 +541,8 @@ function wire(r, t0) {
   };
   tl.onpointerdown = ev => {
     if (ev.target.closest("#ruler, .knob")) return scrub(ev);
+    const pin = ev.target.closest(".pin");
+    if (pin) { ev.preventDefault(); return p.seek(Math.max(0, +pin.dataset.frame / r.fps - 0.5)); }
     if (canEdit(r)) {
       const lbEl = ev.target.closest(".lb"), cutEl = ev.target.closest(".cut");
       if (lbEl) { ev.preventDefault(); return openLabel(r, lbEl.dataset.label); }
@@ -574,6 +589,12 @@ function wire(r, t0) {
       setSpan(r, lo, hi);
     };
   };
+  const light = (nums, on) => {
+    document.querySelectorAll(".pin").forEach(x => x.classList.toggle("hl", on && x.dataset.pin.split(",").some(n => nums.includes(n))));
+    document.querySelectorAll(".major .ev").forEach(x => x.classList.toggle("hl", on && nums.includes(x.dataset.n)));
+  };
+  document.querySelectorAll(".pin").forEach(x => { x.onmouseenter = () => light(x.dataset.pin.split(","), true); x.onmouseleave = () => light([], false); });
+  document.querySelectorAll(".major .ev").forEach(x => { x.onmouseenter = () => light([x.dataset.n], true); x.onmouseleave = () => light([], false); });
   document.querySelectorAll(".ev").forEach(el => {
     const go = () => el.dataset.open && canEdit(r) ? openLabel(r, el.dataset.open) : p.seek(Math.max(0, +el.dataset.frame / r.fps - 1));
     el.onclick = go; el.onkeydown = ev => { if (ev.key === "Enter") { ev.stopPropagation(); go(); } };

@@ -75,7 +75,7 @@ figcaption { position: absolute; left: 8px; top: 6px; color: #fff; font-size: 11
   font: inherit; cursor: pointer; }
 .btn:hover { background: var(--hover); }
 .time { font-family: var(--mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
-.timeline { position: relative; height: 98px; cursor: pointer; user-select: none; }
+.timeline { position: relative; height: 118px; cursor: pointer; user-select: none; }
 .lane { position: absolute; left: 0; right: 0; top: 24px; height: 20px; }
 .sg { position: absolute; top: 0; height: 20px; border-radius: 4px; font-size: 11px; line-height: 20px; padding: 0 6px;
   overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--ink); border: 1px solid var(--line); background: var(--panel); }
@@ -83,8 +83,14 @@ figcaption { position: absolute; left: 8px; top: 6px; color: #fff; font-size: 11
 .sg.failed { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
 .track { position: absolute; left: 0; right: 0; top: 56px; height: 14px; border-radius: 4px; overflow: hidden; display: flex; background: var(--none); }
 .track div { height: 100%; }
-.mark { position: absolute; top: 52px; width: 2px; height: 22px; background: var(--ink); opacity: .55; pointer-events: none; }
-.head { position: absolute; top: 0; width: 2px; height: 96px; margin-left: -1px; background: var(--ink); opacity: .85; pointer-events: none; z-index: 3; }
+.pins { position: absolute; left: 0; right: 0; top: 77px; height: 20px; }
+.pin { position: absolute; top: 0; transform: translateX(-50%); min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px;
+  font: 600 10px/16px var(--sans); color: var(--panel); background: var(--ink-2); border: 1px solid var(--panel); cursor: pointer; z-index: 2; }
+.pin::before { content: ""; position: absolute; left: 50%; top: -6px; width: 1px; height: 6px; background: inherit; }
+.pin.ok { background: var(--ok); } .pin.bad { background: var(--bad); } .pin.warn { background: var(--expert); }
+.pin.attn { background: var(--warn); } .pin.lbl { background: var(--lbl); } .pin.muted { background: var(--ink-3); }
+.pin.hl, .pin:hover { box-shadow: 0 0 0 2px var(--accent); z-index: 4; }
+.head { position: absolute; top: 0; width: 2px; height: 116px; margin-left: -1px; background: var(--ink); opacity: .85; pointer-events: none; z-index: 3; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--ink-2); font-size: 12px; }
 .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
@@ -124,7 +130,7 @@ dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
   background: color-mix(in srgb, var(--accent) 18%, transparent); outline: 1px solid color-mix(in srgb, var(--accent) 60%, transparent); }
 .selbox:active { cursor: grabbing; }
 .selbox.fixed { pointer-events: none; cursor: default; }
-.ruler { position: absolute; left: 0; right: 0; top: 80px; height: 16px; border-radius: 3px; cursor: ew-resize; touch-action: none;
+.ruler { position: absolute; left: 0; right: 0; top: 100px; height: 16px; border-radius: 3px; cursor: ew-resize; touch-action: none;
   background: repeating-linear-gradient(90deg, var(--line) 0 1px, transparent 1px 10%), var(--bg); }
 .knob { position: absolute; left: -6px; bottom: -2px; width: 0; height: 0; border-left: 7px solid transparent;
   border-right: 7px solid transparent; border-bottom: 10px solid var(--ink); pointer-events: auto; cursor: ew-resize; }
@@ -150,14 +156,15 @@ textarea { width: 100%; resize: vertical; }
 .about { grid-column: span 1; }
 .major { grid-column: span 2; }
 .major .ev { align-items: baseline; }
-.major .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ink-3); flex: none; align-self: center; }
-.major .ok .dot { background: var(--ok); } .major .bad .dot { background: var(--bad); }
-.major .warn .dot { background: var(--expert); } .major .lbl .dot { background: var(--lbl); }
 .major .attn { background: var(--warn-bg); border-radius: 6px; }
-.major .attn .dot { background: var(--warn); }
 .major .muted { color: var(--ink-3); }
 .attnspan { position: absolute; top: 50px; height: 26px; border-radius: 3px; pointer-events: none; background: var(--warn); opacity: .22; }
-.mark.ok { background: var(--ok); } .mark.bad { background: var(--bad); } .mark.warn { background: var(--expert); }
+.num-badge { flex: none; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; font: 600 10px/18px var(--sans);
+  text-align: center; color: var(--panel); background: var(--ink-2); align-self: center; }
+.major .ok .num-badge { background: var(--ok); } .major .bad .num-badge { background: var(--bad); }
+.major .warn .num-badge { background: var(--expert); } .major .attn .num-badge { background: var(--warn); }
+.major .lbl .num-badge { background: var(--lbl); } .major .muted .num-badge { background: var(--ink-3); }
+.major .ev.hl { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 6px; }
 @media (max-width: 860px) { .about, .major { grid-column: auto; } }
 .about h3.sub2 { margin: 12px 0 6px; }
 .about .checks { margin: 0; padding-left: 18px; color: var(--ink-2); }
