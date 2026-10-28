@@ -16,6 +16,7 @@ import pyarrow.dataset as pads
 import pyarrow.parquet as pq
 
 from . import batches as B
+from . import export as X
 from . import events as ev
 from . import lists as ls
 from . import review as rv
@@ -147,6 +148,11 @@ def build(root: Path, editable: bool = False) -> Path:
 
 
 API = "/dataop/api/review"
+_JOB: dict = {}                                       # the one export the page started, if any
+
+
+def _slug(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "_", name).strip("_").lower() or "batch"
 MAX_BODY = 64 * 1024
 
 
@@ -216,6 +222,8 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
                 else:
                     raise rv.ReviewError("unknown lists operation")
                 return self._json(200, {"lists": d})
+            if isinstance(op, str) and op.startswith("export_"):     # generate a training set from a locked batch
+                return self._json(200, self._export(op, req))
             if isinstance(op, str) and op.startswith("batch_"):      # a batch of runs, not one run
                 rev = req.get("rev")
                 if isinstance(rev, bool) or not isinstance(rev, int):
@@ -249,6 +257,8 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
                 summary = self._apply(op, req, run_path, m, rev)
         except rv.ReviewConflict as e:
             return self._json(409, {"error": str(e), "state": _review_state(run_path, m)})
+        except X.ExportError as e:
+            return self._json(400, {"error": str(e)})
         except B.BatchError as e:
             return self._json(409 if "changed" in str(e) else 400, {"error": str(e), **_batch_state(self.dataset_root)})
         except ls.ListError as e:
@@ -266,6 +276,49 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
         if rec["entry"]:
             state["step"] = {"entry": rec["entry"], "what": rec["what"]}
         return self._json(200, state)
+
+    def _export(self, op, req):
+        """export_preview: counts from a dry run. export_start: run the export in the background (it re-encodes
+        video and takes a while). export_status: how that job is going."""
+        root = self.dataset_root
+        if op == "export_status":
+            with _WRITE_LOCK:
+                return {"job": dict(_JOB) if _JOB else None, **_batch_state(root)}
+        recipe = req.get("recipe")
+        b = B.find(B.load(root), req.get("batch"))
+        opts = {"with_success": bool(req.get("with_success")), "zero_on_success": bool(req.get("zero_on_success"))}
+        into = req.get("into") or str(Path(root).parent / f"{Path(root).name}_{_slug(b['name'])}_{recipe}")
+        if op == "export_preview":
+            rep = X.export([(root, b["batch_id"])], recipe, into, dry_run=True, by="person", **opts)
+            why = {}
+            for r in rep["runs"]:
+                for k, v in r["dropped"].items():
+                    why[k] = why.get(k, 0) + v
+            return {"preview": {"into": into, "episodes": rep["episodes"], "frames": rep["frames"],
+                                "dropped": sorted(why.items(), key=lambda kv: -kv[1])[:3],
+                                "runs_used": sum(1 for r in rep["runs"] if r["kept"]), "runs": len(rep["runs"]),
+                                "exists": Path(into).exists()}}
+        if op != "export_start":
+            raise rv.ReviewError("unknown export operation")
+        with _WRITE_LOCK:
+            if _JOB and _JOB.get("state") == "running":
+                raise rv.ReviewError("an export is already running")
+            if Path(into).exists():
+                raise X.ExportError(f"{into} already exists; choose another folder")
+            _JOB.clear()
+            _JOB.update(state="running", recipe=recipe, batch=b["name"], into=into, error=None, result=None)
+
+        def work():
+            try:
+                rep = X.export([(root, b["batch_id"])], recipe, into, by="person", **opts)
+                res = {"into": into, "episodes": rep["written"]["train"]["episodes"], "frames": rep["frames"]}
+                with _WRITE_LOCK:
+                    _JOB.update(state="done", result=res)
+            except Exception as e:                      # shown in the panel; nothing half-written is left
+                with _WRITE_LOCK:
+                    _JOB.update(state="failed", error=f"{type(e).__name__}: {e}")
+        threading.Thread(target=work, daemon=True).start()
+        return {"job": dict(_JOB)}
 
     def _apply(self, op, req, run_path, m, rev):
         summary = None

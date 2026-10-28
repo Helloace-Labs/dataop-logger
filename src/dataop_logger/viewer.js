@@ -89,9 +89,9 @@ function batchBar() {            // which batch the list shows, its review progr
   if (b && editable) {
     if (b.status === "collecting") action = `<button class="btn" data-batch="reviewing" title="New runs go to a new batch; review continues here">Close batch</button>`;
     else if (b.status === "reviewing") action = `<button class="btn" data-batch="locked" title="Freeze the review so a training set can be generated from exactly this state">Lock for export</button>`;
-    else action = unlocking
+    else action = (unlocking ? "" : `<button class="btn" data-batch="exportpanel" aria-expanded="${exp.open}">Generate training set</button>`) + (unlocking
       ? `<input class="segin" id="unlockwhy" maxlength="200" placeholder="Why unlock? (kept in history)" aria-label="Reason to unlock"><button class="btn" data-batch="unlock">Unlock</button><button class="btn ghost" data-batch="cancel">Cancel</button>`
-      : `<button class="btn ghost" data-batch="askunlock" title="Allow edits again; exports made before are marked out of date">Unlock</button>`;
+      : `<button class="btn ghost" data-batch="askunlock" title="Allow edits again; exports made before are marked out of date">Unlock</button>`);
   }
   const prog = b ? `<span class="bprog" title="Runs someone marked as reviewed">${b.reviewed} of ${b.n_runs} reviewed</span>` : "";
   const warn = b && b.mixed_policy ? `<span class="pill warn" title="Runs in this batch were recorded with different policies">mixed policies</span>` : "";
@@ -99,10 +99,66 @@ function batchBar() {            // which batch the list shows, its review progr
   return `<div class="bbar">
     <div class="brow"><label class="blabel" for="bsel">Batch</label><select id="bsel" class="bsel">${opts}<option value="all" ${batchSel === "all" ? "selected" : ""}>All runs</option></select></div>
     ${b ? `<div class="brow"><span class="bstat ${b.status}">${STATUS[b.status]}</span>${prog}${warn}<span class="bact">${action}</span></div>${lineage}` : ""}
+    ${b && b.status === "locked" && exp.open ? exportPanel(b) : ""}
+    ${b && b.exports.length ? `<ul class="xlist" aria-label="Training sets made from this batch">${b.exports.slice().reverse().map(x =>
+      `<li><b>${esc(RECIPE[x.recipe] ? RECIPE[x.recipe][0] : x.recipe)}</b> · ${x.frames.toLocaleString()} frames · ${x.episodes} episodes
+        ${x.stale ? `<span class="pill warn" title="The batch was unlocked after this was made, so its review may have changed">out of date</span>` : ""}
+        <div class="xpath" title="${esc(x.path)}">${esc(x.path)}</div></li>`).join("")}</ul>` : ""}
     ${batchNotice ? `<div class="bnote">${esc(batchNotice)}</div>` : ""}
   </div>`;
 }
 let batchNotice = "";
+// Generate training set: a plain script on the server (no AI). Preview counts first, then write.
+const RECIPE = {
+  dagger: ["DAgger", "Rescue frames, labelled with what the rescue did", "Include the policy's own successful runs", "with_success"],
+  residual: ["Correction (residual)", "What the rescue changed on top of the policy's action", "Add successful policy frames as \"no correction\"", "zero_on_success"],
+  filtered: ["Successful runs only", "Plain imitation from runs that worked", null, null],
+};
+const exp = { open: false, recipe: "dagger", opt: false, into: "", preview: null, job: null, error: "", timer: null };
+function exportPanel(b) {
+  const r = RECIPE[exp.recipe], p = exp.preview, j = exp.job;
+  const running = j && j.state === "running";
+  return `<div class="xpanel" role="group" aria-label="Generate a training set">
+    <div class="xrecipes">${Object.entries(RECIPE).map(([k, v]) => `<label class="xr ${exp.recipe === k ? "on" : ""}">
+      <input type="radio" name="xrecipe" value="${k}" ${exp.recipe === k ? "checked" : ""} ${running ? "disabled" : ""}>
+      <b>${esc(v[0])}</b><small>${esc(v[1])}</small></label>`).join("")}</div>
+    ${r[2] ? `<label class="xopt"><input type="checkbox" id="xopt" ${exp.opt ? "checked" : ""} ${running ? "disabled" : ""}> ${esc(r[2])}</label>` : ""}
+    <label class="xopt xinto">Save to <input class="segin" id="xinto" value="${esc(exp.into || (p && p.into) || "")}" ${running ? "disabled" : ""} aria-label="Folder for the new dataset"></label>
+    <div class="xfoot">
+      <span class="xcount">${p ? `${p.episodes} episode${p.episodes === 1 ? "" : "s"} · ${p.frames.toLocaleString()} frames from ${p.runs_used} of ${p.runs} runs${p.exists ? ` · <span class="bad">folder exists</span>` : ""}` : "Counting…"}</span>
+      <button class="btn" data-batch="exportgo" ${running || !p || !p.frames ? "disabled" : ""}>${running ? "Writing…" : "Generate"}</button>
+    </div>
+    ${p && p.dropped.length ? `<div class="xnote">Left out: ${p.dropped.map(([k, v]) => `${v.toLocaleString()} frames (${esc(k)})`).join(", ")}${
+      exp.recipe === "residual" && !p.frames ? ". A correction set needs the policy's action on the frames the rescue drove: record the policy in shadow during rescues." : ""}</div>` : ""}
+    ${running ? `<div class="xnote">Writing the LeRobot dataset and re-encoding video. This can take a few minutes.</div>` : ""}
+    ${j && j.state === "done" ? `<div class="xnote ok">Saved ${j.result.episodes} episodes to ${esc(j.result.into)}</div>` : ""}
+    ${j && j.state === "failed" ? `<div class="xnote bad">Not saved: ${esc(j.error)}</div>` : ""}
+    ${exp.error ? `<div class="xnote bad">${esc(exp.error)}</div>` : ""}
+  </div>`;
+}
+async function exportCall(body) {
+  const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1" },
+                                 body: JSON.stringify({ batch: batchSel, recipe: exp.recipe, into: exp.into || undefined,
+                                                        [RECIPE[exp.recipe][3] || "none"]: exp.opt, ...body }) });
+  const out = await res.json();
+  if (!res.ok) throw new Error(out.error || res.statusText);
+  return out;
+}
+async function exportPreview() {
+  exp.preview = null; exp.error = ""; redrawList();
+  try { exp.preview = (await exportCall({ op: "export_preview" })).preview; if (!exp.into) exp.into = exp.preview.into; }
+  catch (err) { exp.error = err.message; }
+  redrawList();
+}
+async function exportPoll() {
+  try {
+    const out = await exportCall({ op: "export_status" });
+    exp.job = out.job;
+    if (out.batches) { batches = out.batches; batchesRev = out.batches_rev; }
+  } catch (err) { exp.error = err.message; }
+  if (!exp.job || exp.job.state !== "running") { clearInterval(exp.timer); exp.timer = null; }
+  redrawList();
+}
 async function sendBatch(body) {
   batchNotice = "";
   try {
@@ -137,12 +193,22 @@ function drawStats() {          // batch summary, at the top of the run list
 }
 function drawFails() {}
 document.getElementById("fails").onchange = e => {
-  if (e.target.id === "bsel") { batchSel = e.target.value; unlocking = false; batchNotice = ""; redrawList(); }
+  if (e.target.id === "bsel") { batchSel = e.target.value; unlocking = false; batchNotice = ""; exp.open = false; exp.preview = null; exp.into = ""; redrawList(); }
+  if (e.target.name === "xrecipe") { exp.recipe = e.target.value; exp.opt = false; exp.into = ""; exportPreview(); }
+  if (e.target.id === "xopt") { exp.opt = e.target.checked; exportPreview(); }
+  if (e.target.id === "xinto") { exp.into = e.target.value.trim(); exportPreview(); }
 };
 document.getElementById("fails").onclick = e => {
   const bb = e.target.closest("[data-batch]");
   if (bb) {
     const op = bb.dataset.batch;
+    if (op === "exportpanel") { exp.open = !exp.open; if (exp.open) exportPreview(); else redrawList(); return; }
+    if (op === "exportgo") {
+      exp.into = document.getElementById("xinto").value.trim(); exp.error = "";
+      exportCall({ op: "export_start" }).then(out => { exp.job = out.job; exp.timer = exp.timer || setInterval(exportPoll, 2000); redrawList(); })
+        .catch(err => { exp.error = err.message; redrawList(); });
+      return;
+    }
     if (op === "askunlock" || op === "cancel") { unlocking = op === "askunlock"; batchNotice = ""; redrawList();
       if (unlocking) document.getElementById("unlockwhy").focus(); return; }
     const reason = op === "unlock" ? document.getElementById("unlockwhy").value.trim() : undefined;

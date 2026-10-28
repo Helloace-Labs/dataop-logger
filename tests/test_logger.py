@@ -1368,3 +1368,74 @@ def test_import_refuses_lerobot_v21(tmp_path):
     (tmp_path / "old" / "meta" / "info.json").write_text(json.dumps({"codebase_version": "v2.1"}))
     with pytest.raises(importer.ImportError_, match="convert_dataset_v21_to_v30"):
         importer.import_dataset(str(tmp_path / "old"))
+
+
+def _locked_batch(tmp_path, video=False):
+    from dataop_logger import batches as B, review as rv
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, batch="round 1") as log:
+        ok = record(log, 12)
+        bad = record(log, 14, takeover_at=6, reason="failure")
+    ds.finalize()
+    for r in (ok, bad):
+        rv.set_reviewed(r.run_path, True)
+    m = store.read_manifest(bad.run_path)
+    B.set_status(ds.root, "round 1", "reviewing")
+    rv.add_edit(bad.run_path, m, "exclude", {"start": 9, "end": 11})       # a cut inside the rescue
+    B.set_status(ds.root, "round 1", "locked")
+    return ds, ok, bad
+
+
+def test_export_dagger_splits_at_cuts_and_writes_expert_actions(tmp_path):
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    from dataop_logger import batches as B, export as X
+    ds, ok, bad = _locked_batch(tmp_path)
+    out = tmp_path / "train"
+    rep = X.export([(ds.root, "round 1")], "dagger", str(out), repo_id="test/train")
+    run = next(r for r in rep["runs"] if r["run_id"] == bad.run_id)
+    assert run["spans"] == [(6, 9), (11, 14)] and run["dropped"]["no expert label"] == 6
+    got = LeRobotDataset("test/train", root=out)
+    assert got.num_episodes == 2 and got.num_frames == 6
+    want = np.arange(6, dtype=np.float32) + 6 + 1                            # the rescue's command at frame 6
+    assert np.allclose(got[0]["action"].numpy(), want)
+    assert "next.success" not in got.features
+    rec = json.loads((out / "dataop_export.json").read_text())
+    assert rec["runs"][0]["review_digest"] and rec["written"]["train"]["episodes"] == 2
+    assert B.summary(ds.root)[0]["exports"][0]["path"] == str(out)
+    with pytest.raises(X.ExportError, match="already exists"):
+        X.export([(ds.root, "round 1")], "dagger", str(out))
+
+
+def test_export_needs_a_locked_batch_and_is_deterministic(tmp_path):
+    from dataop_logger import batches as B, export as X
+    ds, ok, bad = _locked_batch(tmp_path)
+    a = X.export([(ds.root, "round 1")], "dagger", str(tmp_path / "a"))
+    b = X.export([(ds.root, "round 1")], "dagger", str(tmp_path / "b"))
+    assert a["written"]["train"]["data_sha256"] == b["written"]["train"]["data_sha256"]
+    B.set_status(ds.root, "round 1", "reviewing", reason="relabel")
+    assert all(e["stale"] for e in B.summary(ds.root)[0]["exports"])
+    with pytest.raises(X.ExportError, match="lock it first"):
+        X.export([(ds.root, "round 1")], "dagger", str(tmp_path / "c"), dry_run=True)
+
+
+def test_export_residual_and_filtered_counts(tmp_path):
+    from dataop_logger import export as X
+    ds, ok, bad = _locked_batch(tmp_path)
+    res = X.export([(ds.root, "round 1")], "residual", str(tmp_path / "r"), dry_run=True)
+    assert res["frames"] == 6                                                # rescue frames with both actions
+    z = X.export([(ds.root, "round 1")], "residual", str(tmp_path / "r"), dry_run=True, zero_on_success=True)
+    assert z["frames"] == 6 + 12
+    f = X.export([(ds.root, "round 1")], "filtered", str(tmp_path / "f"), dry_run=True)
+    assert f["frames"] == 12 and f["episodes"] == 1
+
+
+def test_export_hook_can_narrow_the_selection(tmp_path):
+    from dataop_logger import export as X
+    ds, ok, bad = _locked_batch(tmp_path)
+    hook = tmp_path / "myhook.py"
+    hook.write_text("import numpy as np\n"
+                    "def first_two(run):\n"
+                    "    keep = run['keep'].copy(); idx = np.flatnonzero(keep)[2:]; keep[idx] = False\n"
+                    "    return {'keep': keep, 'reason': 'only the first two'}\n")
+    rep = X.export([(ds.root, "round 1")], "dagger", str(tmp_path / "h"), dry_run=True, hook=f"{hook}:first_two")
+    assert rep["frames"] == 2

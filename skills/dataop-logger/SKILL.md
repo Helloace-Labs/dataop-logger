@@ -156,6 +156,14 @@ Every run's major events are the same three kinds for any task: drive mode chang
 
 When the user asks you to find frames that should not be trained on (idle stretches, resets, camera problems), suggest them instead of cutting them: `dataop-logger suggest-cut <dataset_root> <run_id> <start> <end> --reason "<short description>" --by <your name>`. Frames are half-open `[start, end)`. Suggestions show in the viewer in light grey for the person to cut or keep. `dataop-logger find-idle` runs the built-in idle finder if you only need that.
 
+## Batches, import and training data
+
+- Open a batch per round of collection: `RunLogger(dataset, action_schema=schema, batch="round 3")`.
+- Data recorded without the logger: `dataop-logger import <root> --dry-run` first, show the user the field mapping it
+  prints, then import with the right `--preset` or `--map`. Never fill a field the data does not have.
+- Training sets come from `dataop-logger export` on a locked batch. Run it with `--dry-run` and show the counts and
+  reasons before writing. Do not lock a batch with `--force` unless the user asked.
+
 ## Report back
 
 Tell the user which file you changed, where the takeover signal comes from, how outcomes are decided, and the `validate` result. Mention anything you could not map (for example no shadow policy during takeovers, so `base_action` is missing on expert frames).

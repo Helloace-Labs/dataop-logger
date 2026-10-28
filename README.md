@@ -208,6 +208,78 @@ An existing reading is never overwritten silently: pass `--replace`, and the old
 
 **Where it is stored.** Labels, cuts and readings live in `dataop/runs/<run_id>/review.json`. That file travels with the dataset and never touches the recorded frames, manifest or checksums. The reader sets `item["dataop.train_mask"]` to False for cut frames and for labels read as `exclude`, and every target mask is gated on it. `inspect` reports labels, cut frames and open suggestions. Scripts can also record structured corrections in the same file through `dataop_logger.review` (outcome, failure start, step boundary, reject run); the viewer lists them with an Undo button.
 
+## Batches: one round of collection
+
+A batch is the set of runs collected with one policy version and reviewed together. In DAgger it is one round:
+collect with model v3, review, generate the training set, train v4, open the next batch.
+
+```python
+RunLogger(dataset, action_schema=schema, batch="round 3")     # new runs join "round 3"
+```
+
+Without `batch=`, runs join the batch that is collecting, or a new batch named after the policy. Runs recorded before
+batches existed are grouped by policy the first time the dataset is read.
+
+```bash
+dataop-logger batches <root> list                      # every batch with runs, success, rescues, review progress
+dataop-logger batches <root> new "round 4"              # new runs go here; the old batch closes for review
+dataop-logger batches <root> close "round 3"            # no new runs; review continues
+dataop-logger batches <root> lock "round 3"             # freeze the review so a training set can be made from it
+dataop-logger batches <root> unlock "round 3" --reason "fix a label"   # earlier exports are marked out of date
+dataop-logger batches <root> edit "round 3" --model me/smolvla_v4      # the model trained from it (lineage)
+```
+
+Locking needs every run marked reviewed (the "Mark reviewed" button in the viewer) and no open suggestions, or
+`--force`, which is recorded. While a batch is locked, its runs cannot be edited from the viewer, the CLI or an agent.
+The viewer has a batch picker above the run list with the batch's progress and these buttons.
+
+## Import an existing LeRobot dataset
+
+Bring data recorded without the logger, so it can be reviewed and exported the same way:
+
+```bash
+dataop-logger import data/my_runs --dry-run                     # what would be bound, field by field
+dataop-logger import data/my_runs --preset lerobot-hil --batch "hil 1"
+dataop-logger import me/hub_dataset --into data/hub_copy         # a Hub dataset is copied first
+```
+
+Import reads LeRobot v3.0 (convert v2.1 with LeRobot's own `convert_dataset_v21_to_v30` first) and never rewrites
+LeRobot files; the sidecar goes into `dataop/` inside the dataset folder, so moving or copying the folder carries it.
+A mapping says where each field comes from; anything without a source is stored as unknown, never guessed:
+
+| Preset | Who drove | Policy action | Outcome |
+| --- | --- | --- | --- |
+| `plain` | unknown | unknown | unknown |
+| `lerobot-hil` | `complementary_info.is_intervention` | the sent action on policy frames | `next.success` on any frame |
+| `watcher` | the `intervention` column | `<session>_raw/epNNN.npy`, one row per policy frame | `<session>_results_*.json` |
+
+Pass `--map map.json` to map your own columns and side files (format in `src/dataop_logger/importer.py`). Import is
+idempotent: episodes that already have a run are skipped.
+
+## Generate training data
+
+Training sets are made by a plain script from a locked batch. No AI runs here, and the same locked batch with the same
+options always writes the same data.
+
+```bash
+dataop-logger export --batch data/round3:"round 3" --recipe dagger --into data/round3_dagger
+dataop-logger export --batch data/round3:"round 3" --recipe residual --zero-on-success --into data/round3_residual
+dataop-logger export --batch data/round3:"round 3" --recipe filtered --val 0.1 --into data/round3_bc
+```
+
+| Recipe | Frames | Action written |
+| --- | --- | --- |
+| `dagger` | frames with an expert label (`--with-success` adds the policy's successful runs, `--base` adds a demo dataset) | the expert's action |
+| `residual` | frames with both the policy's and the expert's action (`--zero-on-success` adds good policy frames with target zero) | expert minus policy, plus `observation.base_action` |
+| `filtered` | successful runs | the sent action |
+
+Every recipe skips what the review left out (cuts, rejected runs, the failure window), can be limited with
+`--segments` and `--outcomes`, and cuts each run into contiguous stretches that become separate LeRobot episodes, so
+training never samples across a gap. The output is a normal LeRobot v3.0 dataset written by LeRobot itself, with
+`dataop_export.json` recording the batches, review digests, source file digests and options it came from. Use
+`--dry-run` to see per-run counts and reasons first, and `--hook file.py:function` for task-specific selection.
+The viewer's "Generate training set" button on a locked batch does the same.
+
 ## Training with the extra fields
 
 ```python

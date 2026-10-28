@@ -25,6 +25,16 @@ def _spans(values: list) -> list[tuple[int, int, object]]:
     return out
 
 
+def effective_modes(manifest: dict, review: dict, modes: list[str], sources: list) -> list[str]:
+    """Per-frame control mode with people's moved switch points applied (what training should treat as who drove)."""
+    _, _, drive = major_events(manifest, review, modes, sources, with_segments=True)
+    out = list(modes)
+    for d in drive:
+        for f in range(d["start"], min(d["end"], len(out))):
+            out[f] = d["mode"]
+    return out
+
+
 def major_events(manifest: dict, review: dict, modes: list[str], sources: list, with_segments: bool = False):
     """[{key, kind, frame, title, note, note_by, estimated?}] in time order. Uses the review as corrected."""
     eff = rv.effective(manifest, review)

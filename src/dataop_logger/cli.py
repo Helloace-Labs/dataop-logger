@@ -127,8 +127,47 @@ def _main(argv=None) -> int:
     ip.add_argument("--episodes", help="only these episodes, e.g. 0-9,12")
     ip.add_argument("--dry-run", action="store_true", help="show what would be imported; write nothing")
     ip.add_argument("--by", default="import")
+    xp = sub.add_parser("export", help="generate a training set (LeRobot dataset) from locked batches; no AI involved")
+    xp.add_argument("--batch", action="append", required=True, metavar="ROOT:BATCH",
+                    help="dataset folder and batch name or id, e.g. data/round3:'round 3'; repeat to combine")
+    xp.add_argument("--recipe", required=True, choices=["filtered", "dagger", "residual"])
+    xp.add_argument("--into", required=True, help="new folder for the training set")
+    xp.add_argument("--with-success", action="store_true", help="dagger: add the policy's own successful runs")
+    xp.add_argument("--zero-on-success", action="store_true",
+                    help="residual: add successful policy frames with target zero")
+    xp.add_argument("--base", help="dagger/filtered: also include every episode of this demo dataset")
+    xp.add_argument("--segments", help="only frames in these task segments, comma separated")
+    xp.add_argument("--outcomes", help="only runs with these outcomes, comma separated (success,failure,...)")
+    xp.add_argument("--val", type=float, default=0.0, help="share of runs for a second dataset <into>_val")
+    xp.add_argument("--min-span", type=int, default=1, help="drop kept stretches shorter than this many frames")
+    xp.add_argument("--hook", help="module:function or file.py:function for task-specific selection")
+    xp.add_argument("--allow-unlocked", action="store_true", help="export a batch that is not locked (recorded)")
+    xp.add_argument("--repo-id", help="repo id written into the new dataset's metadata")
+    xp.add_argument("--dry-run", action="store_true", help="count episodes and frames per run; write nothing")
+    xp.add_argument("--by", default="human")
     a = p.parse_args(argv)
 
+    if a.cmd == "export":
+        from . import export as X
+        from .batches import BatchError
+        srcs = []
+        for spec in a.batch:
+            root, sep, ref = spec.partition(":")
+            if not sep or not root or not ref:
+                print(f"error: --batch takes ROOT:BATCH, got {spec!r}", file=sys.stderr)
+                return 2
+            srcs.append((root, ref))
+        split = lambda v: [x.strip() for x in v.split(",") if x.strip()] if v else None
+        try:
+            rep = X.export(srcs, a.recipe, a.into, with_success=a.with_success, zero_on_success=a.zero_on_success,
+                           base=a.base, segments=split(a.segments), outcomes=split(a.outcomes), val=a.val,
+                           min_span=a.min_span, hook=a.hook, allow_unlocked=a.allow_unlocked, dry_run=a.dry_run,
+                           repo_id=a.repo_id, by=a.by)
+        except (X.ExportError, BatchError) as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        print(V.to_json(rep))
+        return 0
     if a.cmd == "import":
         import json
         from . import importer

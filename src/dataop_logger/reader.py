@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 import pyarrow.parquet as pq
 
-from . import adapter, review as rv, store
+from . import adapter, events as ev, review as rv, store
 from .validate import TICK_COLUMNS, validate
 
 ACTION_COLS = ("base_action", "expert_action", "sent_action")
@@ -42,7 +42,9 @@ class DataopDataset:
                     cols[c] = t.column(c).to_pylist()
                 else:
                     cols[c] = t.column(c).to_numpy(zero_copy_only=False)
-            mask = rv.train_mask(m, rv.load(run_path), cols["control_mode"])
+            review = rv.load(run_path)
+            # moved drive-mode switch points count, so training sees the same run the reviewer saw
+            mask = rv.train_mask(m, review, ev.effective_modes(m, review, cols["control_mode"], cols["expert_source"]))
             self.runs[m["episode_index"]] = {"run_id": m["run_id"], "dim": dim, "cols": cols, "train_mask": mask}
         feat = lerobot_dataset.meta.features.get("action", {})
         self.fallback_dim = int(np.prod(feat.get("shape", (0,)))) if feat else 0

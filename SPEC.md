@@ -126,6 +126,15 @@ with log.run(task="pick up the tube", policy=policy_info, env=env) as run:
 
 `DataopDataset(root, missing="error" | "exclude" | "mask")`: a PyTorch dataset that joins LeRobot frames with sidecar fields by `(episode_index, frame_index)`, returns tensors plus validity masks and the standard targets above, and keeps LeRobot's delta-timestamp sampling. Default `missing="error"`. Original LeRobot episode and frame indices are preserved even when episodes are excluded. It exposes the bound episode ids and a validation summary. It does not rebalance, relabel, split or publish a dataset. An `export --into-lerobot` command that copies selected fields into a derived dataset is planned for v0.3.
 
+## Batches, import and export (v0.4)
+
+See `docs/DESIGN_batches_import_export.md` and `reviews/round17_decisions.md`. In short: `dataop/batches.json` holds
+every batch and the run-to-batch map under one lock (collecting, reviewing, locked; locked runs refuse review edits).
+Import binds runs to an existing LeRobot v3.0 dataset; control mode and outcome may be `unknown` and timestamps
+`from_dataset_timestamp` for imported runs, and a known base action may have no inference record. Export writes a new
+LeRobot dataset from locked batches with the `filtered`, `dagger` or `residual` recipe and records its provenance in
+`dataop_export.json`.
+
 ## Non-goals for v0
 
 Uploading, cloud storage, multiple concurrent writers, real-time takeover control, and curation or materialization of derived training datasets. Those belong to the hosted product.
