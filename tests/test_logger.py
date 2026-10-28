@@ -646,7 +646,7 @@ def test_review_edits_effective_and_train_mask(tmp_path):
     assert not rv.train_mask(m, r, modes)[:3].any()
     for bad in [("exclude", {"start": 5, "end": 5}), ("failure_start", {"frame": 40}), ("failure_start", {"frame": True}),
                 ("outcome", {"termination_reason": "success", "failure_mode": "x"}),
-                ("step_boundary", {"index": 1, "frame": 3}), ("step_boundary", {"index": 0, "frame": 35}),
+                ("step_boundary", {"index": 1, "frame": 3}), ("step_boundary", {"index": 0, "frame": 41}),
                 ("step_boundary", {"index": 0, "before": "lift", "frame": 5}), ("bogus", {})]:
         with pytest.raises(rv.ReviewError):
             rv.add_edit(run.run_path, m, *bad)
@@ -1127,3 +1127,30 @@ def test_major_events_three_kinds_and_notes(tmp_path):
     with pytest.raises(rv.ReviewError):
         rv.add_event_note(run.run_path, m, "failure", " ", by="x")
     assert V.validate(ds.root)["ok"]
+
+
+def test_segment_outer_edges(tmp_path):
+    from dataop_logger import events, review as rv
+    ds, run, m = _review_fixture(tmp_path)                 # grasp 0-10, lift 10-30
+    rv.add_edit(run.run_path, m, "segment_edge", {"index": 0, "edge": "start", "frame": 4})
+    rv.add_edit(run.run_path, m, "segment_edge", {"index": 1, "edge": "end", "frame": 36})
+    steps = rv.effective(m, rv.load(run.run_path))["subgoals"]
+    assert [(s["start_frame"], s["end_frame"]) for s in steps] == [(4, 10), (10, 36)]
+    rv.add_edit(run.run_path, m, "segment_edge", {"index": 0, "edge": "start", "frame": 25})   # clamped: one frame left
+    assert rv.effective(m, rv.load(run.run_path))["subgoals"][0]["start_frame"] == 9
+    with pytest.raises(rv.ReviewError):
+        rv.add_edit(run.run_path, m, "segment_edge", {"index": 5, "edge": "start", "frame": 1})
+    segs = events.major_events(m, rv.load(run.run_path), ["base"] * 40, [None] * 40, with_segments=True)[1]
+    assert [(s["name"], s["start"], s["end"], s["index"]) for s in segs] == [("grasp", 9, 10, 0), ("lift", 10, 36, 1)]
+
+
+def test_step_boundary_follows_corrected_neighbours(tmp_path):
+    from dataop_logger import review as rv
+    ds, run, m = _review_fixture(tmp_path)                 # grasp 0-10, lift 10-30
+    rv.add_edit(run.run_path, m, "segment_edge", {"index": 1, "edge": "end", "frame": 38})
+    rv.add_edit(run.run_path, m, "step_boundary", {"index": 0, "frame": 33})   # past lift's recorded end: allowed now
+    steps = rv.effective(m, rv.load(run.run_path))["subgoals"]
+    assert [(s["start_frame"], s["end_frame"]) for s in steps] == [(0, 33), (33, 38)]
+    rv.add_edit(run.run_path, m, "step_boundary", {"index": 0, "frame": 40})   # clamped to leave lift one frame
+    steps = rv.effective(m, rv.load(run.run_path))["subgoals"]
+    assert [(s["start_frame"], s["end_frame"]) for s in steps] == [(0, 37), (37, 38)]

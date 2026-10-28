@@ -39,7 +39,8 @@ import pyarrow.parquet as pq
 from . import store
 from .schema import TERMINATION_REASONS
 
-KINDS = ("outcome", "failure_start", "exclude", "step_boundary", "reject_run", "note", "label", "event_note")
+KINDS = ("outcome", "failure_start", "exclude", "step_boundary", "segment_edge", "reject_run", "note", "label",
+         "event_note")
 TRAIN_USE = ("keep", "exclude")
 SOURCES = ("agent", "human")
 STATUSES = ("proposed", "accepted", "rejected")
@@ -214,8 +215,14 @@ def check_payload(kind: str, payload: dict, manifest: dict) -> dict:
             raise ReviewError(f"steps {a['name']!r} and {b['name']!r} do not share a boundary")
         if payload.get("before", a["name"]) != a["name"] or payload.get("after", b["name"]) != b["name"]:
             raise ReviewError("step names do not match the steps at that index")
-        f = frame(payload.get("frame"), "frame", a["start_frame"] + 1, b["end_frame"] - 1)   # each step keeps a frame
+        f = frame(payload.get("frame"), "frame", 0, length)   # clamped later against the steps as corrected
         return {"index": i, "before": a["name"], "after": b["name"], "frame": f}
+    if kind == "segment_edge":                  # the outer start or end of a recorded step with no step next to it
+        steps = manifest.get("subgoals", [])
+        i, edge = payload.get("index"), payload.get("edge")
+        if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < len(steps) or edge not in ("start", "end"):
+            raise ReviewError("segment_edge needs a recorded step index and edge start or end")
+        return {"index": i, "edge": edge, "frame": frame(payload.get("frame"), "frame", 0, length)}
     if kind == "reject_run":
         return {}
     if kind == "event_note":
@@ -253,6 +260,8 @@ def _slot(e: dict):
         return (e["kind"], e["payload"].get("index"))
     if e["kind"] == "event_note":
         return (e["kind"], e["payload"].get("key"))
+    if e["kind"] == "segment_edge":
+        return (e["kind"], e["payload"].get("index"), e["payload"].get("edge"))
     return e["kind"]
 
 
@@ -513,7 +522,7 @@ def effective(manifest: dict, review: dict) -> dict:
     """The run as training should see it after the edits in effect."""
     check_review(manifest, review)
     act = active_edits(review)
-    single = {e["kind"]: e["payload"] for e in act if e["kind"] not in MULTI and e["kind"] not in ("step_boundary", "event_note")}
+    single = {e["kind"]: e["payload"] for e in act if e["kind"] not in MULTI and e["kind"] not in ("step_boundary", "event_note", "segment_edge")}
     out = {
         "termination_reason": manifest["termination_reason"], "failure_mode": manifest.get("failure_mode"),
         "failure_start": None, "excludes": [e["payload"] for e in act if e["kind"] == "exclude"],
@@ -538,6 +547,17 @@ def effective(manifest: dict, review: dict) -> dict:
             if i + 1 < len(steps) and steps[i]["name"] == p["before"] and steps[i + 1]["name"] == p["after"]:
                 f = min(max(p["frame"], steps[i]["start_frame"] + 1), steps[i + 1]["end_frame"] - 1)
                 steps[i]["end_frame"] = steps[i + 1]["start_frame"] = f
+        elif e["kind"] == "segment_edge":            # never past a neighbour, never below one frame
+            p = e["payload"]
+            i, st = p["index"], steps[p["index"]] if p["index"] < len(steps) else None
+            if st is None:
+                continue
+            if p["edge"] == "start":
+                lo = steps[i - 1]["end_frame"] if i > 0 else 0
+                st["start_frame"] = min(max(p["frame"], lo), st["end_frame"] - 1)
+            else:
+                hi = steps[i + 1]["start_frame"] if i + 1 < len(steps) else manifest["length"]
+                st["end_frame"] = max(min(p["frame"], hi), st["start_frame"] + 1)
     return out
 
 

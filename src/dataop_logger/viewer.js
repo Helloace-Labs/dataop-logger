@@ -323,8 +323,8 @@ function render(r, t0) {
         const tip = `Task segment: ${sg.name} · ${fmt(sg.start / r.fps)}–${fmt(sg.end / r.fps)}${sg.status === "failed" ? " · failed" : ""}${sg.from_label ? " · from a label" : ""}`;
         return `<div class="sg shade${shade}" data-segkey="${esc("segment:" + sg.name + "@" + sg.start)}" style="left:${pct(sg.start)}%;width:${pct(sg.end - sg.start)}%" title="${esc(tip)}">
           <span>${esc(sg.name)}</span></div>`;
-      }).join("")}${editing ? segBounds(r).map(b => `<span class="sbound" data-index="${b.index}" data-lo="${b.lo}" data-hi="${b.hi}"
-          style="left:${pct(b.at)}%" title="Drag to move where ${esc(b.before)} ends and ${esc(b.after)} starts"></span>`).join("") : ""}</div>
+      }).join("")}${editing ? segBounds(r).map(b => `<span class="sbound" data-kind="${b.kind}" data-index="${b.index}" data-edge="${b.edge || ""}"
+          data-lo="${b.lo}" data-hi="${b.hi}" style="left:${pct(b.at)}%" title="${esc(b.tip)}"></span>`).join("") : ""}</div>
       <div class="track">${r.segments.map(s => `<div style="width:${pct(s[1] - s[0])}%;background:${color(s[2])}"
         title="${MODE[s[2]]}${s[3] ? " (" + esc(s[3]) + ")" : ""}: frames ${s[0]}–${s[1]}"></div>`).join("")}</div>
       ${sug.map(x => `<div class="sugg-span" style="left:${pct(x.payload.start)}%;width:${pct(x.payload.end - x.payload.start)}%" title="${esc(x.reason || "")}"></div>`).join("")}
@@ -366,13 +366,22 @@ function interventions(r) {
   return out;
 }
 
-function segBounds(r) {         // draggable lines between two adjacent recorded segments
-  const segs = r.review.segments || [], out = [];
-  for (let i = 0; i + 1 < segs.length; i++) {
-    const a = segs[i], b = segs[i + 1];
-    if (a.end === b.start && a.index !== null && b.index === a.index + 1)
-      out.push({ index: a.index, at: a.end, lo: a.start + 1, hi: b.end - 1, before: a.name, after: b.name });
-  }
+function segBounds(r) {         // draggable edges: shared lines between neighbours, and free outer edges
+  const segs = (r.review.segments || []).filter(x => x.index !== null), out = [];
+  segs.forEach((s, i) => {
+    const prev = segs[i - 1], next = segs[i + 1];
+    const sharedPrev = prev && prev.end === s.start && prev.index === s.index - 1;
+    const sharedNext = next && next.end !== undefined && s.end === next.start && next.index === s.index + 1;
+    if (!sharedPrev)
+      out.push({ kind: "segment_edge", index: s.index, edge: "start", at: s.start, lo: prev ? prev.end : 0, hi: s.end - 1,
+                 tip: `Drag to move where ${s.name} starts` });
+    if (sharedNext)
+      out.push({ kind: "step_boundary", index: s.index, at: s.end, lo: s.start + 1, hi: next.end - 1,
+                 tip: `Drag to move where ${s.name} ends and ${next.name} starts` });
+    else
+      out.push({ kind: "segment_edge", index: s.index, edge: "end", at: s.end, lo: s.start + 1, hi: next ? next.start : r.length,
+                 tip: `Drag to move where ${s.name} ends` });
+  });
   return out;
 }
 
@@ -503,7 +512,10 @@ function wire(r, t0) {
     tl.onpointerup = () => {
       tl.onpointermove = tl.onpointerup = null;
       if (f === null) return;
-      if (bnd) send(r, { op: "add", kind: "step_boundary", payload: { index: +bnd.dataset.index, frame: f }, what: "move segment boundary" });
+      if (bnd && bnd.dataset.kind === "step_boundary")
+        send(r, { op: "add", kind: "step_boundary", payload: { index: +bnd.dataset.index, frame: f }, what: "move segment boundary" });
+      else if (bnd)
+        send(r, { op: "add", kind: "segment_edge", payload: { index: +bnd.dataset.index, edge: bnd.dataset.edge, frame: f }, what: "move segment edge" });
       else send(r, { op: "add", kind: "failure_start", payload: { frame: f }, what: "policy fails at " + fmt(f / r.fps) });
     };
   };

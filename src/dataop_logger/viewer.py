@@ -211,7 +211,7 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
     def _apply(self, op, req, run_path, m, rev):
         summary = None
         if op == "add":
-            if req.get("kind") not in ("label", "exclude", "failure_start", "step_boundary"):
+            if req.get("kind") not in ("label", "exclude", "failure_start", "step_boundary", "segment_edge"):
                 raise rv.ReviewError("the viewer adds labels, cuts and the policy-failure moment only")
             payload = req.get("payload", {})
             rv.add_edit(run_path, m, req.get("kind"), payload, source="human", expect_rev=rev)
