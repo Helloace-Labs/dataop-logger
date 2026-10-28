@@ -133,6 +133,7 @@ function outcomePill(r) {
   if (r.labels.includes("rescued")) return `<span class="pill warn">rescued</span>`;
   return `<span class="pill bad">${esc(r.outcome)}</span>`;
 }
+const runNo = r => esc(r.env.run ?? r.episode + 1);
 function frac(r, mode) { return r.segments.filter(s => s[2] === mode).reduce((a, s) => a + s[1] - s[0], 0) / r.length; }
 
 document.getElementById("ds").textContent = DATA.dataset;
@@ -171,8 +172,7 @@ document.getElementById("fails").onclick = e => {
   filter = filter === "fm:" + b.dataset.fm ? "all" : "fm:" + b.dataset.fm;
   drawFails(); drawFilters(); drawRows();
 };
-const labels = [...new Set(runs.flatMap(r => r.labels))].sort();
-const FILTERS = [["all", "All"], ["success", "Success"], ["failure", "Failed"], ...labels.map(l => ["label:" + l, l.replace(/_/g, " ")])];
+const FILTERS = [["all", "All runs"], ["success", "Success"], ["failure", "Failed"]];
 function drawFilters() {
   document.getElementById("filters").innerHTML = FILTERS.map(([k, l]) =>
     `<button class="chip" data-f="${esc(k)}" aria-pressed="${k === filter}">${esc(l)}</button>`).join("");
@@ -189,7 +189,7 @@ function visible() {
 function drawRows() {
   document.getElementById("rows").innerHTML = visible().map(r => `
     <tr class="row" tabindex="0" data-id="${r.run_id}" aria-selected="${current && current.run_id === r.run_id}">
-      <td><b>${esc(r.env.run ?? r.episode)}</b> <span class="num">ep ${r.episode}</span></td>
+      <td><b>${runNo(r)}</b></td>
       <td>${outcomePill(r)}${r.failure_mode ? `<span class="sub">${esc(r.failure_mode.replace(/_/g, " "))}</span>` : ""}</td>
       <td><div class="mini" title="${r.segments.map(s => MODE[s[2]] + " " + s[0] + "–" + s[1]).join(", ")}">
         ${r.segments.map(s => `<div style="width:${100 * (s[1] - s[0]) / r.length}%;background:${color(s[2])}"></div>`).join("")}</div></td>
@@ -213,8 +213,7 @@ function select(id) {
   const take = r.takeovers[0];
   const extras = Object.entries(r.env).filter(([k]) => k !== "run");
   document.getElementById("detail").innerHTML = `
-    <div class="title"><h2>Run ${esc(r.env.run ?? r.episode)}</h2>${outcomePill(r)}
-      ${r.labels.filter(l => l !== "rescued").map(l => `<span class="pill tag">${esc(l.replace(/_/g, " "))}</span>`).join("")}
+    <div class="title"><h2>Run ${runNo(r)}</h2>${outcomePill(r)}
       <span class="task">${esc(r.task)}</span></div>
     <div class="videos">${r.videos.map(v => `<figure><video muted playsinline preload="auto" data-t0="${v.t0}" src="../../${esc(v.src)}"></video>
       <figcaption>${esc(v.key)}</figcaption></figure>`).join("") || `<div class="empty">This episode has no video.</div>`}</div>
@@ -235,6 +234,8 @@ function select(id) {
     </div>
     <div class="cols">
       <div class="card"><h3>Run</h3><dl>
+        <dt>Episode</dt><dd>${r.episode} in the LeRobot dataset</dd>
+        ${r.labels.length ? `<dt>Labels</dt><dd>${r.labels.map(l => esc(l.replace(/_/g, " "))).join(", ")}</dd>` : ""}
         <dt>Frames</dt><dd>${r.length} at ${r.fps} fps (${dur.toFixed(1)} s)</dd>
         <dt>Takeover</dt><dd>${take ? `frame ${take.start_frame} (${(take.start_frame / r.fps).toFixed(1)} s) by ${esc(take.expert_source)}` : "none"}</dd>
         <dt>Safety-modified</dt><dd>${r.safety_modified} frames</dd>
