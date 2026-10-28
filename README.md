@@ -19,6 +19,17 @@ pip install "git+https://github.com/Helloace-Labs/dataop-logger.git"
 
 Requires Python 3.10+ and `lerobot` 0.6.x (tested with 0.6.2). PyTorch is only needed for the reader.
 
+## Set it up with your coding agent
+
+Give Claude Code, Codex, Cursor or any coding agent this prompt from inside your robot project:
+
+```text
+Read https://raw.githubusercontent.com/Helloace-Labs/dataop-logger/main/skills/dataop-logger/SKILL.md
+and add dataop-logger to my recording loop. Validate it when done.
+```
+
+The agent checks your LeRobot version, finds your recording loop, wires in the logger and runs `dataop-logger validate`. Claude Code users can also install it as a skill by copying `skills/dataop-logger/` into `~/.claude/skills/`.
+
 ## Quick start
 
 Three changes to an existing LeRobot recording loop: describe your action once, record through `run.add_frame`, and let the `run` block save the episode.
