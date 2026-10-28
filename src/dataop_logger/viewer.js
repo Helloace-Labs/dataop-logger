@@ -144,7 +144,8 @@ async function setFailureType(r, name) {          // new names join the dataset'
 // ── task segments as a plan: every segment edit sends the run's full, ordered list ─────────────────
 const planOf = r => (r.review.segments || []).map(x => ({ name: canon("task_segments", x.name), start: x.start, end: x.end }));
 const sendPlan = (r, segments, what) => send(r, { op: "add", kind: "segment_plan", payload: { segments }, what });
-let segMenu = null;              // index of the segment whose menu is open
+let segMenu = null;              // index of the segment being edited (table row actions)
+let segRow = null;               // the segment row highlighted after clicking it on the bar
 function segMenuHtml(r) {
   const plan = planOf(r), sg = plan[segMenu]; if (!sg) return "";
   return `<div class="segmenu" style="left:${100 * (sg.start + sg.end) / 2 / r.length}%">
@@ -155,6 +156,22 @@ function segMenuHtml(r) {
       <button class="btn sm bad" data-segact="remove">Remove</button><button class="btn sm" data-segact="close">Close</button></div>
     ${notice ? `<span class="lbstatus ${noticeOk ? "" : "bad"}">${esc(notice)}</span>` : ""}</div>`;
 }
+async function addSegmentAt(r, f) {             // fill the gap at f, or split the segment that holds f
+  const plan = planOf(r), inside = plan.findIndex(x => f > x.start && f < x.end);
+  const pick = avoid => ((LISTS.task_segments || []).find(e => e.name !== avoid) || {}).name || "segment";
+  if (inside >= 0) {
+    const sg = plan[inside], name = pick(sg.name);
+    plan.splice(inside, 1, { ...sg, end: f }, { name, start: f, end: sg.end });
+    return sendPlan(r, plan, `add ${name} at ${fmt(f / r.fps)}`);
+  }
+  const prevEnd = Math.max(0, ...plan.filter(x => x.end <= f).map(x => x.end));
+  const nextStart = Math.min(r.length, ...plan.filter(x => x.start >= f).map(x => x.start));
+  if (nextStart - prevEnd < 1) { notice = "No room for a segment here."; noticeOk = false; return render(r, player.t); }
+  const before = plan.filter(x => x.end <= f).slice(-1)[0], name = pick(before && before.name);
+  if (!listEntry("task_segments", name)) await sendLists({ op: "lists_add", kind: "task_segments", name });
+  return sendPlan(r, [...plan, { name, start: prevEnd, end: nextStart }].sort((a, b) => a.start - b.start), `add ${name}`);
+}
+
 async function segAction(r, act, name) {
   const plan = planOf(r), i = segMenu, sg = plan[i]; if (!sg) return;
   if (act === "close") { segMenu = null; return render(r, player.t); }
@@ -277,11 +294,13 @@ function driveTable(r, live) {
       <td><i class="sw" style="background:${color(d.mode)}"></i>${MODE[d.mode]}</td>
       <td class="num">${fmt(d.start / r.fps)}${delta(d.start, d.rec_start)}</td><td class="num">${fmt(d.end / r.fps)}${delta(d.end, d.rec_end)}</td>
       <td class="num">${((d.end - d.start) / r.fps).toFixed(1)} s</td><td class="num">${d.end - d.start}</td><td>${esc(d.source || "")}</td></tr>`).join("")}
-    ${fail ? `<tr class="failrow"><td><i class="sw" style="background:var(--bad)"></i>Failure${ftype ? ": " + human(canon("failure_types", ftype)) : ""}</td>
+    ${fail ? `<tr class="failrow"><td><i class="sw" style="background:var(--bad)"></i>Failure <select class="cellsel" id="failsel" aria-label="Failure type">
+        <option value="" ${ftype ? "" : "selected"}>choose type</option>
+        ${failureTypes().map(t => `<option value="${esc(t)}" ${t === canon("failure_types", ftype) ? "selected" : ""}>${human(t)}</option>`).join("")}</select></td>
       <td class="num">${fmt(fail.frame / r.fps)}</td><td></td><td></td><td></td><td>${fail.estimated ? "estimated" : `marked by ${esc((eff(r).set_by || {}).failure_start || "person")}`}</td></tr>` : ""}
     </tbody></table></div>
-    ${fail ? `<div class="lbrow failtypes"><span class="lbq">Failure type</span>
-      ${failureTypes().map(t => failChip(t, ftype)).join("")}
+    ${fail ? `<div class="lbrow failtypes typesrow"><span class="lbq">Failure types</span>
+      ${failureTypes().map(t => `<span class="chipx"><span class="chip static">${human(t)}</span><button class="x" data-ldel="${esc(t)}" data-lkind="failure_types" title="Remove ${esc(human(t))} from this dataset's failure types (only if no run uses it)" aria-label="Remove ${esc(human(t))}">×</button></span>`).join("")}
       <input id="newftype" class="segin" maxlength="60" placeholder="+ failure type">
       ${notice && !noticeOk ? `<span class="lbstatus bad">${esc(notice)}</span>` : ""}</div>` : ""}</div>`;
 }
@@ -302,19 +321,28 @@ function segTable(r, live) {
     return Object.entries(n).map(([m, k]) => `${MODE[m].toLowerCase()} ${Math.round(100 * k / tot)}%`).join(" · ");
   };
   const delta = (now, was) => was === undefined || now === was ? "" : ` <span class="delta">${now > was ? "+" : "−"}${(Math.abs(now - was) / r.fps).toFixed(1)} s</span>`;
+  const types = (LISTS.task_segments || []).map(e => e.name);
   return `<div class="card segtable"><h3>Task segments</h3><div class="tablewrap"><table>
-    <thead><tr><th>Segment</th><th>Start</th><th>End</th><th>Length</th><th>Frames</th><th>Who drove</th><th></th></tr></thead><tbody>
-    ${segs.map(sg => {
-      const o = rec[sg.index], moved = live && sg.index !== null && (sg.index === live.index || (live.kind === "step_boundary" && sg.index === live.index + 1));
-      return `<tr class="${moved ? "moving" : ""}"><td><i class="sw sg shade${segShade(sg.name)}"></i>${esc(sg.name)}</td>
+    <thead><tr><th>Segment</th><th>Start</th><th>End</th><th>Length</th><th>Frames</th><th>Who drove</th><th></th><th></th></tr></thead><tbody>
+    ${segs.map((sg, i) => {
+      const o = rec[sg.index], moved = (live && sg.index !== null && (sg.index === live.index || (live.kind === "step_boundary" && sg.index === live.index + 1))) || segRow === i;
+      const nm = canon("task_segments", sg.name);
+      return `<tr class="${moved ? "moving" : ""}"><td><i class="sw sg shade${segShade(sg.name)}"></i><select class="cellsel" data-segrow="${i}" aria-label="Segment type">
+          ${[...new Set([...types, nm])].map(t => `<option value="${esc(t)}" ${t === nm ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></td>
         <td class="num">${fmt(sg.start / r.fps)}${o ? delta(sg.start, o.start_frame) : ""}</td>
         <td class="num">${fmt(sg.end / r.fps)}${o ? delta(sg.end, o.end_frame) : ""}</td>
         <td class="num">${((sg.end - sg.start) / r.fps).toFixed(1)} s</td>
         <td class="num">${sg.end - sg.start}</td>
         <td>${drive(sg)}</td>
-        <td>${fail && fail.frame >= sg.start && fail.frame < sg.end ? `<span class="pill bad">policy fails</span>` : ""}</td></tr>`;
+        <td>${fail && fail.frame >= sg.start && fail.frame < sg.end ? `<span class="pill bad">policy fails</span>` : ""}</td>
+        <td class="rowacts"><button class="btn sm" data-segrowact="split" data-i="${i}" title="Split this segment at the playhead">Split</button><button class="btn sm" data-segrowact="remove" data-i="${i}" title="Remove this segment; its neighbour takes over">Remove</button></td></tr>`;
     }).join("")}</tbody></table></div>
-    <div class="sub">${(eff(r).set_by || {}).segment_plan ? `Set by ${esc(eff(r).set_by.segment_plan)}. ` : ""}Changes are compared with the recording. Drag the handles on the segment lane to adjust.</div></div>`;
+    <div class="lbfoot addrow"><button class="btn sm primary" data-act="addseg" title="Adds a segment at the playhead: in an empty stretch it fills the gap, inside a segment it splits it">+ Add segment at playhead</button></div>
+    <div class="lbrow typesrow"><span class="lbq">Segment types</span>
+      ${types.map(t => `<span class="chipx"><span class="chip static">${esc(t)}</span><button class="x" data-ldel="${esc(t)}" data-lkind="task_segments" title="Remove ${esc(t)} from this dataset's task segments (only if no run uses it)" aria-label="Remove ${esc(t)}">×</button></span>`).join("")}
+      <input id="newsegtype" class="segin" maxlength="60" placeholder="+ segment type">
+      ${notice && !noticeOk ? `<span class="lbstatus bad">${esc(notice)}</span>` : ""}</div>
+    <div class="sub">${(eff(r).set_by || {}).segment_plan ? `Set by ${esc(eff(r).set_by.segment_plan)}. ` : ""}Changes are compared with the recording. Drag the handles on the segment lane to move edges; click an empty part of the lane to add a segment.</div></div>`;
 }
 
 function setSpan(r, lo, hi) {           // new selection, or move/resize the open one; untouched defaults follow
@@ -362,7 +390,7 @@ function aiBar(r) {
 // ── one run ───────────────────────────────────────────────────────────────────
 const discard = r => { sel = null; delete drafts[r.run_id]; };
 function select(id) {
-  segMenu = null; failMenu = false;
+  segMenu = null; failMenu = false; segRow = null;
   if (current && sel && sel.dirty) drafts[current.run_id] = sel;
   else if (current) delete drafts[current.run_id];
   const r = runs.find(x => x.run_id === id);
@@ -412,9 +440,8 @@ function render(r, t0) {
       ${cs.map(c => `<div class="cut ${sel && sel.cutId === c.id ? "on" : ""}" data-cut-id="${esc(c.id)}" style="left:${pct(c.start)}%;width:${pct(c.end - c.start)}%" title="Cut${c.reason ? ": " + esc(c.reason) : ""}"></div>`).join("")}
       ${(r.review.major || []).filter(m => m.window).map(m => `<div class="attnspan" style="left:${pct(m.window[0])}%;width:${pct(m.window[1] - m.window[0])}%" title="The 2 seconds before the policy fails: the frames to check first"></div>`).join("")}
       ${(r.review.major || []).filter(m => m.kind === "failure").map(m => `<div class="failmark ${m.estimated ? "est" : ""}" style="left:${pct(m.frame)}%"
-        title="Policy fails${m.estimated ? " (estimated)" : ""}${m.note ? ": " + esc(m.note) : ""}${editing ? ". Drag to move it." : ""}"><span class="flag" data-failtype="1">Policy fails${eff(r).failure_mode ? ` · ${human(canon("failure_types", eff(r).failure_mode))}` : ""}${failReason(r, m) ? `<span class="reason"> · ${esc(failReason(r, m))}</span>` : ""}${editing ? " ▾" : ""}</span></div>`).join("")}
-      ${editing && failMenu ? failTypeMenu(r) : ""}
-      ${editing && segMenu !== null ? segMenuHtml(r) : ""}
+        title="Policy fails${m.estimated ? " (estimated)" : ""}${m.note ? ": " + esc(m.note) : ""}${editing ? ". Drag to move it." : ""}"><span class="flag" data-failtype="1">Policy fails${eff(r).failure_mode ? ` · ${human(canon("failure_types", eff(r).failure_mode))}` : ""}${failReason(r, m) ? `<span class="reason"> · ${esc(failReason(r, m))}</span>` : ""}</span></div>`).join("")}
+
 
       <div class="ruler" id="ruler" role="slider" tabindex="0" aria-label="Playhead: click or drag here to move it" aria-valuemin="0" aria-valuemax="${r.length - 1}" aria-valuenow="0" title="Playhead row: click or drag here to move the playhead. Arrow keys step it."><span class="rulericon" aria-hidden="true">▶</span></div>
       <div class="head" id="head" style="left:0"><span class="knob"></span></div>
@@ -550,6 +577,7 @@ async function act(r, what) {
     return;
   }
   if (what === "idle") return send(r, { op: "find_idle", what: "find idle frames" });
+  if (what === "addseg") return addSegmentAt(r, frameOf(r));
   if (what === "failhere" && sel) {
     const f = sel.start; sel = null; delete drafts[r.run_id];
     return send(r, { op: "add", kind: "failure_start", payload: { frame: f }, what: "policy fails at " + fmt(f / r.fps) });
@@ -655,27 +683,16 @@ function wire(r, t0) {
   tl.onpointerdown = async ev => {
     if (ev.target.closest("#ruler, .knob")) return scrub(ev);
     if (canEdit(r) && editing) {
-      if (ev.target.closest(".failmenu, .segmenu")) return;
       const sgEl = ev.target.closest(".sg");
-      if (sgEl && !ev.target.closest(".sbound")) {
+      if (sgEl && !ev.target.closest(".sbound")) {           // click a segment: highlight its row in the table
         ev.preventDefault();
-        segMenu = (r.review.segments || []).findIndex(x => "segment:" + x.name + "@" + x.start === sgEl.dataset.segkey);
-        failMenu = false; return render(r, p.t);
+        segRow = (r.review.segments || []).findIndex(x => "segment:" + x.name + "@" + x.start === sgEl.dataset.segkey);
+        return render(r, p.t);
       }
       if (ev.target.classList.contains("lane")) {          // empty part of the segment lane: add a segment there
         ev.preventDefault();
-        const f = toFrame(ev.clientX), plan = planOf(r);
-        const prevEnd = Math.max(0, ...plan.filter(x => x.end <= f).map(x => x.end));
-        const nextStart = Math.min(r.length, ...plan.filter(x => x.start >= f).map(x => x.start));
-        if (nextStart - prevEnd < 1) return;
-        const before = plan.filter(x => x.end <= f).slice(-1)[0];          // pick a type that differs from its neighbour
-        const name = ((LISTS.task_segments || []).find(e => !before || e.name !== before.name) || {}).name || "segment";
-        if (!listEntry("task_segments", name)) await sendLists({ op: "lists_add", kind: "task_segments", name });
-        const next = [...plan, { name, start: prevEnd, end: nextStart }].sort((a, b) => a.start - b.start);
-        if (await sendPlan(r, next, `add ${name}`)) { segMenu = planOf(r).findIndex(x => x.start === prevEnd); render(r, p.t); }
-        return;
+        return addSegmentAt(r, toFrame(ev.clientX));
       }
-      if (ev.target.closest("[data-failtype]")) { ev.preventDefault(); failMenu = !failMenu; return render(r, p.t); }
       const bnd = ev.target.closest(".sbound, .dbound"), fm = ev.target.closest(".failmark");
       if (bnd || fm) return dragMarker(ev, bnd, fm);
     }
@@ -692,6 +709,8 @@ function wire(r, t0) {
     el.onclick = ev => { if (!ev.target.closest("input, button, [data-note]")) go(); };
     el.onkeydown = ev => { if (ev.key === "Enter" && ev.target === el) { ev.stopPropagation(); go(); } };
   });
+  document.querySelectorAll("select[data-segrow]").forEach(el => el.onchange = () => { segMenu = +el.dataset.segrow; segAction(r, "type", el.value); });
+  const fsel = document.getElementById("failsel"); if (fsel) fsel.onchange = () => fsel.value && setFailureType(r, fsel.value);
   const text = document.getElementById("lbtext"), newseg = document.getElementById("lbnewseg"), newdrive = document.getElementById("lbnewdrive");
   if (newdrive) newdrive.oninput = () => { sel.newdrive = newdrive.value; sel.driverSet = sel.dirty = true; };
   if (text) text.oninput = () => { sel.text = text.value; sel.dirty = true; };
@@ -704,6 +723,7 @@ function wire(r, t0) {
     if (b.dataset.cut) return decide(r, b.dataset.cut, true, "accept" + editSpan(r, b.dataset.cut));
     if (b.dataset.keep) return decide(r, b.dataset.keep, false, "keep" + editSpan(r, b.dataset.keep));
     if (b.dataset.uncut) return decide(r, b.dataset.uncut, false, "undo" + editSpan(r, b.dataset.uncut));
+    if (b.dataset.segrowact) { segMenu = +b.dataset.i; return segAction(r, b.dataset.segrowact); }
     if (b.dataset.segtype) return segAction(r, "type", b.dataset.segtype);
     if (b.dataset.segact) return segAction(r, b.dataset.segact);
     if (b.dataset.ldel) return sendLists({ op: "lists_delete", kind: b.dataset.lkind, name: b.dataset.ldel });
@@ -728,13 +748,12 @@ document.addEventListener("keydown", e => {
   if (!current || !player || e.altKey) return;
   if (e.target.id === "newsegtype") {
     const v = e.target.value.trim().toLowerCase().replace(/\s+/g, "_");
-    if (e.key === "Enter" && v) segAction(current, "type", v);
-    if (e.key === "Escape") { segMenu = null; render(current, player.t); }
+    if (e.key === "Enter" && v) sendLists({ op: "lists_add", kind: "task_segments", name: v });
     return;
   }
   if (e.target.id === "newftype") {
     const v = e.target.value.trim().toLowerCase().replace(/\s+/g, "_");
-    if (e.key === "Enter" && v) { failMenu = false; setFailureType(current, v); }
+    if (e.key === "Enter" && v) { failMenu = false; if (eff(current).failure_mode) sendLists({ op: "lists_add", kind: "failure_types", name: v }); else setFailureType(current, v); }
     if (e.key === "Escape") { failMenu = false; render(current, player.t); }
     return;
   }

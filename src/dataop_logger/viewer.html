@@ -191,6 +191,11 @@ textarea { width: 100%; resize: vertical; }
 .dbound::after { content: ""; position: absolute; left: 7px; top: 1px; width: 4px; height: 20px; border-radius: 2px; background: var(--ink); opacity: .8; }
 .dbound:hover::after { opacity: 1; background: var(--accent); }
 .chipx { display: inline-flex; align-items: center; }
+.chip.static { cursor: default; }
+.cellsel { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; }
+.rowacts { display: flex; gap: 6px; }
+.typesrow { margin-top: 10px; }
+.addrow { margin-top: 8px; }
 .chipx .chip { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .chipx .x { border: 1px solid var(--line); border-left: 0; background: transparent; color: var(--ink-3); font: inherit; line-height: 1;
   padding: 4px 7px; border-radius: 0 999px 999px 0; cursor: pointer; }
