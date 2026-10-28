@@ -240,12 +240,23 @@ def _digest_files(paths) -> str:
     return h.hexdigest()
 
 
-def _source_digest(root: Path) -> dict:
+def tree_digest(root: Path, skip: tuple = ()) -> str:
+    """sha256 over every file under root (relative path and bytes, in path order), except the names in skip."""
     root = Path(root)
-    return {"info": store.sha256((root / "meta" / "info.json").read_bytes()),
-            "episodes": _digest_files((root / "meta" / "episodes").rglob("*.parquet")),
-            "data": _digest_files((root / "data").rglob("*.parquet")),
-            "videos": _digest_files((root / "videos").rglob("*.mp4")) if (root / "videos").exists() else None}
+    h = hashlib.sha256()
+    for p in sorted(x for x in root.rglob("*") if x.is_file() and x.name not in skip):
+        h.update(str(p.relative_to(root)).encode() + b"\0")
+        with open(p, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+        h.update(b"\0")
+    return h.hexdigest()
+
+
+def _source_digest(root: Path) -> dict:
+    """The LeRobot files the export read: all metadata, data and videos (the dataop sidecar is digested per run)."""
+    root = Path(root)
+    return {k: tree_digest(root / k) if (root / k).exists() else None for k in ("meta", "data", "videos")}
 
 
 def _split(run_id: str, val: float) -> str:
@@ -281,11 +292,12 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
         raise ExportError("the action feature cannot be dropped")
 
     # 1. resolve sources and check they can be combined
-    plan_runs, src_records, first = [], [], None
+    plan_runs, src_records, first, planned_locks = [], [], None, {}
     for root, ref in sources:
         root = Path(root).expanduser()
         d = B.load(root)
         b = B.find(d, ref)
+        planned_locks[(str(root), b["batch_id"])] = b["locked"] if b["status"] == "locked" else None
         if b["status"] != "locked" and not allow_unlocked:
             raise ExportError(f"batch {b['name']!r} in {root} is {b['status']}; lock it first (or allow unlocked)")
         src = _Source(root, drop)
@@ -406,7 +418,7 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
                     n_ep += 1
             ds.finalize()
             written[split] = {"path": str(path), "episodes": n_ep,
-                              "data_sha256": _digest_files((path / "data").rglob("*.parquet"))}
+                              "tree_sha256": tree_digest(path, skip=("dataop_export.json",))}
     except BaseException:
         for p in targets.values():                      # never leave a half-written training set behind
             shutil.rmtree(p, ignore_errors=True)
@@ -418,12 +430,15 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
               "hook": hook and {"spec": hook, "file_sha256": hook_sha,
                                 "results_sha256": store.json_sha256(hook_results)},
               "split": val > 0 and {"method": "sha256(run_id)[:12] / 16^12 < val", "val": val}}
-    store.atomic_write_json(out_root / "dataop_export.json", record)
-    for root, ref in sources:
+    stale = False
+    for root, ref in sources:                       # current only if each batch still holds the lock it was planned from
         b = B.find(B.load(Path(root).expanduser()), ref)
-        B.add_export(Path(root).expanduser(), b["batch_id"], {
+        stale |= B.add_export(Path(root).expanduser(), b["batch_id"], {
             "export_id": export_id, "at": record["at"], "by": by, "recipe": recipe, "path": str(out_root),
-            "episodes": written["train"]["episodes"], "frames": report["frames"], "stale": False,
-            "options": report["options"]})
-    report.update(export_id=export_id, written=written)
+            "episodes": written["train"]["episodes"], "frames": report["frames"], "options": report["options"]},
+            planned_locks[(str(Path(root).expanduser()), b["batch_id"])])
+    record["stale"] = stale
+    for split, path in targets.items():             # the same record in every split, naming which one this is
+        store.atomic_write_json(path / "dataop_export.json", {**record, "this_split": split})
+    report.update(export_id=export_id, written=written, stale=stale)
     return report

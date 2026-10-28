@@ -311,7 +311,8 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
         def work():
             try:
                 rep = X.export([(root, b["batch_id"])], recipe, into, by="person", **opts)
-                res = {"into": into, "episodes": rep["written"]["train"]["episodes"], "frames": rep["frames"]}
+                res = {"into": into, "episodes": rep["written"]["train"]["episodes"], "frames": rep["frames"],
+                       "stale": rep["stale"]}
                 with _WRITE_LOCK:
                     _JOB.update(state="done", result=res)
             except Exception as e:                      # shown in the panel; nothing half-written is left

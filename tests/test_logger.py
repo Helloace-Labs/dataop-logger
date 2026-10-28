@@ -1377,11 +1377,10 @@ def _locked_batch(tmp_path, video=False):
         ok = record(log, 12)
         bad = record(log, 14, takeover_at=6, reason="failure")
     ds.finalize()
+    m = store.read_manifest(bad.run_path)
+    rv.add_edit(bad.run_path, m, "exclude", {"start": 9, "end": 11})       # a cut inside the rescue
     for r in (ok, bad):
         rv.set_reviewed(r.run_path, True)
-    m = store.read_manifest(bad.run_path)
-    B.set_status(ds.root, "round 1", "reviewing")
-    rv.add_edit(bad.run_path, m, "exclude", {"start": 9, "end": 11})       # a cut inside the rescue
     B.set_status(ds.root, "round 1", "locked")
     return ds, ok, bad
 
@@ -1411,7 +1410,7 @@ def test_export_needs_a_locked_batch_and_is_deterministic(tmp_path):
     ds, ok, bad = _locked_batch(tmp_path)
     a = X.export([(ds.root, "round 1")], "dagger", str(tmp_path / "a"))
     b = X.export([(ds.root, "round 1")], "dagger", str(tmp_path / "b"))
-    assert a["written"]["train"]["data_sha256"] == b["written"]["train"]["data_sha256"]
+    assert a["written"]["train"]["tree_sha256"] == b["written"]["train"]["tree_sha256"]
     B.set_status(ds.root, "round 1", "reviewing", reason="relabel")
     assert all(e["stale"] for e in B.summary(ds.root)[0]["exports"])
     with pytest.raises(X.ExportError, match="lock it first"):
@@ -1439,3 +1438,62 @@ def test_export_hook_can_narrow_the_selection(tmp_path):
                     "    return {'keep': keep, 'reason': 'only the first two'}\n")
     rep = X.export([(ds.root, "round 1")], "dagger", str(tmp_path / "h"), dry_run=True, hook=f"{hook}:first_two")
     assert rep["frames"] == 2
+
+
+def test_a_change_after_review_needs_a_new_review(tmp_path):
+    from dataop_logger import batches as B, review as rv
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, batch="r") as log:
+        run = record(log, 10)
+    ds.finalize()
+    rv.set_reviewed(run.run_path, True)
+    rv.add_edit(run.run_path, store.read_manifest(run.run_path), "exclude", {"start": 2, "end": 4})
+    assert not rv.load(run.run_path)["reviewed"]
+    with pytest.raises(B.BatchError, match="not marked reviewed"):
+        B.set_status(ds.root, "r", "locked")
+
+
+def test_broken_batches_file_keeps_runs_locked(tmp_path):
+    from dataop_logger import review as rv
+    ds, ok, bad = _locked_batch(tmp_path)
+    p = ds.root / "dataop" / "batches.json"
+    p.write_text("{")
+    with pytest.raises(rv.ReviewError):
+        rv.set_reviewed(ok.run_path, False)
+    res = V.validate(ds.root)
+    assert not res["ok"] and any("batches" in e for e in res["errors"])
+
+
+def test_validate_reports_a_run_changed_under_a_lock(tmp_path):
+    import json as _json
+    ds, ok, bad = _locked_batch(tmp_path)
+    p = ok.run_path / "review.json"                       # edited behind the lock's back
+    r = _json.loads(p.read_text()); r["edits"].append({"id": "aaaaaaaaaaaa", "kind": "reject_run", "payload": {},
+        "source": "human", "status": "accepted", "accepted_seq": 99, "reason": None, "created_at": "x"})
+    p.write_text(_json.dumps(r))
+    res = V.validate(ds.root)
+    assert not res["ok"] and any(ok.run_id in e for e in res["errors"])
+
+
+def test_export_finishing_after_an_unlock_is_registered_stale(tmp_path, monkeypatch):
+    from dataop_logger import batches as B, export as X, review as rv
+    ds, ok, bad = _locked_batch(tmp_path)
+    real = B.add_export
+
+    def unlock_first(root, bid, rec, planned):            # the batch is unlocked while the export is being written
+        B.set_status(root, bid, "reviewing", reason="relabel")
+        return real(root, bid, rec, planned)
+    monkeypatch.setattr(B, "add_export", unlock_first)
+    rep = X.export([(ds.root, "round 1")], "dagger", str(tmp_path / "late"))
+    assert rep["stale"] and B.summary(ds.root)[0]["exports"][-1]["stale"]
+    rec = json.loads((tmp_path / "late" / "dataop_export.json").read_text())
+    assert rec["stale"] is True
+
+
+def test_export_val_split_writes_the_record_in_both(tmp_path):
+    from dataop_logger import export as X
+    ds, ok, bad = _locked_batch(tmp_path)
+    rep = X.export([(ds.root, "round 1")], "dagger", str(tmp_path / "s"), with_success=True, val=0.5)
+    for split in rep["written"]:
+        rec = json.loads((Path(rep["written"][split]["path"]) / "dataop_export.json").read_text())
+        assert rec["this_split"] == split and rec["export_id"] == rep["export_id"]

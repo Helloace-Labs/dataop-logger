@@ -131,7 +131,8 @@ function exportPanel(b) {
     ${p && p.dropped.length ? `<div class="xnote">Left out: ${p.dropped.map(([k, v]) => `${v.toLocaleString()} frames (${esc(k)})`).join(", ")}${
       exp.recipe === "residual" && !p.frames ? ". A correction set needs the policy's action on the frames the rescue drove: record the policy in shadow during rescues." : ""}</div>` : ""}
     ${running ? `<div class="xnote">Writing the LeRobot dataset and re-encoding video. This can take a few minutes.</div>` : ""}
-    ${j && j.state === "done" ? `<div class="xnote ok">Saved ${j.result.episodes} episodes to ${esc(j.result.into)}</div>` : ""}
+    ${j && j.state === "done" ? `<div class="xnote ${j.result.stale ? "bad" : "ok"}">Saved ${j.result.episodes} episodes to ${esc(j.result.into)}${
+      j.result.stale ? ". The batch was unlocked while it was written, so this set is marked out of date" : ""}</div>` : ""}
     ${j && j.state === "failed" ? `<div class="xnote bad">Not saved: ${esc(j.error)}</div>` : ""}
     ${exp.error ? `<div class="xnote bad">${esc(exp.error)}</div>` : ""}
   </div>`;

@@ -407,7 +407,7 @@ def import_dataset(source: str, into: str | None = None, preset: str | None = "p
         m["dataset"]["root"] = str(root)
         m["origin"].update(source=str(source), preset=preset, mapping_sha256=store.json_sha256(p["mapping"]),
                            imported_by=by, dataop_logger=__version__)
-        report["runs"].append({"episode": e, "run_id": m["run_id"], "outcome": m["termination_reason"],
+        report["runs"].append({"episode": e, "run_id": None if dry_run else m["run_id"], "outcome": m["termination_reason"],
                                "frames": m["length"], "policy_frames": int(sum(x == "base" for x in
                                                                              table.column("control_mode").to_pylist())),
                                "notes": notes})

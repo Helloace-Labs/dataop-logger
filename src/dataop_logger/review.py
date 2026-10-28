@@ -141,6 +141,9 @@ def transaction(run_path: Path, expect_rev: int | None = None):
                     while hist and len(json.dumps(hist)) > HISTORY_BYTES:
                         del hist[0]
                     box["entry"] = entry["id"] if hist and hist[-1] is entry else None
+            if review.get("reviewed") and review["edits"] != snapshot["edits"]:
+                # the run changed after someone signed it off: it needs a fresh look before a batch can lock
+                review["reviewed"], review["reviewed_at"], review["reviewed_by"] = False, None, None
             if review != snapshot:                      # a no-op keeps its revision, so it never causes a conflict
                 review["rev"] += 1
                 store.atomic_write_json(_path(run_path), review)

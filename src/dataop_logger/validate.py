@@ -279,6 +279,9 @@ def validate(root: Path, action_key: str = "action") -> dict:
     if orphans:
         errors.append(f"LeRobot data rows for episodes missing from or inconsistent with meta/episodes "
                       f"(an incomplete save?): {orphans}")
+    from . import batches
+    if (store.dataop_dir(root) / "batches.json").exists():
+        errors += batches.check(root)
     q = store.quarantine_dir(root)
     quarantined = sorted(p.name for p in q.iterdir()) if q.exists() else []
     unbound = sorted(set(episodes) - set(bound))

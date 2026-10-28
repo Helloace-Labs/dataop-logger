@@ -162,11 +162,9 @@ def find(d: dict, ref: str) -> dict:
 
 
 def batch_of(root: Path, run_id: str) -> dict | None:
-    """The batch a run belongs to, read without writing (used by the review lock check)."""
-    try:
-        d = _read(root)
-    except BatchError:
-        return None
+    """The batch a run belongs to, read without writing (used by the review lock check). An unreadable batches file
+    raises, so a broken registry never unlocks a locked batch."""
+    d = _read(root)
     bid = d["members"].get(run_id)
     return next((b for b in d["batches"] if b["batch_id"] == bid), None) if bid else None
 
@@ -372,11 +370,53 @@ def edit(root: Path, ref: str, by: str = "human", name: str | None = None, purpo
     return b
 
 
-def add_export(root: Path, batch_id: str, record: dict) -> None:
+def add_export(root: Path, batch_id: str, record: dict, planned_lock: dict | None) -> bool:
+    """Register a finished export. It is current only if the batch still holds exactly the lock it was planned from;
+    an export that finished after an unlock (or from an unlocked batch) is registered as stale. Returns stale."""
     with _transaction(root) as d:
         b = find(d, batch_id)
-        b["exports"].append(record)
-        _log(b, record.get("by", "dataop"), f"exported {record.get('recipe')} to {record.get('path')}")
+        stale = planned_lock is None or b["status"] != "locked" or b["locked"] != planned_lock
+        b["exports"].append({**record, "stale": stale})
+        _log(b, record.get("by", "dataop"), f"exported {record.get('recipe')} to {record.get('path')}"
+             + (" (already out of date: the batch changed while it was written)" if stale and planned_lock else ""))
+    return stale
+
+
+def check(root: Path) -> list[str]:
+    """Problems with dataop/batches.json, for validate: schema, unique ids and names, membership of committed runs,
+    and that locked runs still match their lock."""
+    from . import review as rv
+    try:
+        d = _read(root)
+    except BatchError as e:
+        return [str(e)]
+    errs = []
+    ids = [b["batch_id"] for b in d["batches"]]
+    names = [b["name"] for b in d["batches"]]
+    if len(set(ids)) != len(ids) or len(set(names)) != len(names):
+        errs.append("batches.json has repeated batch ids or names")
+    if sum(b["status"] == "collecting" for b in d["batches"]) > 1:
+        errs.append("batches.json has more than one collecting batch")
+    runs = {p.name: (p, m) for p, m in store.iter_manifests(Path(root), "committed")}
+    for rid in d["members"]:
+        if rid not in runs:
+            errs.append(f"batches.json lists run {rid}, which is not a committed run")
+    for b in d["batches"]:
+        if b["status"] == "locked":
+            lk = b.get("locked") or {}
+            mine = sorted(r for r, x in d["members"].items() if x == b["batch_id"])
+            if sorted(lk.get("runs", {})) != mine:
+                errs.append(f"batch {b['name']!r} is locked but its runs differ from the lock")
+            for rid in mine:
+                if rid in runs and rid in lk.get("runs", {}):
+                    p, m = runs[rid]
+                    try:
+                        r = rv.load(p)
+                        if review_digest(m, r) != lk["runs"][rid]["review_digest"]:
+                            errs.append(f"run {rid} changed after batch {b['name']!r} was locked")
+                    except rv.ReviewError as e:
+                        errs.append(f"run {rid}: {e}")
+    return errs
 
 
 def summary(root: Path) -> list[dict]:
