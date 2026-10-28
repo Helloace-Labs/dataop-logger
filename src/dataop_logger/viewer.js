@@ -314,7 +314,7 @@ function render(r, t0) {
       ${editable && undoList().length ? `<button class="btn undobtn" data-act="undo" title="Undo ${esc(undoList().slice(-1)[0].what)} (Cmd/Ctrl+Z)">↶ Undo</button>` : ""}
       ${canEdit(r) ? `<button class="btn ${editing ? "primary" : ""} editbtn" id="edit" title="E">${editing ? "Done" : "Edit"}</button>` : ""}
     </div>
-    <div class="timeline ${editing ? "editing" : ""}" id="tl" style="--pinrows:${Math.max(1, ...pinRows(r).map(m => m.row + 1))}">
+    <div class="timeline ${editing ? "editing" : ""}" id="tl" style="--pinrows:0">
       <div class="lblane">${e.labels.map(l => `<div class="lb ${l.interpretation && l.interpretation.train === "exclude" ? "out" : ""} ${sel && sel.id === l.id ? "on" : ""}"
         data-label="${esc(l.id)}" style="left:${pct(l.start)}%;width:${pct(l.end - l.start)}%"
         title="${esc([l.text, l.driver, l.segment].filter(Boolean).join(" · "))}">${esc(l.segment || l.text)}</div>`).join("")}</div>
@@ -323,17 +323,15 @@ function render(r, t0) {
         const tip = `Task segment: ${sg.name} · ${fmt(sg.start / r.fps)}–${fmt(sg.end / r.fps)}${sg.status === "failed" ? " · failed" : ""}${sg.from_label ? " · from a label" : ""}`;
         return `<div class="sg shade${shade}" data-segkey="${esc("segment:" + sg.name + "@" + sg.start)}" style="left:${pct(sg.start)}%;width:${pct(sg.end - sg.start)}%" title="${esc(tip)}">
           <span>${esc(sg.name)}</span></div>`;
-      }).join("")}</div>
+      }).join("")}${editing ? segBounds(r).map(b => `<span class="sbound" data-index="${b.index}" data-lo="${b.lo}" data-hi="${b.hi}"
+          style="left:${pct(b.at)}%" title="Drag to move where ${esc(b.before)} ends and ${esc(b.after)} starts"></span>`).join("") : ""}</div>
       <div class="track">${r.segments.map(s => `<div style="width:${pct(s[1] - s[0])}%;background:${color(s[2])}"
         title="${MODE[s[2]]}${s[3] ? " (" + esc(s[3]) + ")" : ""}: frames ${s[0]}–${s[1]}"></div>`).join("")}</div>
       ${sug.map(x => `<div class="sugg-span" style="left:${pct(x.payload.start)}%;width:${pct(x.payload.end - x.payload.start)}%" title="${esc(x.reason || "")}"></div>`).join("")}
       ${cs.map(c => `<div class="cut ${sel && sel.cutId === c.id ? "on" : ""}" data-cut-id="${esc(c.id)}" style="left:${pct(c.start)}%;width:${pct(c.end - c.start)}%" title="Cut${c.reason ? ": " + esc(c.reason) : ""}"></div>`).join("")}
       ${(r.review.major || []).filter(m => m.window).map(m => `<div class="attnspan" style="left:${pct(m.window[0])}%;width:${pct(m.window[1] - m.window[0])}%" title="The seconds before the policy fails: check these frames"></div>`).join("")}
-      <div class="pins">${pinRows(r).map(m => {
-        const desc = `${m.n}. ${fmt(m.frame / r.fps)} ${m.title}${m.note ? ": " + m.note : ""}`;
-        return `<button class="pin ${m.tone}" data-pin="${m.n}" data-frame="${m.at}" style="left:${pct(m.at)}%;top:${m.row * 20}px;--row:${m.row}"
-          title="${esc(desc)}" aria-label="${esc("Event " + desc)}">${m.n}</button>`;
-      }).join("")}</div>
+      ${(r.review.major || []).filter(m => m.kind === "failure").map(m => `<div class="failmark ${m.estimated ? "est" : ""}" style="left:${pct(m.frame)}%"
+        title="Policy fails${m.estimated ? " (estimated)" : ""}${m.note ? ": " + esc(m.note) : ""}${editing ? ". Drag to move it." : ""}"><span class="flag">${m.estimated ? "fails?" : "fails"}</span></div>`).join("")}
       ${sel && editing && !sel.cutId ? `<div class="selbox" id="selbox" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%" title="Drag to move, drag an edge to resize. Keys [ and ] set the start and end at the playhead." role="group" aria-label="Selected frames ${sel ? sel.start : 0} to ${sel ? sel.end - 1 : 0}. Press [ or ] to set the start or end at the playhead.">
         <span class="hdl l" data-edge="start"></span><span class="hdl r" data-edge="end"></span></div>` : sel ? `<div class="selbox fixed" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%"></div>` : ""}
       <div class="ruler" id="ruler" role="slider" tabindex="0" aria-label="Playhead frame" aria-valuemin="0" aria-valuemax="${r.length - 1}" aria-valuenow="0" title="Drag to move the playhead. Arrow keys step it."></div>
@@ -342,7 +340,6 @@ function render(r, t0) {
     ${aiBar(r)}
     ${selPanel(r)}
     <div class="cols">
-      ${eventsCard(r)}
       ${aboutCard(r)}
       ${corrections(r).length || otherProposals(r).length ? `<div class="card"><h3>Other corrections</h3>
         ${corrections(r).map(x => `<div class="srow"><span class="time">${KIND[x.kind]}</span><span class="sdesc">${esc(JSON.stringify(x.payload))}<span class="sub">${x.source === "agent" ? "agent" : "person"}</span></span>
@@ -369,41 +366,14 @@ function interventions(r) {
   return out;
 }
 
-// Major events come from the server: drive mode changes, task segment starts and the moment the policy fails,
-// the same three kinds for every task. Each has one note with the details.
-const TONE = { failure: "bad", segment: "seg", end: "muted" };
-const toneOf = m => m.kind === "drive" ? (m.title.startsWith("Policy") ? "pol" : "warn") : TONE[m.kind] || "";
-function numbered(r) { return (r.review.major || []).map((m, i) => ({ ...m, n: i + 1, tone: toneOf(m) })); }
-function pinRows(r) {           // one pin per event at its exact moment; pins that would overlap move down a row
-  const near = Math.max(1, Math.round(r.length * 0.022)), lastInRow = [];
-  return numbered(r).map(m => {
-    const f = Math.max(0, m.frame);
-    let row = lastInRow.findIndex(x => f - x > near);
-    if (row < 0) row = lastInRow.length;
-    lastInRow[row] = f;
-    return { ...m, at: f, row };
-  });
-}
-let noteEdit = null;            // key of the event whose note is being edited
-let aiHelp = false;              // the "describe events" AI feature runs on the user's own agent for now
-function eventsCard(r) {
-  const prompt = `Read skills/dataop-logger/SKILL.md, then describe the major events of run ${r.run_id} in ${DATA.root}: watch the video around each event and write one short note per event with dataop-logger note.`;
-  return `<div class="card major"><div class="cardhead"><h3>Major events</h3>
-    ${editable ? `<button class="btn sm ai" data-act="describe" title="AI feature: your agent watches the video and writes the notes">✦ Describe events</button>` : ""}</div>
-    ${aiHelp ? `<div class="aihelp">Your agent writes these notes. Ask it:<code id="aiprompt">${esc(prompt)}</code>
-      <button class="btn sm" data-act="copyprompt">Copy</button><button class="btn sm" data-act="closeai">Close</button>
-      <span class="sub">Refresh after it finishes to see the notes.</span></div>` : ""}
-    ${numbered(r).map(m => {
-    const editingNote = noteEdit === m.key;
-    const note = editingNote
-      ? `<span class="noteedit"><input id="notein" maxlength="500" value="${esc(m.note || "")}" placeholder="What happened here?">
-         <button class="btn sm primary" data-note-save="${esc(m.key)}">Save</button><button class="btn sm" data-note-cancel="1">Cancel</button></span>`
-      : m.note ? `<span class="sub note" ${canEdit(r) ? `data-note="${esc(m.key)}" title="Click to edit"` : ""}>${esc(m.note)}${m.note_by && m.note_by !== "recorded" ? ` · ${esc(m.note_by)}` : ""}</span>`
-      : canEdit(r) && m.kind !== "end" ? `<span class="sub note add" data-note="${esc(m.key)}">+ note</span>` : "";
-    return `<div class="ev ${m.tone}" tabindex="0" data-n="${m.n}" data-frame="${Math.max(0, Math.min(m.frame, r.length - 1))}">
-      <span class="time">${fmt(m.frame / r.fps)}</span><span class="num-badge">${m.n}</span>
-      <span><b class="evt">${esc(m.title)}</b>${m.estimated ? ` <span class="pill tag" title="Not marked yet: estimated from the recording">estimated</span>` : ""}${note}</span></div>`;
-  }).join("")}</div>`;
+function segBounds(r) {         // draggable lines between two adjacent recorded segments
+  const segs = r.review.segments || [], out = [];
+  for (let i = 0; i + 1 < segs.length; i++) {
+    const a = segs[i], b = segs[i + 1];
+    if (a.end === b.start && a.index !== null && b.index === a.index + 1)
+      out.push({ index: a.index, at: a.end, lo: a.start + 1, hi: b.end - 1, before: a.name, after: b.name });
+  }
+  return out;
 }
 
 function aboutCard(r) {
@@ -471,13 +441,6 @@ async function act(r, what) {
     return;
   }
   if (what === "idle") return send(r, { op: "find_idle", what: "find idle frames" });
-  if (what === "describe") { aiHelp = !aiHelp; return render(r, player.t); }
-  if (what === "closeai") { aiHelp = false; return render(r, player.t); }
-  if (what === "copyprompt") {
-    try { await navigator.clipboard.writeText(document.getElementById("aiprompt").textContent); notice = "Copied."; noticeOk = true; }
-    catch (err) { notice = "Copy failed; select the text instead."; noticeOk = false; }
-    return render(r, player.t);
-  }
   if (what === "failhere" && sel) {
     const f = sel.start; sel = null; delete drafts[r.run_id];
     return send(r, { op: "add", kind: "failure_start", payload: { frame: f }, what: "policy fails at " + fmt(f / r.fps) });
@@ -531,6 +494,19 @@ function wire(r, t0) {
   };
 
   const toFrame = x => { const b = tl.getBoundingClientRect(); return Math.max(0, Math.min(r.length, Math.round((x - b.left) / b.width * r.length))); };
+  const dragMarker = (ev, bnd, fm) => {       // move a segment boundary or the policy-failure moment
+    ev.preventDefault(); ev.stopPropagation();
+    tl.setPointerCapture(ev.pointerId);
+    const el = bnd || fm, lo = bnd ? +bnd.dataset.lo : 0, hi = bnd ? +bnd.dataset.hi : r.length - 1;
+    let f = null;
+    tl.onpointermove = m => { f = Math.max(lo, Math.min(hi, toFrame(m.clientX))); el.style.left = (100 * f / r.length) + "%"; };
+    tl.onpointerup = () => {
+      tl.onpointermove = tl.onpointerup = null;
+      if (f === null) return;
+      if (bnd) send(r, { op: "add", kind: "step_boundary", payload: { index: +bnd.dataset.index, frame: f }, what: "move segment boundary" });
+      else send(r, { op: "add", kind: "failure_start", payload: { frame: f }, what: "policy fails at " + fmt(f / r.fps) });
+    };
+  };
   const scrub = ev => {                  // the playhead has its own strip under the bar, in every mode
     tl.setPointerCapture(ev.pointerId);
     p.seek(toFrame(ev.clientX) / r.fps);
@@ -539,7 +515,15 @@ function wire(r, t0) {
   };
   tl.onpointerdown = ev => {
     if (ev.target.closest("#ruler, .knob")) return scrub(ev);
-    if (ev.target.closest(".pin")) return;     // pins are buttons: their click handler seeks
+    if (canEdit(r) && editing) {
+      const bnd = ev.target.closest(".sbound"), fm = ev.target.closest(".failmark");
+      if (bnd || fm) return dragMarker(ev, bnd, fm);
+      const sgEl = ev.target.closest(".sg");
+      if (sgEl && !ev.target.closest("#selbox")) {             // click a segment: select its frames
+        const sg = (r.review.segments || []).find(x => "segment:" + x.name + "@" + x.start === sgEl.dataset.segkey);
+        if (sg && !busy(r)) { ev.preventDefault(); sel = null; return setSpan(r, sg.start, sg.end); }
+      }
+    }
     if (canEdit(r)) {
       const lbEl = ev.target.closest(".lb"), cutEl = ev.target.closest(".cut");
       if (lbEl) { ev.preventDefault(); return openLabel(r, lbEl.dataset.label); }
@@ -586,23 +570,7 @@ function wire(r, t0) {
       setSpan(r, lo, hi);
     };
   };
-  const light = (nums, on) => {
-    document.querySelectorAll(".pin").forEach(x => x.classList.toggle("hl", on && x.dataset.pin.split(",").some(n => nums.includes(n))));
-    document.querySelectorAll(".major .ev").forEach(x => x.classList.toggle("hl", on && nums.includes(x.dataset.n)));
-    const keys = numbered(r).filter(m => nums.includes(String(m.n))).map(m => m.key);
-    document.querySelectorAll(".sg").forEach(x => x.classList.toggle("hl", on && keys.includes(x.dataset.segkey)));
-  };
-  document.querySelectorAll(".sg").forEach(x => {   // a segment on the bar lights up with its major event
-    const n = numbered(r).find(m => m.key === x.dataset.segkey);
-    x.onmouseenter = () => { x.classList.add("hl"); if (n) light([String(n.n)], true); };
-    x.onmouseleave = () => { x.classList.remove("hl"); light([], false); };
-  });
-  document.querySelectorAll(".pin").forEach(x => {
-    x.onmouseenter = x.onfocus = () => light(x.dataset.pin.split(","), true);
-    x.onmouseleave = x.onblur = () => light([], false);
-    x.onclick = () => p.seek(+x.dataset.frame / r.fps);
-  });
-  document.querySelectorAll(".major .ev").forEach(x => { x.onmouseenter = () => light([x.dataset.n], true); x.onmouseleave = () => light([], false); });
+  document.querySelectorAll(".sg").forEach(x => { x.onmouseenter = () => x.classList.add("hl"); x.onmouseleave = () => x.classList.remove("hl"); });
   document.querySelectorAll(".ev").forEach(el => {
     const go = () => el.dataset.open && canEdit(r) ? openLabel(r, el.dataset.open) : p.seek(+el.dataset.frame / r.fps);
     el.onclick = ev => { if (!ev.target.closest("input, button, [data-note]")) go(); };
@@ -613,8 +581,6 @@ function wire(r, t0) {
   if (text) text.oninput = () => { sel.text = text.value; sel.dirty = true; };
   if (newseg) newseg.oninput = () => { sel.newseg = newseg.value; sel.segmentSet = sel.dirty = true; };
   document.getElementById("detail").onclick = ev => {
-    const nt = ev.target.closest("[data-note]");
-    if (nt) { ev.stopPropagation(); noteEdit = nt.dataset.note; render(r, p.t); const i = document.getElementById("notein"); if (i) i.focus(); return; }
     const b = ev.target.closest("button"); if (!b || b.id) return;
     if (b.dataset.driver) { sel.driver = sel.driver === b.dataset.driver && !sel.newdrive ? null : b.dataset.driver; sel.newdrive = ""; sel.driverSet = sel.dirty = true; return render(r, p.t); }
     if (b.dataset.seg !== undefined) { sel.segment = sel.segment === b.dataset.seg && !sel.newseg ? null : b.dataset.seg; sel.newseg = ""; sel.segmentSet = sel.dirty = true; return render(r, p.t); }
@@ -623,12 +589,6 @@ function wire(r, t0) {
     if (b.dataset.keep) return decide(r, b.dataset.keep, false, "keep" + editSpan(r, b.dataset.keep));
     if (b.dataset.uncut) return decide(r, b.dataset.uncut, false, "undo" + editSpan(r, b.dataset.uncut));
     if (b.dataset.act === "undo") return undoLast();
-    if (b.dataset.noteSave) {
-      const t = document.getElementById("notein").value.trim(); if (!t) return;
-      const key = b.dataset.noteSave; noteEdit = null;
-      return send(r, { op: "note", key, text: t, what: "note: " + t.slice(0, 50) });
-    }
-    if (b.dataset.noteCancel) { noteEdit = null; return render(r, p.t); }
     if (b.dataset.act) return act(r, b.dataset.act);
   };
   vids.forEach(v => v.addEventListener("loadedmetadata", () => { v.currentTime = +v.dataset.t0 + p.t; }, { once: true }));
@@ -637,11 +597,6 @@ function wire(r, t0) {
 
 document.addEventListener("keydown", e => {
   if (!current || !player || e.altKey) return;
-  if (e.target.id === "notein") {
-    if (e.key === "Enter") { e.preventDefault(); document.querySelector("[data-note-save]").click(); }
-    else if (e.key === "Escape") { noteEdit = null; render(current, player.t); }
-    return;
-  }
   if (e.target.closest("textarea, input")) {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); act(current, "save"); }
     else if (e.key === "Escape") act(current, "cancel");

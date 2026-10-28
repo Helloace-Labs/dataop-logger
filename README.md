@@ -172,19 +172,12 @@ dataop-logger find-idle <dataset_root> [--run RUN_ID]                     # buil
 dataop-logger suggest-cut <dataset_root> <run_id> <start> <end> --reason "..." --by my-agent
 ```
 
-**Major events.** Each run lists the same three kinds of events for any task, numbered and pinned on the run bar:
-- **drive mode changes:** policy, rescue, shared or your own mode;
-- **task segment starts:** the recorded steps, corrected by labels;
-- **the moment the policy fails:** marked with "Policy fails here" in Edit, otherwise estimated.
+**Task segments and the failure moment.** The lane above the run bar shows the task segments, each in its own shade of one color. In Edit:
+- drag the line between two segments to move where one ends and the next starts;
+- click a segment to select its frames for a label or a cut;
+- drag the red "fails" marker to where the policy actually started to fail. It is dashed and reads "fails?" while it is only estimated.
 
-The two seconds before the failure are shaded, since those frames matter most for training data. Each event has one note with the details. It comes from recorded data by default; a person can click it to edit it, and an agent can write it:
-
-```bash
-dataop-logger events <dataset_root> --run <run_id>                         # JSON: each event's key, time, title and note
-dataop-logger note <dataset_root> <run_id> failure --text "tube slips out of the jaws" --by my-agent
-```
-
-**AI feature: describe events.** **✦ Describe events** hands the job to your own agent, which watches the video around each event and writes the notes with the command above.
+The two seconds before the failure are shaded, since those frames matter most for training data. Agents can list a run's drive-mode changes, segment starts and failure moment with `dataop-logger events`, and add a detail to any of them with `dataop-logger note`.
 
 **Agents read the labels.** An agent records what each plain-language label means for training, and the viewer shows that reading under the label:
 

@@ -161,6 +161,14 @@ textarea { width: 100%; resize: vertical; }
 .major .ev { align-items: baseline; }
 .major .attn { background: var(--warn-bg); border-radius: 6px; }
 .major .muted { color: var(--ink-3); }
+.failmark { position: absolute; top: 45px; width: 0; height: 30px; border-left: 2px solid var(--bad); z-index: 3; }
+.failmark.est { border-left-style: dashed; }
+.failmark .flag { position: absolute; left: 2px; top: 0; padding: 0 5px; border-radius: 0 3px 3px 0; font-size: 9px; line-height: 11px;
+  font-weight: 600; color: var(--panel); background: var(--bad); white-space: nowrap; }
+.editing .failmark { cursor: ew-resize; }
+.sbound { position: absolute; top: -2px; width: 12px; height: 24px; margin-left: -6px; cursor: ew-resize; z-index: 7; touch-action: none; }
+.sbound::after { content: ""; position: absolute; left: 4px; top: 2px; width: 4px; height: 20px; border-radius: 2px; background: var(--ink); opacity: .8; }
+.sbound:hover::after { opacity: 1; background: var(--accent); }
 .attnspan { position: absolute; top: 50px; height: 26px; border-radius: 3px; pointer-events: none; background: var(--warn); opacity: .22; }
 .num-badge { flex: none; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 9px; font: 600 10px/18px var(--sans);
   text-align: center; color: var(--panel); background: var(--ink-2); align-self: center; }
