@@ -119,8 +119,15 @@ dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--panel); font-weight: 500; }
 .btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
 .btn:focus-visible, textarea:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.undobtn { margin-left: auto; }
-.undobtn + .editbtn, .editbtn:first-child { margin-left: 0; }
+.undowrap { margin-left: auto; position: relative; display: inline-flex; }
+.undowrap .undobtn { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.undomore { border-left: 0; border-top-left-radius: 0; border-bottom-left-radius: 0; padding: 5px 8px; }
+.history { position: absolute; right: 0; top: 34px; z-index: 20; width: 320px; max-height: 300px; overflow: auto; padding: 6px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,.25); }
+.hrow { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 5px 6px; border-radius: 6px; }
+.hrow:hover { background: var(--hover); }
+.hrow .sub { display: inline; margin-left: 6px; }
+.undowrap + .editbtn { margin-left: 8px; }
 .editbtn { margin-left: auto; }
 .timeline.editing { cursor: crosshair; }
 .lblane { position: absolute; left: 0; right: 0; top: 0; height: 18px; z-index: 3; pointer-events: none; }

@@ -15,6 +15,7 @@ let sel = null;                 // {start, end, id?, cutId?, text, driver, segme
 let notice = "";                // last save problem, shown until the next action
 const drafts = {};              // run_id -> unsaved sel, kept when switching runs
 // Undo: every run's review lists its steps that can still be undone; Cmd/Ctrl+Z reverts the newest across runs.
+let showHistory = false;
 const undoList = () => runs.flatMap(r => (r.review.undoable || []).map(u => ({ run_id: r.run_id, ...u })))
                            .sort((a, b) => a.t - b.t);
 
@@ -329,7 +330,9 @@ function render(r, t0) {
         .map(m => `<span><i style="background:${color(m)}"></i>${MODE[m]} ${Math.round(100 * frac(r, m))}%</span>`).join("")}
         ${(r.review.segments || []).length ? `<span class="seglegend first" title="Each task segment is a different shade of this color"><i class="segsw"></i>Task segment</span>` : ""}
         ${cs.length ? `<span><i class="hatch"></i>cut</span>` : ""}${sug.length ? `<span><i class="sugsw"></i>suggested cut</span>` : ""}</div>
-      ${editable && undoList().length ? `<button class="btn undobtn" data-act="undo" title="Undo ${esc(undoList().slice(-1)[0].what)} (Cmd/Ctrl+Z)">↶ Undo</button>` : ""}
+      ${editable && undoList().length ? `<span class="undowrap"><button class="btn undobtn" data-act="undo" title="Undo ${esc(undoList().slice(-1)[0].what)} (Cmd/Ctrl+Z)">↶ Undo</button><button class="btn undomore" data-act="history" title="Show changes you can undo" aria-expanded="${showHistory}">▾</button>
+        ${showHistory ? `<div class="history" role="menu">${undoList().slice().reverse().map(u => `<div class="hrow"><span>${esc(u.what)}<span class="sub">run ${runs.find(x => x.run_id === u.run_id).episode + 1}</span></span>
+          <button class="btn sm" data-undo-entry="${esc(u.entry)}" data-undo-run="${esc(u.run_id)}">Undo</button></div>`).join("")}</div>` : ""}</span>` : ""}
       ${canEdit(r) ? `<button class="btn ${editing ? "primary" : ""} editbtn" id="edit" title="E">${editing ? "Done" : "Edit"}</button>` : ""}
     </div>
     <div class="timeline ${editing ? "editing" : ""}" id="tl" style="--pinrows:${(r.review.major || []).some(m => m.kind === "failure") ? 1 : 0}">
@@ -357,11 +360,7 @@ function render(r, t0) {
     ${editing ? segTable(r) : ""}
     <div class="cols">
       ${aboutCard(r)}
-      ${corrections(r).length || otherProposals(r).length ? `<div class="card"><h3>Other corrections</h3>
-        ${corrections(r).map(x => `<div class="srow"><span class="time">${KIND[x.kind]}</span><span class="sdesc">${esc(JSON.stringify(x.payload))}<span class="sub">${x.source === "agent" ? "agent" : "person"}</span></span>
-          ${canEdit(r) ? `<span class="sbtns"><button class="btn sm" data-uncut="${esc(x.id)}">Undo</button></span>` : ""}</div>`).join("")}
-        ${otherProposals(r).map(x => `<div class="srow"><span class="time">${esc(KIND[x.kind] || x.kind)}?</span><span class="sdesc">${esc(JSON.stringify(x.payload))}${x.reason ? ` · ${esc(x.reason)}` : ""}<span class="sub">suggested by an agent</span></span>
-          ${canEdit(r) ? `<span class="sbtns"><button class="btn sm" data-cut="${esc(x.id)}">Accept</button><button class="btn sm" data-keep="${esc(x.id)}">Dismiss</button></span>` : ""}</div>`).join("")}</div>` : ""}
+
     </div>`;
   wire(r, t0);
 }
@@ -541,10 +540,11 @@ function wire(r, t0) {
     tl.onpointerup = () => {
       tl.onpointermove = tl.onpointerup = null;
       if (f === null) return;
+      const segs = r.review.segments || [], A = bnd && segs.find(x => x.index === +bnd.dataset.index), B = bnd && segs.find(x => x.index === +bnd.dataset.index + 1);
       if (bnd && bnd.dataset.kind === "step_boundary")
-        send(r, { op: "add", kind: "step_boundary", payload: { index: +bnd.dataset.index, frame: f }, what: "move segment boundary" });
+        send(r, { op: "add", kind: "step_boundary", payload: { index: +bnd.dataset.index, frame: f }, what: `${A.name} | ${B ? B.name : ""} line to ${fmt(f / r.fps)}` });
       else if (bnd)
-        send(r, { op: "add", kind: "segment_edge", payload: { index: +bnd.dataset.index, edge: bnd.dataset.edge, frame: f }, what: "move segment edge" });
+        send(r, { op: "add", kind: "segment_edge", payload: { index: +bnd.dataset.index, edge: bnd.dataset.edge, frame: f }, what: `${A.name} ${bnd.dataset.edge} to ${fmt(f / r.fps)}` });
       else send(r, { op: "add", kind: "failure_start", payload: { frame: f }, what: "policy fails at " + fmt(f / r.fps) });
     };
   };
@@ -630,6 +630,12 @@ function wire(r, t0) {
     if (b.dataset.keep) return decide(r, b.dataset.keep, false, "keep" + editSpan(r, b.dataset.keep));
     if (b.dataset.uncut) return decide(r, b.dataset.uncut, false, "undo" + editSpan(r, b.dataset.uncut));
     if (b.dataset.act === "undo") return undoLast();
+    if (b.dataset.act === "history") { showHistory = !showHistory; return render(r, p.t); }
+    if (b.dataset.undoEntry) {
+      const tr = runs.find(x => x.run_id === b.dataset.undoRun); showHistory = false;
+      if (tr !== r) select(tr.run_id);
+      return send(current, { op: "undo", entry_id: b.dataset.undoEntry });
+    }
     if (b.dataset.act) return act(r, b.dataset.act);
   };
   vids.forEach(v => v.addEventListener("loadedmetadata", () => { v.currentTime = +v.dataset.t0 + p.t; }, { once: true }));
