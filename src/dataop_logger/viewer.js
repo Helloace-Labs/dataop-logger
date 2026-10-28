@@ -83,7 +83,7 @@ document.getElementById("fails").onclick = e => {
   filter = filter === "fm:" + b.dataset.fm ? "all" : "fm:" + b.dataset.fm;
   redrawList();
 };
-const FILTERS = [["all", "All runs"], ["success", "Success"], ["failure", "Failed"], ["suggested", "Suggested cuts"]];
+const FILTERS = [["all", "All runs"], ["success", "Success"], ["failure", "Failed"]];
 function drawFilters() {
   document.getElementById("filters").innerHTML = FILTERS.map(([k, l]) =>
     `<button class="chip" data-f="${esc(k)}" aria-pressed="${k === filter}">${esc(l)}</button>`).join("");
@@ -94,7 +94,6 @@ document.getElementById("filters").onclick = e => {
 };
 function visible() {
   return runs.filter(r => filter === "all" ? true : filter.startsWith("fm:") ? eff(r).failure_mode === filter.slice(3)
-    : filter === "suggested" ? suggestions(r).length > 0
     : filter === "success" ? eff(r).termination_reason === "success" : eff(r).termination_reason !== "success");
 }
 function drawRows() {
