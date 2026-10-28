@@ -14,7 +14,9 @@ let editing = false;            // edit mode for the open run
 let sel = null;                 // {start, end, id?, cutId?, text, driver, segment, newseg} while editing a span
 let notice = "";                // last save problem, shown until the next action
 const drafts = {};              // run_id -> unsaved sel, kept when switching runs
-const undoStack = [];           // [{run_id, entry, what}] newest last: Cmd/Ctrl+Z reverts them in order
+// Undo: every run's review lists its steps that can still be undone; Cmd/Ctrl+Z reverts the newest across runs.
+const undoList = () => runs.flatMap(r => (r.review.undoable || []).map(u => ({ run_id: r.run_id, ...u })))
+                           .sort((a, b) => a.t - b.t);
 
 const eff = r => r.review.effective;
 const runNo = r => esc(r.env.run ?? r.episode + 1);
@@ -143,7 +145,6 @@ async function send(r, body) {
     }
     if (!res.ok) throw new Error(out.error || res.statusText);
     r.review = out;
-    if (out.step) { undoStack.push({ run_id: r.run_id, ...out.step }); if (undoStack.length > 100) undoStack.shift(); }
     if (out.found) {
       const f = out.found, n = f.created + f.already_suggested + f.already_cut + f.previously_kept;
       notice = n === 0 ? "No idle stretches found in this run."
@@ -164,7 +165,7 @@ async function send(r, body) {
 }
 
 async function saveLabel(r) {
-  if (!sel.text.trim()) { notice = "Describe what happens in these frames first."; return render(r, player.t); }
+  if (!sel.text.trim()) { notice = "Add a few words first."; return render(r, player.t); }
   const payload = { start: sel.start, end: sel.end, text: sel.text, driver: sel.driver, segment: sel.newseg.trim() || sel.segment };
   const keep = sel;
   sel = null;
@@ -181,65 +182,71 @@ const span = (r, p) => `${fmt(p.start / r.fps)}–${fmt(p.end / r.fps)}`;
 function editSpan(r, id) { const e = r.review.edits.find(x => x.id === id); return e && e.payload.start !== undefined ? " " + span(r, e.payload) : ""; }
 
 async function undoLast() {
-  const top = undoStack[undoStack.length - 1];
+  const list = undoList(), top = list[list.length - 1];
   if (!top) { notice = "Nothing to undo."; noticeOk = true; return current && render(current, player.t); }
   if (current && busy(current)) return;
-  const r = runs.find(x => x.run_id === top.run_id);
-  if (current !== r) { sel = null; editing = true; render(r, 0); drawRows(); }
-  undoStack.pop();
+  if (current.run_id !== top.run_id) {         // go to that run the normal way, so a saved draft is restored
+    select(top.run_id);
+    editing = true; render(current, player.t);
+    if (busy(current)) return;
+  }
+  const r = current;
   if (await send(r, { op: "undo", entry_id: top.entry })) {
     sel = null; notice = `Undid ${top.what}.`; noticeOk = true; render(r, player.t);
   }
 }
 
 function selPanel(r) {
-  if (!editing) return "";
-  if (!sel) return `<div class="hint">Drag across the run bar to select frames, then cut them or say what happens there. Click a label or a cut to change it.</div>`;
+  if (!editing || !sel) return "";
   const a = sel.start, b = sel.end;
-  const span = `<div class="lbspan"><b>${fmt(a / r.fps)} to ${fmt(b / r.fps)}</b> <span class="sub">frames ${a}–${b - 1} · ${((b - a) / r.fps).toFixed(1)} s · drag again to change the span</span></div>`;
+  const span = `<div class="lbspan" title="frames ${a}–${b - 1}; drag again to change">${fmt(a / r.fps)} – ${fmt(b / r.fps)} <span class="sub">${((b - a) / r.fps).toFixed(1)} s</span></div>`;
+  const status = `<span class="lbstatus ${notice && !noticeOk ? "bad" : ""}">${esc(notice)}</span>`;
   if (sel.cutId) {
-    const c = cuts(r).find(x => x.id === sel.cutId);
     return `<div class="card lbpanel">${span}
-      <div class="task">These frames are cut: they stay in the recording but are left out of training.${c && c.reason ? ` <span class="sub">${esc(c.reason)}</span>` : ""}</div>
-      <div class="lbfoot"><button class="btn" data-act="uncut">Undo cut</button><button class="btn" data-act="cancel">Close</button>
-      <span class="lbstatus ${notice && !noticeOk ? "bad" : ""}">${esc(notice)}</span></div></div>`;
+      <div class="lbfoot"><button class="btn" data-act="uncut">Undo cut</button><button class="btn" data-act="cancel">Close</button>${status}</div></div>`;
   }
   const names = segmentNames(r);
   const lb = sel.id ? eff(r).labels.find(l => l.id === sel.id) : null;
   const it = lb && lb.interpretation;
   return `<div class="card lbpanel">${span}
-    ${sel.id ? "" : `<div class="lbfoot"><button class="btn" data-act="cut">Cut these frames</button>
-      <span class="sub">Left out of training. The recording is not changed and you can undo it.</span></div>`}
-    <label class="lbq" for="lbtext">What happens here?</label>
-    <textarea id="lbtext" rows="2" maxlength="2000" placeholder="Plain words, e.g. the gripper slips and the policy keeps squeezing; or: my hand blocks the camera, don't use this">${esc(sel.text)}</textarea>
-    <div class="lbrow"><span class="lbq">Who drove</span>
-      ${["policy", "rescue"].map(d => `<button class="chip" data-driver="${d}" aria-pressed="${sel.driver === d}">${d}</button>`).join("")}</div>
-    <div class="lbrow"><span class="lbq">Task segment</span>
+    <textarea id="lbtext" rows="2" maxlength="2000" placeholder="What happens here?">${esc(sel.text)}</textarea>
+    <div class="lbrow" title="Notes for the agent">
+      ${["policy", "rescue"].map(d => `<button class="chip" data-driver="${d}" aria-pressed="${sel.driver === d}">${d}</button>`).join("")}
+      <span class="sep"></span>
       ${names.map(n => `<button class="chip" data-seg="${esc(n)}" aria-pressed="${!sel.newseg && sel.segment === n}">${esc(n)}</button>`).join("")}
-      <input id="lbnewseg" class="segin" maxlength="100" placeholder="new segment" value="${esc(sel.newseg)}"></div>
-    <div class="sub">Who drove and the segment are notes for the agent. Only the agent's reading of the label changes training.</div>
-    ${it ? `<div class="interp">Agent read this as: <b>${it.train === "exclude" ? "leave out of training" : "keep for training"}</b> · ${esc(it.meaning)}
-      <br><span class="sub">Saving a change clears this reading until the agent reads the label again.</span></div>` : ""}
+      <input id="lbnewseg" class="segin" maxlength="100" placeholder="+ segment" value="${esc(sel.newseg)}"></div>
+    ${it ? `<div class="interp" title="Changing the label clears this until the agent reads it again">Agent: ${it.train === "exclude" ? "leave out" : "keep"} · ${esc(it.meaning)}</div>` : ""}
     <div class="lbfoot">
-      <button class="btn primary" data-act="save" title="Cmd/Ctrl + Enter">${sel.id ? "Save changes" : "Save label"}</button>
+      <button class="btn primary" data-act="save" title="Save the label (Cmd/Ctrl+Enter)">Save</button>
+      ${sel.id ? "" : `<button class="btn" data-act="cut" title="Leave these frames out of training. The recording is not changed.">Cut</button>`}
       <button class="btn" data-act="cancel">Cancel</button>
-      ${sel.id ? `<button class="btn bad" data-act="delete">Delete label</button>` : ""}
-      <span class="lbstatus ${notice && !noticeOk ? "bad" : ""}">${esc(notice)}</span>
+      ${sel.id ? `<button class="btn bad" data-act="delete">Delete</button>` : ""}
+      ${status}
     </div>
   </div>`;
+}
+
+function defaultsFor(r, lo, hi) {       // who drove and the step that cover most of the selected frames
+  const drove = {};
+  r.segments.forEach(([a, b, m]) => { const n = Math.min(b, hi) - Math.max(a, lo); if (n > 0) drove[m] = (drove[m] || 0) + n; });
+  const top = Object.entries(drove).sort((x, y) => y[1] - x[1])[0];
+  const driver = top ? ({ base: "policy", expert: "rescue" })[top[0]] || null : null;
+  let segment = null, best = 0;
+  eff(r).subgoals.forEach(s => { const n = Math.min(s.end_frame, hi) - Math.max(s.start_frame, lo); if (n > best) { best = n; segment = s.name; } });
+  return { driver, segment };
 }
 
 function aiBar(r) {
   if (!editing) return "";
   const sg = suggestions(r);
   return `<div class="aibar">
-    <button class="btn ai" data-act="idle" title="Runs the built-in idle finder on this run. Your own agent can add suggestions with dataop-logger suggest-cut.">✦ Find idle frames</button>
-    ${sg.length ? `<button class="btn" data-act="cutall">Cut all ${sg.length} suggested</button><button class="btn" data-act="keepall" title="Keep all suggested frames. These spans won't be suggested again.">Keep all</button>` : ""}
+    <button class="btn ai" data-act="idle" title="Built-in idle finder. Your own agent can add suggestions with dataop-logger suggest-cut.">✦ Find idle frames</button>
+    ${sg.length ? `<button class="btn" data-act="cutall">Cut all ${sg.length}</button><button class="btn" data-act="keepall" title="Keep all suggested frames. These spans won't be suggested again.">Keep all</button>` : ""}
     ${!sel && notice ? `<span class="lbstatus ${noticeOk ? "" : "bad"}">${esc(notice)}</span>` : ""}
   </div>
   ${sg.length ? `<div class="card sugg"><h3>Suggested cuts</h3>${sg.map(x => `<div class="srow">
       <span class="time">${fmt(x.payload.start / r.fps)}–${fmt(x.payload.end / r.fps)}</span>
-      <span class="sdesc">${esc(x.reason || "")}<span class="sub">by ${esc(x.by || "agent")}</span></span>
+      <span class="sdesc" title="by ${esc(x.by || "agent")}">${esc(x.reason || "")}</span>
       <span class="sbtns"><button class="btn sm" data-show="${x.payload.start}">Show</button>
       <button class="btn sm" data-cut="${esc(x.id)}">Cut</button><button class="btn sm" data-keep="${esc(x.id)}" title="Keep these frames for training. This span won't be suggested again.">Keep</button></span></div>`).join("")}</div>` : ""}`;
 }
@@ -275,7 +282,7 @@ function render(r, t0) {
       <div class="legend">${["base", "expert", "blend", "none"].filter(m => frac(r, m) > 0)
         .map(m => `<span><i style="background:${color(m)}"></i>${MODE[m]} ${Math.round(100 * frac(r, m))}%</span>`).join("")}
         ${cs.length ? `<span><i class="hatch"></i>cut</span>` : ""}${sug.length ? `<span><i class="sugsw"></i>suggested cut</span>` : ""}</div>
-      ${editable && undoStack.length ? `<button class="btn undobtn" data-act="undo" title="Undo ${esc(undoStack[undoStack.length - 1].what)} (Cmd/Ctrl+Z)">↶ Undo</button>` : ""}
+      ${editable && undoList().length ? `<button class="btn undobtn" data-act="undo" title="Undo ${esc(undoList().slice(-1)[0].what)} (Cmd/Ctrl+Z)">↶ Undo</button>` : ""}
       ${canEdit(r) ? `<button class="btn ${editing ? "primary" : ""} editbtn" id="edit" title="E">${editing ? "Done" : "Edit"}</button>` : ""}
     </div>
     <div class="timeline ${editing ? "editing" : ""}" id="tl" role="slider" aria-label="Episode position" tabindex="0">
@@ -297,9 +304,9 @@ function render(r, t0) {
     <div class="cols">
       ${e.labels.length ? `<div class="card labels"><h3>Labels</h3>${e.labels.map(l => `<div class="ev" tabindex="0" data-frame="${l.start}" data-open="${esc(l.id)}">
         <span class="time">${fmt(l.start / r.fps)}</span><span>${l.segment ? `<span class="pill tag">${esc(l.segment)}</span> ` : ""}${l.driver ? `<span class="pill tag">${esc(l.driver)}</span> ` : ""}${esc(l.text)}
-        ${l.interpretation ? `<span class="sub">agent: ${l.interpretation.train === "exclude" ? "leave out" : "keep"} · ${esc(l.interpretation.meaning)}</span>` : `<span class="sub">not read by an agent yet</span>`}</span></div>`).join("")}</div>` : ""}
-      ${cs.length ? `<div class="card"><h3>Cut · ${(cutFrames(r) / r.fps).toFixed(1)} s left out of training</h3>
-        ${cs.map(c => `<div class="srow"><span class="time">${fmt(c.start / r.fps)}–${fmt(c.end / r.fps)}</span><span class="sdesc">${c.reason ? esc(c.reason) : "cut by you"}</span>
+        ${l.interpretation ? `<span class="sub">agent: ${l.interpretation.train === "exclude" ? "leave out" : "keep"} · ${esc(l.interpretation.meaning)}</span>` : ""}</span></div>`).join("")}</div>` : ""}
+      ${cs.length ? `<div class="card"><h3 title="Left out of training">Cut · ${(cutFrames(r) / r.fps).toFixed(1)} s</h3>
+        ${cs.map(c => `<div class="srow"><span class="time">${fmt(c.start / r.fps)}–${fmt(c.end / r.fps)}</span><span class="sdesc">${c.reason ? esc(c.reason) : ""}</span>
           ${canEdit(r) ? `<span class="sbtns"><button class="btn sm" data-uncut="${esc(c.id)}">Undo</button></span>` : ""}</div>`).join("")}</div>` : ""}
       ${corrections(r).length || otherProposals(r).length ? `<div class="card"><h3>Other corrections</h3>
         ${corrections(r).map(x => `<div class="srow"><span class="time">${KIND[x.kind]}</span><span class="sdesc">${esc(JSON.stringify(x.payload))}<span class="sub">${x.source === "agent" ? "agent" : "person"}</span></span>
@@ -436,7 +443,7 @@ function wire(r, t0) {
         hi = Math.min(r.length, lo + w);
       }
       if (sel && sel.cutId) sel = null;          // a cut's span is fixed: undo it and cut again
-      sel = sel ? { ...sel, start: lo, end: hi, dirty: true } : { start: lo, end: hi, text: "", driver: null, segment: null, newseg: "" };
+      sel = sel ? { ...sel, start: lo, end: hi, dirty: true } : { start: lo, end: hi, text: "", newseg: "", ...defaultsFor(r, lo, hi) };
       notice = "";
       render(r, lo / r.fps);
       const t = document.getElementById("lbtext"); if (t && !sel.id) t.focus();

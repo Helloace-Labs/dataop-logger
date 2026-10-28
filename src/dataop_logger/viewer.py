@@ -56,9 +56,10 @@ RUN_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 def _review_state(run_path: Path, m: dict) -> dict:
     try:
         r = rv.load(run_path)
-        return {"edits": r["edits"], "rev": r["rev"], "effective": rv.effective(m, r), "error": None}
+        return {"edits": r["edits"], "rev": r["rev"], "effective": rv.effective(m, r), "undoable": rv.undoable(r),
+                "error": None}
     except rv.ReviewError as e:                        # shown on the run; editing it is disabled
-        return {"edits": [], "rev": -1, "effective": rv.effective(m, rv.empty()), "error": str(e)}
+        return {"edits": [], "rev": -1, "effective": rv.effective(m, rv.empty()), "undoable": [], "error": str(e)}
 
 
 def collect(root: Path) -> dict:
@@ -171,7 +172,7 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
             op, summary = req.get("op"), None
             what = req.get("what") if isinstance(req.get("what"), str) and 0 < len(req.get("what")) <= 120 else op
             if op == "undo":
-                entry = rv.undo(run_path, req.get("entry_id"), expect_rev=rev)
+                entry = rv.undo(run_path, m, req.get("entry_id"), expect_rev=rev)
                 state = _review_state(run_path, m)
                 state["undone"] = {"entry": entry["id"], "what": entry["what"]}
                 return self._json(200, state)

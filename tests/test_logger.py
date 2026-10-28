@@ -1003,12 +1003,12 @@ def test_undo_steps(tmp_path):
     rv.interpret(run.run_path, lb["id"], "exclude", "drop it")
     with rv.recording("change label") as rec:
         rv.replace_edit(run.run_path, m, lb["id"], {"start": 1, "end": 4, "text": "second"})
-    rv.undo(run.run_path, rec["entry"])                 # the old label and its reading come back
+    rv.undo(run.run_path, m, rec["entry"])                 # the old label and its reading come back
     eff = rv.effective(m, rv.load(run.run_path))
     assert [(x["text"], x["interpretation"]["train"]) for x in eff["labels"]] == [("first", "exclude")]
     with pytest.raises(rv.ReviewError):
-        rv.undo(run.run_path, rec["entry"])             # once only
-    rv.undo(run.run_path, cut_step)
+        rv.undo(run.run_path, m, rec["entry"])             # once only
+    rv.undo(run.run_path, m, cut_step)
     assert rv.effective(m, rv.load(run.run_path))["excludes"] == []
     # one step for a batch; a later change to the same edit blocks undo of the earlier step
     a = rv.add_edit(run.run_path, m, "exclude", {"start": 10, "end": 12}, source="agent", reason="idle")
@@ -1019,12 +1019,40 @@ def test_undo_steps(tmp_path):
     with rv.recording("undo one") as rec2:
         rv.decide(run.run_path, m, a["id"], False)
     with pytest.raises(rv.ReviewError):
-        rv.undo(run.run_path, rec["entry"])
-    rv.undo(run.run_path, rec2["entry"])
-    rv.undo(run.run_path, rec["entry"])
+        rv.undo(run.run_path, m, rec["entry"])
+    rv.undo(run.run_path, m, rec2["entry"])
+    rv.undo(run.run_path, m, rec["entry"])
     r = rv.load(run.run_path)
     assert {e["id"]: e["status"] for e in r["edits"] if e["id"] in (a["id"], b["id"])} == {a["id"]: "proposed", b["id"]: "proposed"}
     assert V.validate(ds.root)["ok"]
     with rv.recording("nothing") as rec:                # a step that changes nothing is not recorded
         pass
     assert rec["entry"] is None
+
+
+def test_undo_history_is_validated_and_one_step_per_recording(tmp_path):
+    from dataop_logger import review as rv
+    ds, run, m = _review_fixture(tmp_path)
+    with pytest.raises(rv.ReviewError):
+        with rv.recording("two cuts"):
+            rv.add_edit(run.run_path, m, "exclude", {"start": 0, "end": 2})
+            rv.add_edit(run.run_path, m, "exclude", {"start": 4, "end": 6})
+    with rv.recording("cut") as rec:
+        rv.add_edit(run.run_path, m, "exclude", {"start": 8, "end": 9})
+    with rv.recording("undo cut") as rec:
+        rv.decide(run.run_path, m, next(e["id"] for e in rv.load(run.run_path)["edits"] if e["payload"]["start"] == 8), False)
+    r = json.loads((run.run_path / "review.json").read_text())
+    assert [u["entry"] for u in rv.undoable(r)][-1] == rec["entry"]
+    good = json.dumps(r)
+    bad = json.loads(good)
+    bad["history"][-1]["changes"][0]["after"]["payload"]["start"] = -50          # corrupt snapshot
+    bad["history"][-1]["changes"][0]["before"] = {"id": "nope"}
+    (run.run_path / "review.json").write_text(json.dumps(bad))
+    with pytest.raises(rv.ReviewError):
+        rv.effective(m, rv.load(run.run_path))
+    bad = json.loads(good)                                                        # a restore that would be invalid
+    bad["history"][-1]["changes"][0]["before"]["payload"]["start"] = -50
+    (run.run_path / "review.json").write_text(json.dumps(bad))
+    with pytest.raises(rv.ReviewError):
+        rv.undo(run.run_path, m, rec["entry"])
+    assert json.loads((run.run_path / "review.json").read_text()) == bad          # nothing was saved

@@ -89,7 +89,8 @@ def load(run_path: Path) -> dict:
 
 
 _RECORDING = contextvars.ContextVar("dataop_review_recording", default=None)
-HISTORY_LIMIT = 200
+HISTORY_LIMIT = 200                  # steps kept for undo
+HISTORY_BYTES = 2_000_000            # and at most this much JSON; the oldest steps are dropped first
 
 
 @contextmanager
@@ -114,6 +115,8 @@ def transaction(run_path: Path, expect_rev: int | None = None):
             if expect_rev is not None and review["rev"] != expect_rev:
                 raise ReviewConflict(f"the review changed (now at rev {review['rev']}, you had {expect_rev})")
             box = _RECORDING.get()
+            if box is not None and box.get("used"):
+                raise ReviewError("a recorded step may contain one transaction only")
             before = {e["id"]: copy.deepcopy(e) for e in review["edits"]} if box is not None else None
             yield review
             if box is not None:
@@ -121,12 +124,15 @@ def transaction(run_path: Path, expect_rev: int | None = None):
                 changes = [{"id": i, "before": before.get(i), "after": copy.deepcopy(after.get(i))}
                            for i in list(before) + [i for i in after if i not in before]
                            if before.get(i) != after.get(i)]
+                box["used"] = True
                 if changes:
-                    entry = {"id": uuid.uuid4().hex[:12], "at": _now(), "what": box["what"], "changes": changes,
-                             "undone": False}
+                    entry = {"id": uuid.uuid4().hex[:12], "at": _now(), "t": time.time_ns(), "what": box["what"],
+                             "changes": changes, "undone": False}
                     hist = review.setdefault("history", [])
                     hist.append(entry)
                     del hist[:-HISTORY_LIMIT]
+                    while len(hist) > 1 and len(json.dumps(hist)) > HISTORY_BYTES:
+                        del hist[0]
                     box["entry"] = entry["id"]
             review["rev"] += 1
             store.atomic_write_json(_path(run_path), review)
@@ -134,8 +140,14 @@ def transaction(run_path: Path, expect_rev: int | None = None):
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def undo(run_path: Path, entry_id: str, expect_rev: int | None = None) -> dict:
-    """Revert one recorded step: every edit it touched goes back to how it was, if nothing changed it since."""
+def undoable(review: dict) -> list[dict]:
+    """Steps that can still be offered for undo, oldest first: [{entry, what, t}]."""
+    return [{"entry": h["id"], "what": h["what"], "t": h["t"]} for h in review.get("history", []) if not h["undone"]]
+
+
+def undo(run_path: Path, manifest: dict, entry_id: str, expect_rev: int | None = None) -> dict:
+    """Revert one recorded step: every edit it touched goes back to how it was, if nothing changed it since.
+    The result is validated like any stored review before it is saved."""
     with transaction(run_path, expect_rev) as review:
         entry = next((h for h in review.get("history", []) if h.get("id") == entry_id), None)
         if entry is None:
@@ -154,6 +166,7 @@ def undo(run_path: Path, entry_id: str, expect_rev: int | None = None) -> dict:
             else:
                 review["edits"].append(copy.deepcopy(c["before"]))
         entry["undone"], entry["undone_at"] = True, _now()
+        check_review(manifest, review)
         return entry
 
 
@@ -422,6 +435,23 @@ def check_review(manifest: dict, review: dict) -> None:
         for it in current + hist:
             if e["kind"] != "label" or not _valid_reading(it):
                 raise ReviewError(f"edit {e['id']} has a malformed interpretation")
+    hist = review.get("history", [])
+    if not isinstance(hist, list) or len(hist) > HISTORY_LIMIT:
+        raise ReviewError("review history must be a list of at most 200 steps")
+    for h in hist:
+        if not isinstance(h, dict) or not EDIT_ID.match(str(h.get("id"))) or not isinstance(h.get("what"), str) \
+                or not isinstance(h.get("t"), int) or not isinstance(h.get("undone"), bool) \
+                or not isinstance(h.get("changes"), list) or not h["changes"]:
+            raise ReviewError("review history has a malformed step")
+        touched = set()
+        for c in h["changes"]:
+            if not isinstance(c, dict) or not EDIT_ID.match(str(c.get("id"))) or c["id"] in touched:
+                raise ReviewError("review history has a malformed change")
+            touched.add(c["id"])
+            for snap in (c.get("before"), c.get("after")):
+                if snap is not None and (not isinstance(snap, dict) or snap.get("id") != c["id"]
+                                         or snap.get("kind") not in KINDS or snap.get("status") not in STATUSES):
+                    raise ReviewError("review history has a malformed snapshot")
     seqs = [e["accepted_seq"] for e in review["edits"] if "accepted_seq" in e]
     if any(isinstance(q, bool) or not isinstance(q, int) or not 1 <= q <= review["seq"] for q in seqs) \
             or len(seqs) != len(set(seqs)):

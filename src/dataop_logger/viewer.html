@@ -124,10 +124,11 @@ dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .lbcount { display: inline-block; min-width: 16px; padding: 0 4px; border-radius: 8px; font-size: 10px; text-align: center;
   background: var(--lbl-bg); color: var(--lbl); vertical-align: 1px; }
 .lbpanel { display: flex; flex-direction: column; gap: 8px; border-color: var(--accent); max-width: 760px; }
-.lbspan { font-variant-numeric: tabular-nums; }
+.lbspan { font-variant-numeric: tabular-nums; font-weight: 600; }
+.lbspan .sub { display: inline; font-weight: 400; margin-left: 6px; }
 .lbq { font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); }
 .lbrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.lbrow .lbq { min-width: 96px; }
+.sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
 textarea, .segin { font: inherit; color: var(--ink); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
 textarea { width: 100%; resize: vertical; }
 .segin { width: 130px; padding: 3px 8px; }
