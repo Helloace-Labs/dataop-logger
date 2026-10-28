@@ -30,6 +30,19 @@ def total_episodes(dataset) -> int:
     return int(dataset.meta.total_episodes)
 
 
+def saved_episode(dataset, episode_index: int) -> dict | None:
+    """The episode LeRobot just registered, from its in-memory record.
+
+    While recording, LeRobot keeps meta/episodes open in a parquet writer (no footer until it is closed), so the
+    file on disk cannot be read until finalize(). Returns None when the record is not available.
+    """
+    e = getattr(dataset.meta, "latest_episode", None)
+    if not e or int(e["episode_index"][0]) != episode_index:
+        return None
+    return {"length": int(e["length"][0]), "from": int(e["dataset_from_index"][0]),
+            "to": int(e["dataset_to_index"][0])}
+
+
 def dataset_identity(dataset) -> dict:
     return {"repo_id": getattr(dataset, "repo_id", None), "revision": getattr(dataset, "revision", None),
             "root": str(dataset.root)}

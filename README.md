@@ -117,6 +117,16 @@ dataop-logger remap <old_root> <new_root> --repo-id ID --revision REV   # after 
 
 `validate` checks that every run matches its LeRobot episode frame for frame and byte for byte, that the episode was fully saved (metadata and video files present), that the sidecar files match their recorded checksums, and every rule above.
 
+## Viewer
+
+```bash
+dataop-logger view <dataset_root>      # opens http://127.0.0.1:8765/dataop/view/
+```
+
+A local, read-only page: every run with its outcome and a strip showing who drove each frame, then the selected run's camera videos in sync with a control-mode timeline. Click the timeline or an event to jump to that moment. Nothing leaves your machine. `--build-only` writes `dataop/view/index.html` without starting a server.
+
+![viewer](docs/viewer.png)
+
 ## Training with the extra fields
 
 ```python

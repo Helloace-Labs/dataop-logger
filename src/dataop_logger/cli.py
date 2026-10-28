@@ -1,4 +1,4 @@
-"""dataop-logger validate | repair | inspect | remap"""
+"""dataop-logger validate | repair | inspect | remap | view"""
 from __future__ import annotations
 
 import argparse
@@ -22,6 +22,11 @@ def main(argv=None) -> int:
     r.add_argument("new_root")
     r.add_argument("--repo-id", default=None, help="destination dataset repo id, recorded in manifests")
     r.add_argument("--revision", default=None, help="destination dataset revision, recorded in manifests")
+    w = sub.add_parser("view", help="open a local page to browse runs next to their videos")
+    w.add_argument("root")
+    w.add_argument("--port", type=int, default=8765)
+    w.add_argument("--no-open", action="store_true", help="do not open a browser")
+    w.add_argument("--build-only", action="store_true", help="write dataop/view/index.html and exit")
     a = p.parse_args(argv)
 
     if a.cmd == "validate":
@@ -44,6 +49,13 @@ def main(argv=None) -> int:
     if a.cmd == "remap":
         for line in V.remap(a.old_root, a.new_root, repo_id=a.repo_id, revision=a.revision):
             print(line)
+        return 0
+    if a.cmd == "view":
+        from . import viewer
+        if a.build_only:
+            print(viewer.build(a.root))
+        else:
+            viewer.serve(a.root, port=a.port, open_browser=not a.no_open)
         return 0
     return 2
 

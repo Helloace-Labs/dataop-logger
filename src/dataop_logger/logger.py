@@ -422,7 +422,7 @@ class Run:
             self.state = "save_failed"
             self.logger.broken = msg
             raise RunError(f"LeRobot saved an unexpected episode index ({msg}); run validate --repair")
-        em = adapter.episode_metadata(self.logger.root).get(self.episode_index)
+        em = adapter.saved_episode(self.dataset, self.episode_index)
         if em is not None and (em["length"] != len(self._rows) or em["to"] - em["from"] != len(self._rows)):
             msg = f"LeRobot registered episode {self.episode_index} with length {em['length']}, run has {len(self._rows)}"
             store.atomic_write_json(self.run_path / "manifest.json", self._manifest("staged", save_error=msg))

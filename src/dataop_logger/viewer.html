@@ -1,0 +1,256 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>dataop runs</title>
+<style>
+/* Layout: run list on the left, the selected run's videos and control timeline on the right. */
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #16191f; --ink-2: #4c5361; --ink-3: #8a91a0; --line: #e3e6eb;
+  --accent: #2f5bd3; --hover: #eef2fb;
+  --base: #4f7be8; --expert: #e39a2d; --blend: #8c6ad8; --none: #c4c9d2;
+  --ok: #1f8a4c; --ok-bg: #e4f4ea; --bad: #c2362f; --bad-bg: #fbe9e8; --warn: #9a6a00; --warn-bg: #fbf1d9;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #111318; --panel: #181b21; --ink: #e8eaee; --ink-2: #b0b6c2; --ink-3: #7c8392; --line: #2a2f38;
+    --accent: #7c9cf0; --hover: #1f2430;
+    --base: #6b91f0; --expert: #e8a640; --blend: #a387e6; --none: #4a505b;
+    --ok: #5cc98a; --ok-bg: #16301f; --bad: #f07a72; --bad-bg: #3a1c1a; --warn: #e5b94a; --warn-bg: #352b12;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 13px/1.45 var(--sans); }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px 28px; padding: 14px 20px;
+  border-bottom: 1px solid var(--line); background: var(--panel); }
+header h1 { font-size: 15px; margin: 0; font-weight: 600; }
+header h1 span { color: var(--ink-3); font-weight: 400; font-family: var(--mono); font-size: 12px; margin-left: 8px; }
+.stats { display: flex; flex-wrap: wrap; gap: 20px; }
+.stat b { font-size: 15px; font-variant-numeric: tabular-nums; margin-right: 4px; }
+.stat { color: var(--ink-2); }
+main { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; height: calc(100% - 52px); }
+@media (max-width: 860px) { main { grid-template-columns: 1fr; height: auto; } }
+#list { border-right: 1px solid var(--line); overflow: auto; background: var(--panel); }
+.filters { display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--line);
+  position: sticky; top: 0; background: var(--panel); z-index: 1; }
+.chip { border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 999px;
+  padding: 3px 10px; font: inherit; cursor: pointer; }
+.chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--hover); }
+.chip:focus-visible, .row:focus-visible, .ev:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+table { width: 100%; border-collapse: collapse; }
+th { text-align: left; font-weight: 500; color: var(--ink-3); font-size: 11px; text-transform: uppercase;
+  letter-spacing: .04em; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+.row td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.row { cursor: pointer; }
+.row:hover { background: var(--hover); }
+.row[aria-selected="true"] { background: var(--hover); box-shadow: inset 3px 0 0 var(--accent); }
+.num { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 12px; color: var(--ink-2); }
+.mini { display: flex; height: 6px; border-radius: 3px; overflow: hidden; width: 110px; background: var(--none); }
+.pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; font-weight: 500; white-space: nowrap; }
+.pill.ok { color: var(--ok); background: var(--ok-bg); }
+.pill.bad { color: var(--bad); background: var(--bad-bg); }
+.pill.warn { color: var(--warn); background: var(--warn-bg); }
+.pill.tag { color: var(--ink-2); background: var(--bg); border: 1px solid var(--line); }
+#detail { overflow: auto; padding: 18px 22px 40px; display: flex; flex-direction: column; gap: 16px; }
+.title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.title h2 { margin: 0 8px 0 0; font-size: 17px; font-weight: 600; }
+.task { color: var(--ink-2); }
+.videos { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px; }
+figure { margin: 0; background: #000; border-radius: 6px; overflow: hidden; position: relative; }
+figure video { display: block; width: 100%; height: 300px; object-fit: contain; background: #000; }
+figcaption { position: absolute; left: 8px; top: 6px; color: #fff; font-size: 11px; background: rgba(0,0,0,.45);
+  padding: 1px 6px; border-radius: 4px; }
+.controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.btn { border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 6px; padding: 5px 12px;
+  font: inherit; cursor: pointer; }
+.btn:hover { background: var(--hover); }
+.time { font-family: var(--mono); font-size: 12px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.timeline { position: relative; height: 34px; cursor: pointer; user-select: none; }
+.track { position: absolute; left: 0; right: 0; top: 10px; height: 14px; border-radius: 4px; overflow: hidden; display: flex; background: var(--none); }
+.track div { height: 100%; }
+.mark { position: absolute; top: 2px; width: 2px; height: 30px; background: var(--ink); opacity: .55; pointer-events: none; }
+.head { position: absolute; top: 0; width: 2px; height: 34px; background: var(--accent); pointer-events: none; }
+.legend { display: flex; gap: 14px; flex-wrap: wrap; color: var(--ink-2); font-size: 12px; }
+.legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px; }
+.card h3 { margin: 0 0 8px; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .05em; color: var(--ink-3); }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 14px; margin: 0; }
+dt { color: var(--ink-3); }
+dd { margin: 0; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.ev { display: flex; gap: 10px; padding: 6px 4px; border-radius: 4px; cursor: pointer; }
+.ev:hover { background: var(--hover); }
+.empty { color: var(--ink-3); padding: 40px; text-align: center; }
+</style>
+</head>
+<body>
+<header>
+  <h1>dataop runs<span id="ds"></span></h1>
+  <div class="stats" id="stats"></div>
+</header>
+<main>
+  <section id="list" aria-label="Runs">
+    <div class="filters" id="filters"></div>
+    <table>
+      <thead><tr><th>Run</th><th>Outcome</th><th>Who drove</th><th>Length</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+  <section id="detail" aria-live="polite"><div class="empty">Select a run.</div></section>
+</main>
+<script>
+const DATA = /*__DATA__*/null;
+const MODE = { base: "Policy", expert: "Expert", blend: "Blend", none: "Nobody" };
+const color = m => `var(--${m})`;
+const fmt = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`;
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+const runs = DATA.runs;
+let filter = "all", current = null;
+
+function outcomePill(r) {
+  if (r.outcome === "success") return `<span class="pill ok">success</span>`;
+  if (r.labels.includes("rescued")) return `<span class="pill warn">rescued</span>`;
+  return `<span class="pill bad">${esc(r.outcome)}</span>`;
+}
+function frac(r, mode) { return r.segments.filter(s => s[2] === mode).reduce((a, s) => a + s[1] - s[0], 0) / r.length; }
+
+document.getElementById("ds").textContent = DATA.dataset;
+(function stats() {
+  const n = runs.length, ok = runs.filter(r => r.outcome === "success").length;
+  const take = runs.reduce((a, r) => a + r.takeovers.length, 0);
+  const min = m => runs.reduce((a, r) => a + r.segments.filter(s => s[2] === m).reduce((b, s) => b + s[1] - s[0], 0) / r.fps, 0) / 60;
+  document.getElementById("stats").innerHTML = [
+    [n, "runs"], [n ? Math.round(100 * ok / n) + "%" : "–", "policy success"], [take, "takeovers"],
+    [min("base").toFixed(1), "min policy"], [min("expert").toFixed(1), "min expert"]
+  ].map(([v, l]) => `<span class="stat"><b>${v}</b>${l}</span>`).join("");
+})();
+
+const labels = [...new Set(runs.flatMap(r => r.labels))].sort();
+const FILTERS = [["all", "All"], ["success", "Success"], ["failure", "Failed"], ...labels.map(l => ["label:" + l, l.replace(/_/g, " ")])];
+function drawFilters() {
+  document.getElementById("filters").innerHTML = FILTERS.map(([k, l]) =>
+    `<button class="chip" data-f="${esc(k)}" aria-pressed="${k === filter}">${esc(l)}</button>`).join("");
+}
+document.getElementById("filters").onclick = e => {
+  const b = e.target.closest("[data-f]"); if (!b) return;
+  filter = b.dataset.f; drawFilters(); drawRows();
+};
+function visible() {
+  return runs.filter(r => filter === "all" ? true : filter.startsWith("label:") ? r.labels.includes(filter.slice(6))
+    : filter === "success" ? r.outcome === "success" : r.outcome !== "success");
+}
+function drawRows() {
+  document.getElementById("rows").innerHTML = visible().map(r => `
+    <tr class="row" tabindex="0" data-id="${r.run_id}" aria-selected="${current && current.run_id === r.run_id}">
+      <td><b>${esc(r.env.run ?? r.episode)}</b> <span class="num">ep ${r.episode}</span></td>
+      <td>${outcomePill(r)}</td>
+      <td><div class="mini" title="${r.segments.map(s => MODE[s[2]] + " " + s[0] + "–" + s[1]).join(", ")}">
+        ${r.segments.map(s => `<div style="width:${100 * (s[1] - s[0]) / r.length}%;background:${color(s[2])}"></div>`).join("")}</div></td>
+      <td class="num">${(r.length / r.fps).toFixed(1)}s</td>
+    </tr>`).join("") || `<tr><td colspan="4" class="empty">No runs match.</td></tr>`;
+}
+document.getElementById("rows").addEventListener("click", e => { const t = e.target.closest(".row"); if (t) select(t.dataset.id); });
+document.getElementById("rows").addEventListener("keydown", e => {
+  const t = e.target.closest(".row"); if (!t) return;
+  if (e.key === "Enter") select(t.dataset.id);
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    e.preventDefault(); const n = e.key === "ArrowDown" ? t.nextElementSibling : t.previousElementSibling;
+    if (n && n.dataset.id) { n.focus(); select(n.dataset.id); }
+  }
+});
+
+function select(id) {
+  current = runs.find(r => r.run_id === id);
+  drawRows();
+  const r = current, dur = r.length / r.fps;
+  const take = r.takeovers[0];
+  const extras = Object.entries(r.env).filter(([k]) => k !== "run");
+  document.getElementById("detail").innerHTML = `
+    <div class="title"><h2>Run ${esc(r.env.run ?? r.episode)}</h2>${outcomePill(r)}
+      ${r.labels.filter(l => l !== "rescued").map(l => `<span class="pill tag">${esc(l.replace(/_/g, " "))}</span>`).join("")}
+      <span class="task">${esc(r.task)}</span></div>
+    <div class="videos">${r.videos.map(v => `<figure><video muted playsinline preload="auto" data-t0="${v.t0}" src="../../${esc(v.src)}"></video>
+      <figcaption>${esc(v.key)}</figcaption></figure>`).join("") || `<div class="empty">This episode has no video.</div>`}</div>
+    <div class="controls">
+      <button class="btn" id="play">Play</button>
+      <button class="btn" id="speed" title="Playback speed">1×</button>
+      <span class="time" id="time">0:00.0 / ${fmt(dur)} · frame 0</span>
+      <div class="legend">${["base", "expert", "blend", "none"].filter(m => frac(r, m) > 0)
+        .map(m => `<span><i style="background:${color(m)}"></i>${MODE[m]} ${Math.round(100 * frac(r, m))}%</span>`).join("")}</div>
+    </div>
+    <div class="timeline" id="tl" role="slider" aria-label="Episode position" tabindex="0">
+      <div class="track">${r.segments.map(s => `<div style="width:${100 * (s[1] - s[0]) / r.length}%;background:${color(s[2])}"
+        title="${MODE[s[2]]}${s[3] ? " (" + esc(s[3]) + ")" : ""}: frames ${s[0]}–${s[1]}"></div>`).join("")}</div>
+      ${r.events.map(e => `<div class="mark" style="left:${100 * e.frame / r.length}%"></div>`).join("")}
+      <div class="head" id="head" style="left:0"></div>
+    </div>
+    <div class="cols">
+      <div class="card"><h3>Run</h3><dl>
+        <dt>Frames</dt><dd>${r.length} at ${r.fps} fps (${dur.toFixed(1)} s)</dd>
+        <dt>Takeover</dt><dd>${take ? `frame ${take.start_frame} (${(take.start_frame / r.fps).toFixed(1)} s) by ${esc(take.expert_source)}` : "none"}</dd>
+        <dt>Safety-modified</dt><dd>${r.safety_modified} frames</dd>
+        <dt>Policy</dt><dd>${esc(r.policy || "–")}</dd>
+        ${extras.map(([k, v]) => `<dt>${esc(k.replace(/_/g, " "))}</dt><dd>${esc(v)}</dd>`).join("")}
+        <dt>Run id</dt><dd class="num">${r.run_id}</dd>
+      </dl></div>
+      <div class="card"><h3>Events</h3>${r.events.map((e, i) => `<div class="ev" tabindex="0" data-frame="${e.frame}">
+        <span class="time">${fmt(e.frame / r.fps)}</span><span><b>${esc(e.kind)}</b> ${esc([e.source, e.reason, e.text].filter(Boolean).join(" · "))}</span></div>`).join("")
+        || `<div class="task">No events in this run.</div>`}</div>
+    </div>`;
+  wire(r);
+}
+
+function wire(r) {
+  const vids = [...document.querySelectorAll("#detail video")];
+  const dur = r.length / r.fps, head = document.getElementById("head"), tl = document.getElementById("tl");
+  const playBtn = document.getElementById("play"), speedBtn = document.getElementById("speed");
+  let t = 0, playing = false, rate = 1, last = 0;
+  const seek = s => {
+    t = Math.max(0, Math.min(dur, s));
+    vids.forEach(v => { v.currentTime = +v.dataset.t0 + t; });
+    paint();
+  };
+  const paint = () => {
+    head.style.left = (100 * t / dur) + "%";
+    document.getElementById("time").textContent = `${fmt(t)} / ${fmt(dur)} · frame ${Math.min(r.length - 1, Math.floor(t * r.fps))}`;
+  };
+  const tick = now => {
+    if (!playing || current !== r) return;
+    const v = vids[0];
+    t = v ? v.currentTime - +v.dataset.t0 : t + (now - last) / 1000 * rate;
+    last = now;
+    if (t >= dur) { pause(); seek(dur); return; }
+    paint(); requestAnimationFrame(tick);
+  };
+  const pause = () => { playing = false; vids.forEach(v => v.pause()); playBtn.textContent = "Play"; };
+  playBtn.onclick = () => {
+    if (playing) return pause();
+    if (t >= dur - 0.05) seek(0);
+    playing = true; playBtn.textContent = "Pause";
+    vids.forEach(v => { v.playbackRate = rate; v.play(); });
+    last = performance.now(); requestAnimationFrame(tick);
+  };
+  speedBtn.onclick = () => { rate = rate === 1 ? 2 : rate === 2 ? 4 : 1; speedBtn.textContent = rate + "×"; vids.forEach(v => v.playbackRate = rate); };
+  const fromX = e => { const b = tl.getBoundingClientRect(); return (e.clientX - b.left) / b.width * dur; };
+  tl.onpointerdown = e => { tl.setPointerCapture(e.pointerId); seek(fromX(e)); tl.onpointermove = m => seek(fromX(m)); };
+  tl.onpointerup = () => { tl.onpointermove = null; };
+  tl.onkeydown = e => { if (e.key === "ArrowRight") seek(t + 1 / r.fps * 15); if (e.key === "ArrowLeft") seek(t - 1 / r.fps * 15); };
+  document.querySelectorAll(".ev").forEach(el => {
+    const go = () => seek(Math.max(0, +el.dataset.frame / r.fps - 1));
+    el.onclick = go; el.onkeydown = e => { if (e.key === "Enter") go(); };
+  });
+  vids.forEach(v => v.addEventListener("loadedmetadata", () => { v.currentTime = +v.dataset.t0 + t; }, { once: true }));
+}
+
+drawFilters(); drawRows();
+const firstRescue = runs.find(r => r.labels.includes("rescued")) || runs[0];
+if (firstRescue) select(firstRescue.run_id);
+</script>
+</body>
+</html>

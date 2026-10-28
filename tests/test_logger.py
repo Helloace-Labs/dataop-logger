@@ -531,3 +531,41 @@ def test_missing_video_is_incomplete(tmp_path):
         mp4.unlink()
     res = V.validate(ds.root)
     assert not res["ok"] and any("incomplete save" in e for e in res["errors"])
+
+
+def test_viewer_collect_and_build(tmp_path):
+    from dataop_logger import viewer
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        record(log, 10)
+        with log.run(task=TASK, policy=PolicyInfo("smolvla", "train/smolvla_100")) as run:
+            for i in range(8):
+                base = np.arange(6, dtype=np.float32) + i
+                if i == 5:
+                    run.event("takeover", source="skill:rescue", reason="dropped </script>")
+                if i >= 5:
+                    run.add_frame(frame(i), sent_action=base + 1, expert_action=base + 1, control_mode="expert",
+                                  expert_source="skill:rescue", **ts())
+                else:
+                    run.add_frame(frame(i), sent_action=base, base_action=base, control_mode="base",
+                                  inference_id=i, chunk_offset=0, **ts())
+            run.end(termination_reason="failure", labels=["rescued"])
+    ds.finalize()
+    data = viewer.collect(ds.root)
+    assert [r["episode"] for r in data["runs"]] == [0, 1]
+    r1 = data["runs"][1]
+    assert r1["segments"] == [[0, 5, "base", None], [5, 8, "expert", "skill:rescue"]]
+    assert r1["events"][0]["frame"] == 4 and r1["videos"] == []
+    html = viewer.build(ds.root).read_text()
+    assert "/*__DATA__*/null" not in html and "dropped <\\/script>" in html
+
+
+def test_more_episodes_than_lerobot_metadata_buffer(tmp_path):
+    # LeRobot flushes episode metadata every 10 episodes into a parquet writer it keeps open until finalize();
+    # the post-save check must not read that file mid-recording.
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        runs = [record(log, 4) for _ in range(12)]
+    ds.finalize()
+    assert all(r.state == "committed" for r in runs)
+    assert V.validate(ds.root)["ok"]
