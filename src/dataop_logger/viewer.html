@@ -187,7 +187,9 @@ textarea { width: 100%; resize: vertical; }
 .dbound { position: absolute; top: 52px; width: 18px; height: 22px; margin-left: -9px; cursor: ew-resize; z-index: 7; touch-action: none; }
 .dbound::after { content: ""; position: absolute; left: 7px; top: 1px; width: 4px; height: 20px; border-radius: 2px; background: var(--ink); opacity: .8; }
 .dbound:hover::after { opacity: 1; background: var(--accent); }
-.failline { margin-bottom: 8px; color: var(--ink-2); }
+.failline { margin-bottom: 6px; color: var(--ink-2); }
+.failtypes { margin-bottom: 10px; }
+.failtypes .lbq { min-width: 92px; }
 .summary { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .summary .tile { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; border-radius: 8px; background: var(--bg); }
 .summary .tile b { font-size: 20px; font-variant-numeric: tabular-nums; }
