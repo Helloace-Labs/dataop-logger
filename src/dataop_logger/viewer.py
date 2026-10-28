@@ -169,10 +169,12 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
                 rv.add_edit(run_path, m, req.get("kind"), payload, source="human", expect_rev=rev)
             elif op == "decide":
                 rv.decide(run_path, m, req.get("edit_id"), req.get("accept"), req.get("payload"), expect_rev=rev)
+            elif op == "replace":
+                rv.replace_edit(run_path, m, req.get("edit_id"), req.get("payload"), expect_rev=rev)
             elif op == "reviewed":
                 rv.set_reviewed(run_path, req.get("reviewed"), expect_rev=rev)
             else:
-                raise rv.ReviewError("op must be add, decide or reviewed")
+                raise rv.ReviewError("op must be add, decide, replace or reviewed")
         except rv.ReviewConflict as e:
             return self._json(409, {"error": str(e), "state": _review_state(run_path, m)})
         except (rv.ReviewError, ValueError, KeyError, TypeError) as e:

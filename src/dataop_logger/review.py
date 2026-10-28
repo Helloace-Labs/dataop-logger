@@ -12,6 +12,10 @@ Edit kinds and their payloads:
                  moves the shared boundary between recorded steps `index` and `index + 1`
   reject_run     {}                           the whole run is left out of training
   note           {"frame": int, "text": str}
+  label          {"start": int, "end": int, "text": str, "driver": "policy" | "rescue" | None, "segment": str | None}
+                 a person's description of frames [start, end) in plain language. An agent reads it later and
+                 records what it means with `interpret()`; an interpretation of train="exclude" leaves the span
+                 out of training.
 
 Single-valued kinds (outcome, failure_start, reject_run, and step_boundary per index): the most recently accepted
 edit wins, and undoing it brings back the one accepted before it. Every change to review.json happens under a
@@ -33,10 +37,12 @@ import pyarrow.parquet as pq
 from . import store
 from .schema import TERMINATION_REASONS
 
-KINDS = ("outcome", "failure_start", "exclude", "step_boundary", "reject_run", "note")
+KINDS = ("outcome", "failure_start", "exclude", "step_boundary", "reject_run", "note", "label")
+DRIVERS = ("policy", "rescue")
+TRAIN_USE = ("keep", "exclude")
 SOURCES = ("agent", "human")
 STATUSES = ("proposed", "accepted", "rejected")
-MULTI = ("exclude", "note")                 # kinds where every accepted edit applies
+MULTI = ("exclude", "note", "label")        # kinds where every accepted edit applies
 TAKEOVER_MODES = ("expert", "blend")
 EDIT_ID = re.compile(r"^[0-9a-f]{12}$")
 
@@ -140,6 +146,22 @@ def check_payload(kind: str, payload: dict, manifest: dict) -> dict:
         return {"index": i, "before": a["name"], "after": b["name"], "frame": f}
     if kind == "reject_run":
         return {}
+    if kind == "label":
+        a, b = frame(payload.get("start"), "start", 0, length), frame(payload.get("end"), "end", 0, length)
+        if a >= b:
+            raise ReviewError("a label needs start < end")
+        text = payload.get("text") or ""
+        driver, segment = payload.get("driver"), payload.get("segment")
+        if not isinstance(text, str) or len(text) > 2000:
+            raise ReviewError("label text must be at most 2000 characters")
+        if driver is not None and driver not in DRIVERS:
+            raise ReviewError(f"driver must be one of {DRIVERS} or null")
+        if segment is not None and (not isinstance(segment, str) or not segment.strip() or len(segment) > 100):
+            raise ReviewError("segment must be a short name or null")
+        if not text.strip() and driver is None and segment is None:
+            raise ReviewError("a label needs text, a driver or a segment")
+        return {"start": a, "end": b, "text": text.strip(), "driver": driver,
+                "segment": segment.strip() if segment else None}
     text = payload.get("text")
     if not isinstance(text, str) or not text.strip() or len(text) > 2000:
         raise ReviewError("note text must be 1 to 2000 characters")
@@ -200,6 +222,37 @@ def decide(run_path: Path, manifest: dict, edit_id: str, accept: bool, payload: 
     return edit
 
 
+def replace_edit(run_path: Path, manifest: dict, edit_id: str, payload: dict, expect_rev: int | None = None) -> dict:
+    """A person rewrites an accepted edit (for example a label): the old one is retired, the new one is in effect.
+    Any agent interpretation of the old text does not carry over."""
+    with transaction(run_path, expect_rev) as review:
+        old = next((e for e in review["edits"] if e["id"] == edit_id), None)
+        if old is None or old["status"] != "accepted":
+            raise ReviewError(f"no accepted edit {edit_id!r} on this run")
+        new_payload = check_payload(old["kind"], payload, manifest)
+        edit = {"id": uuid.uuid4().hex[:12], "kind": old["kind"], "payload": new_payload, "source": "human",
+                "reason": None, "status": "proposed", "created_at": _now(), "decided_at": None, "replaces": old["id"]}
+        old["status"], old["decided_at"], old["replaced_by"] = "rejected", _now(), edit["id"]
+        review["edits"].append(edit)
+        _accept(review, edit)
+    return edit
+
+
+def interpret(run_path: Path, edit_id: str, train: str, meaning: str, by: str = "agent",
+              expect_rev: int | None = None) -> dict:
+    """Record what a label means for training, as read by an agent: keep or exclude the span, and why."""
+    if train not in TRAIN_USE:
+        raise ReviewError(f"train must be one of {TRAIN_USE}")
+    if not isinstance(meaning, str) or not meaning.strip() or len(meaning) > 500:
+        raise ReviewError("meaning must be 1 to 500 characters")
+    with transaction(run_path, expect_rev) as review:
+        edit = next((e for e in review["edits"] if e["id"] == edit_id), None)
+        if edit is None or edit["kind"] != "label" or edit["status"] != "accepted":
+            raise ReviewError(f"no accepted label {edit_id!r} on this run")
+        edit["interpretation"] = {"train": train, "meaning": meaning.strip(), "by": by, "at": _now()}
+    return edit
+
+
 def set_reviewed(run_path: Path, reviewed: bool, expect_rev: int | None = None) -> dict:
     if not isinstance(reviewed, bool):
         raise ReviewError("reviewed must be true or false")
@@ -235,6 +288,8 @@ def effective(manifest: dict, review: dict) -> dict:
         "failure_start": None, "excludes": [e["payload"] for e in act if e["kind"] == "exclude"],
         "rejected": "reject_run" in single, "notes": [e["payload"] for e in act if e["kind"] == "note"],
         "subgoals": [dict(s) for s in manifest.get("subgoals", [])], "reviewed": review["reviewed"],
+        "labels": [{"id": e["id"], **e["payload"], "interpretation": e.get("interpretation")}
+                   for e in act if e["kind"] == "label"],
     }
     if "outcome" in single:
         out["termination_reason"] = single["outcome"]["termination_reason"]
@@ -253,7 +308,8 @@ def effective(manifest: dict, review: dict) -> dict:
 
 
 def train_mask(manifest: dict, review: dict, control_modes: list[str]) -> np.ndarray:
-    """Per-frame bool: False for a rejected run, excluded spans, and, on a failed run, every frame from the accepted
+    """Per-frame bool: False for a rejected run, excluded spans, labels an agent read as "exclude", and, on a failed
+    run, every frame from the accepted
     failure start up to the next takeover (the first expert or blend frame), or to the end if none follows."""
     n = manifest["length"]
     eff = effective(manifest, review)
@@ -263,6 +319,9 @@ def train_mask(manifest: dict, review: dict, control_modes: list[str]) -> np.nda
         return mask
     for x in eff["excludes"]:
         mask[x["start"]:x["end"]] = False
+    for lb in eff["labels"]:
+        if (lb.get("interpretation") or {}).get("train") == "exclude":
+            mask[lb["start"]:lb["end"]] = False
     fs = eff["failure_start"]
     if fs is not None and control_modes[fs] not in TAKEOVER_MODES:
         end = next((i for i in range(fs, n) if control_modes[i] in TAKEOVER_MODES), n)
@@ -346,3 +405,34 @@ def propose(root: Path, idle_s: float = 1.0, idle_eps: float = 0.05) -> list[str
                      reason=f"no movement for the last {(n - last) / rate:.1f} s")
             report.append(f"{m['run_id']}: exclude {last}-{n} (idle end)")
     return report
+
+
+def list_labels(root: Path, only_uninterpreted: bool = False) -> list[dict]:
+    """Every label in effect, with what was recorded in its span, for an agent to read."""
+    out = []
+    for run_path, m in store.iter_manifests(Path(root), "committed"):
+        r = load(run_path)
+        eff = effective(m, r)
+        if not eff["labels"]:
+            continue
+        rate = m["action_schema"]["rate_hz"]
+        modes = pq.read_table(run_path / "ticks.parquet", columns=["control_mode"]).column("control_mode").to_pylist()
+        for lb in eff["labels"]:
+            if only_uninterpreted and lb["interpretation"]:
+                continue
+            span = modes[lb["start"]:lb["end"]]
+            out.append({
+                "run_id": m["run_id"], "episode_index": m["episode_index"], "label_id": lb["id"],
+                "start_frame": lb["start"], "end_frame": lb["end"],
+                "start_s": round(lb["start"] / rate, 2), "end_s": round(lb["end"] / rate, 2),
+                "text": lb["text"], "driver": lb["driver"], "segment": lb["segment"],
+                "interpretation": lb["interpretation"],
+                "recorded": {
+                    "control_modes": {k: span.count(k) for k in sorted(set(span))},
+                    "steps": [s["name"] for s in eff["subgoals"]
+                              if s["start_frame"] < lb["end"] and s["end_frame"] > lb["start"]],
+                    "run_outcome": eff["termination_reason"], "failure_mode": eff["failure_mode"],
+                    "task": m["task"],
+                },
+            })
+    return out

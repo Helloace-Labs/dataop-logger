@@ -867,3 +867,35 @@ def test_viewer_skips_runs_with_unexpected_ids(tmp_path):
     store.atomic_write_json(run.run_path / "manifest.json", bad)
     assert viewer.collect(ds.root)["runs"] == []
     assert not V.validate(ds.root)["ok"]
+
+
+def test_labels_replace_interpret_and_mask(tmp_path):
+    from dataop_logger import review as rv
+    from dataop_logger.cli import main
+    ds, run, m = _review_fixture(tmp_path)
+    modes = ["base"] * 30 + ["expert"] * 10
+    lb = rv.add_edit(run.run_path, m, "label", {"start": 2, "end": 6, "text": "my hand blocks the camera",
+                                                "driver": "policy", "segment": "grasp"})
+    for bad in [{"start": 6, "end": 6, "text": "x"}, {"start": 0, "end": 3}, {"start": 0, "end": 3, "driver": "human"},
+                {"start": 0, "end": 3, "segment": " "}, {"start": 0, "end": 41, "text": "x"}]:
+        with pytest.raises(rv.ReviewError):
+            rv.add_edit(run.run_path, m, "label", bad)
+    labels = rv.list_labels(ds.root, only_uninterpreted=True)
+    assert len(labels) == 1 and labels[0]["recorded"]["control_modes"] == {"base": 4}
+    assert labels[0]["recorded"]["steps"] == ["grasp"]
+    assert rv.train_mask(m, rv.load(run.run_path), modes).all()           # text alone changes nothing
+    assert main(["interpret", str(ds.root), run.run_id, lb["id"], "--train", "exclude",
+                 "--meaning", "camera view blocked"]) == 0
+    assert rv.list_labels(ds.root, only_uninterpreted=True) == []
+    mask = rv.train_mask(m, rv.load(run.run_path), modes)
+    assert not mask[2:6].any() and mask[:2].all() and mask[6:].all()
+    # rewriting a label drops the old interpretation; deleting it brings the frames back
+    new = rv.replace_edit(run.run_path, m, lb["id"], {"start": 2, "end": 8, "text": "hand in view"})
+    eff = rv.effective(m, rv.load(run.run_path))
+    assert [(x["id"], x["end"], x["interpretation"]) for x in eff["labels"]] == [(new["id"], 8, None)]
+    assert rv.train_mask(m, rv.load(run.run_path), modes).all()
+    rv.decide(run.run_path, m, new["id"], False)
+    assert rv.effective(m, rv.load(run.run_path))["labels"] == []
+    with pytest.raises(rv.ReviewError):
+        rv.interpret(run.run_path, new["id"], "exclude", "gone")
+    assert V.validate(ds.root)["ok"]

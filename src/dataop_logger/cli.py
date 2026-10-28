@@ -1,8 +1,9 @@
-"""dataop-logger validate | repair | inspect | remap | view | propose"""
+"""dataop-logger validate | repair | inspect | remap | view | labels | interpret | propose"""
 from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 from . import validate as V
 
@@ -28,6 +29,15 @@ def main(argv=None) -> int:
     w.add_argument("--no-open", action="store_true", help="do not open a browser")
     w.add_argument("--build-only", action="store_true", help="write dataop/view/index.html and exit")
     w.add_argument("--read-only", action="store_true", help="browse only; no review edits")
+    lb = sub.add_parser("labels", help="list people's span labels as JSON, with context, for an agent to interpret")
+    lb.add_argument("root")
+    lb.add_argument("--uninterpreted", action="store_true", help="only labels no agent has interpreted yet")
+    it = sub.add_parser("interpret", help="record what a label means for training (an agent's reading of it)")
+    it.add_argument("root")
+    it.add_argument("run_id")
+    it.add_argument("label_id")
+    it.add_argument("--train", required=True, choices=["keep", "exclude"])
+    it.add_argument("--meaning", required=True, help="one sentence: what the person meant")
     q = sub.add_parser("propose", help="add agent review proposals (failure start, idle trims) to committed runs")
     q.add_argument("root")
     a = p.parse_args(argv)
@@ -60,6 +70,19 @@ def main(argv=None) -> int:
         else:
             viewer.serve(a.root, port=a.port, open_browser=not a.no_open, editable=not a.read_only)
         return 0
+    if a.cmd == "labels":
+        from . import review
+        print(V.to_json(review.list_labels(a.root, only_uninterpreted=a.uninterpreted)))
+        return 0
+    if a.cmd == "interpret":
+        from . import review, store
+        for run_path, m in store.iter_manifests(Path(a.root), "committed"):
+            if m["run_id"] == a.run_id:
+                review.interpret(run_path, a.label_id, a.train, a.meaning)
+                print(f"{a.label_id}: {a.train} ({a.meaning})")
+                return 0
+        print(f"no committed run {a.run_id}", file=sys.stderr)
+        return 1
     if a.cmd == "propose":
         from . import review
         for line in review.propose(a.root):

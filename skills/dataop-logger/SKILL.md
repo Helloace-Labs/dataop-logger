@@ -121,6 +121,15 @@ Rewards are optional. Pass `reward=` on `add_frame`, or call `run.complete_trans
 4. Optionally run `dataop-logger propose <dataset_root>` so the viewer's Review tab opens with suggested failure starts and trims for the user to accept.
 5. Tell the user they can browse the runs with `dataop-logger view <dataset_root>`: it starts a local web server and opens a page with each run's outcome, who drove each frame, and the camera videos. Do not run it yourself unless the user asks; it keeps running until stopped.
 
+## Reading people's labels
+
+People label spans in the viewer in plain language. When the user asks you to read them, or before you build a training set:
+
+1. Run `dataop-logger labels <dataset_root> --uninterpreted`. Each entry has the label's text, driver and segment, and what was recorded in that span (control modes, task steps, the run's outcome).
+2. Decide for each label whether its frames should train the model. Read `exclude` into anything that says the frames are wrong, unsafe, blocked, a mistake or not to be used. Read `keep` into descriptions of normal or good behaviour, segment names and driver corrections.
+3. Record it: `dataop-logger interpret <dataset_root> <run_id> <label_id> --train keep|exclude --meaning "<one short sentence>"`.
+4. If a label is ambiguous, ask the user instead of guessing, and quote it.
+
 ## Report back
 
 Tell the user which file you changed, where the takeover signal comes from, how outcomes are decided, and the `validate` result. Mention anything you could not map (for example no shadow policy during takeovers, so `base_action` is missing on expert frames).
