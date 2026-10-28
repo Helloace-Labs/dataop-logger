@@ -309,6 +309,7 @@ function render(r, t0) {
       <span class="time" id="time"></span>
       <div class="legend">${["base", "expert", "blend", "none"].filter(m => frac(r, m) > 0)
         .map(m => `<span><i style="background:${color(m)}"></i>${MODE[m]} ${Math.round(100 * frac(r, m))}%</span>`).join("")}
+        ${[...new Set((r.review.segments || []).map(x => x.name))].map((nm, i) => `<span class="seglegend${i ? "" : " first"}" data-seg-name="${esc(nm)}"><i class="sg shade${segShade(nm)}"></i>${esc(nm)}</span>`).join("")}
         ${cs.length ? `<span><i class="hatch"></i>cut</span>` : ""}${sug.length ? `<span><i class="sugsw"></i>suggested cut</span>` : ""}</div>
       ${editable && undoList().length ? `<button class="btn undobtn" data-act="undo" title="Undo ${esc(undoList().slice(-1)[0].what)} (Cmd/Ctrl+Z)">↶ Undo</button>` : ""}
       ${canEdit(r) ? `<button class="btn ${editing ? "primary" : ""} editbtn" id="edit" title="E">${editing ? "Done" : "Edit"}</button>` : ""}
