@@ -44,7 +44,7 @@ main { display: grid; grid-template-columns: minmax(300px, 400px) 1fr; height: c
 .chip { border: 1px solid var(--line); background: transparent; color: var(--ink-2); border-radius: 999px;
   padding: 3px 10px; font: inherit; cursor: pointer; }
 .chip[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); background: var(--hover); }
-.chip:focus-visible, .row:focus-visible, .ev:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.chip:focus-visible, .row:focus-visible, .ev:focus-visible, .ruler:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 table { width: 100%; border-collapse: collapse; }
 th { text-align: left; font-weight: 500; color: var(--ink-3); font-size: 11px; text-transform: uppercase;
   letter-spacing: .04em; padding: 8px 12px; border-bottom: 1px solid var(--line); }

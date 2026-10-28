@@ -54,20 +54,20 @@ function segmentNames(r) {      // this run's steps first, then segments people 
 function outcomePill(r) {
   const e = eff(r);
   if (e.rejected) return `<span class="pill tag">rejected</span>`;
-  if (e.termination_reason === "success") return `<span class="pill ok">success</span>`;
-  if (r.takeovers.length) return `<span class="pill warn">rescued</span>`;
-  return `<span class="pill bad">${esc(e.termination_reason)}</span>`;
+  const help = interventions(r).length ? ` <span class="pill warn" title="A person or rescue skill took control during this run">rescue used</span>` : "";
+  if (e.termination_reason === "success") return `<span class="pill ok">success</span>${help}`;
+  return `<span class="pill bad">${esc(e.termination_reason)}</span>${help}`;
 }
 
 document.getElementById("ds").textContent = DATA.dataset;
 function drawStats() {
   const n = runs.length, ok = runs.filter(r => eff(r).termination_reason === "success").length;
-  const take = runs.reduce((a, r) => a + r.takeovers.length, 0);
+  const take = runs.reduce((a, r) => a + interventions(r).length, 0);
   const labels = runs.reduce((a, r) => a + eff(r).labels.length, 0);
   const cutS = runs.reduce((a, r) => a + cutFrames(r) / r.fps, 0);
   const min = m => runs.reduce((a, r) => a + r.segments.filter(s => s[2] === m).reduce((b, s) => b + s[1] - s[0], 0) / r.fps, 0) / 60;
   document.getElementById("stats").innerHTML = [
-    [n, "runs"], [n ? Math.round(100 * ok / n) + "%" : "–", "policy success"], [take, "takeovers"],
+    [n, "runs"], [n ? Math.round(100 * ok / n) + "%" : "–", "policy success"], [take, "interventions"],
     [min("base").toFixed(1), "min policy"], [min("expert").toFixed(1), "min rescue"], [labels, "labels"],
     [cutS.toFixed(1), "s cut"]
   ].map(([v, l]) => `<span class="stat"><b>${v}</b>${l}</span>`).join("");
@@ -287,7 +287,7 @@ function select(id) {
 
 function render(r, t0) {
   current = r;
-  const dur = r.length / r.fps, take = r.takeovers[0], e = eff(r);
+  const dur = r.length / r.fps, e = eff(r);
   const pct = f => 100 * f / r.length;
   const sgs = e.subgoals, cs = cuts(r), sug = editing ? suggestions(r) : [];
   if (!canEdit(r)) editing = false;
@@ -307,7 +307,7 @@ function render(r, t0) {
       ${editable && undoList().length ? `<button class="btn undobtn" data-act="undo" title="Undo ${esc(undoList().slice(-1)[0].what)} (Cmd/Ctrl+Z)">↶ Undo</button>` : ""}
       ${canEdit(r) ? `<button class="btn ${editing ? "primary" : ""} editbtn" id="edit" title="E">${editing ? "Done" : "Edit"}</button>` : ""}
     </div>
-    <div class="timeline ${editing ? "editing" : ""}" id="tl" role="slider" aria-label="Episode position" tabindex="0">
+    <div class="timeline ${editing ? "editing" : ""}" id="tl">
       <div class="lblane">${e.labels.map(l => `<div class="lb ${l.interpretation && l.interpretation.train === "exclude" ? "out" : ""} ${sel && sel.id === l.id ? "on" : ""}"
         data-label="${esc(l.id)}" style="left:${pct(l.start)}%;width:${pct(l.end - l.start)}%"
         title="${esc([l.text, l.driver, l.segment].filter(Boolean).join(" · "))}">${esc(l.segment || l.text)}</div>`).join("")}</div>
@@ -319,9 +319,9 @@ function render(r, t0) {
       ${cs.map(c => `<div class="cut ${sel && sel.cutId === c.id ? "on" : ""}" data-cut-id="${esc(c.id)}" style="left:${pct(c.start)}%;width:${pct(c.end - c.start)}%" title="Cut${c.reason ? ": " + esc(c.reason) : ""}"></div>`).join("")}
       ${majorEvents(r).filter(m => m.span).map(m => `<div class="attnspan" style="left:${pct(m.span[0])}%;width:${pct(m.span[1] - m.span[0])}%" title="${esc(m.text)}"></div>`).join("")}
       ${majorEvents(r).filter(m => m.tick).map(m => `<div class="mark ${m.tone}" style="left:${pct(m.frame)}%" title="${fmt(m.frame / r.fps)} ${esc(m.text)}"></div>`).join("")}
-      ${sel && editing && !sel.cutId ? `<div class="selbox" id="selbox" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%" title="Drag to move, drag an edge to resize. Keys [ and ] set the start and end at the playhead." role="group" aria-label="Selected frames">
+      ${sel && editing && !sel.cutId ? `<div class="selbox" id="selbox" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%" title="Drag to move, drag an edge to resize. Keys [ and ] set the start and end at the playhead." role="group" aria-label="Selected frames ${sel ? sel.start : 0} to ${sel ? sel.end - 1 : 0}. Press [ or ] to set the start or end at the playhead.">
         <span class="hdl l" data-edge="start"></span><span class="hdl r" data-edge="end"></span></div>` : sel ? `<div class="selbox fixed" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%"></div>` : ""}
-      <div class="ruler" id="ruler" role="slider" aria-label="Playhead" aria-valuemin="0" aria-valuemax="${r.length - 1}" title="Drag to move the playhead. Arrow keys step it."></div>
+      <div class="ruler" id="ruler" role="slider" tabindex="0" aria-label="Playhead frame" aria-valuemin="0" aria-valuemax="${r.length - 1}" aria-valuenow="0" title="Drag to move the playhead. Arrow keys step it."></div>
       <div class="head" id="head" style="left:0"><span class="knob"></span></div>
     </div>
     ${aiBar(r)}
@@ -343,25 +343,48 @@ function busy(r) {
   return false;
 }
 // Major events: the moments that explain the run bar and matter for training data, in time order.
+// Interventions: stretches where a person or skill had any control (expert or blend), merged when contiguous.
+function interventions(r) {
+  const out = [];
+  r.segments.forEach(([a, b, mode, src]) => {
+    if (mode !== "expert" && mode !== "blend") return;
+    const last = out[out.length - 1];
+    if (last && last.end === a) { last.end = b; if (src && !last.sources.includes(src)) last.sources.push(src); if (mode === "expert") last.full = true; }
+    else out.push({ start: a, end: b, sources: src ? [src] : [], full: mode === "expert" });
+  });
+  return out;
+}
+
+// Major events: the moments that explain the run bar and matter for training data, in time order.
 function majorEvents(r) {
   const e = eff(r), fps = r.fps, out = [];
-  const add = (frame, text, tone = "", more = {}) => out.push({ frame: Math.max(0, Math.min(r.length, frame)), text, tone, ...more });
+  const add = (frame, text, tone = "", more = {}) =>
+    out.push({ frame: frame < 0 ? -1 : Math.min(r.length, frame), text, tone, order: out.length, ...more });
+  const recorded = r.events.map(ev => ({ ...ev, used: false }));
   const first = r.segments[0];
-  if (first) add(0, `${MODE[first[2]]} in control`, "");
+  if (first) add(0, `${MODE[first[2]]} in control at the start`, "");
   e.subgoals.forEach(s => {
     if (s.status === "completed") add(s.end_frame, `${s.name} done`, "ok", { tick: true });
     if (s.status === "failed") add(s.end_frame, `${s.name} failed${s.reason ? ": " + s.reason : ""}`, "bad", { tick: true });
+    if (s.status === "unfinished") add(r.length, `${s.name} unfinished at run end`, "bad", { tick: false });
   });
-  r.takeovers.forEach(t => {
-    if (t.start_frame > Math.round(fps))
-      add(t.start_frame - Math.round(2 * fps), "Check the seconds before the takeover: this is where the policy went wrong", "attn",
-          { tick: false, span: [Math.max(0, t.start_frame - Math.round(2 * fps)), t.start_frame] });
-    add(t.start_frame, `${t.control_mode === "blend" ? "Shared control" : "Rescue takes over"}${t.expert_source ? " (" + t.expert_source + ")" : ""}`, "warn", { tick: true });
-    if (t.end_frame < r.length) add(t.end_frame, "Policy back in control", "", { tick: true });
+  interventions(r).forEach(iv => {
+    // a takeover request logged up to a second before the switch explains it
+    const req = recorded.find(ev => !ev.used && ev.kind === "takeover" && ev.frame >= iv.start - fps && ev.frame <= iv.start);
+    if (req) req.used = true;
+    const why = req && [req.reason, req.text].filter(Boolean).join(" · ");
+    const who = iv.sources.join(", ");
+    if (iv.start > 0) {
+      const w = Math.max(0, iv.start - Math.round(2 * fps));
+      add(w, "Check the seconds before the takeover: this is where the policy went wrong", "attn", { span: [w, iv.start] });
+      add(iv.start, `${iv.full ? "Rescue takes over" : "Shared control starts"}${who ? " (" + who + ")" : ""}`, "warn",
+          { tick: true, note: why || "" });
+    } else if (why) add(0, `Takeover reason: ${why}`, "warn");
+    if (iv.end < r.length) add(iv.end, "Policy back in control", "", { tick: true });
   });
   if (e.failure_start !== null) add(e.failure_start, "Failure starts (marked)", "bad", { tick: true });
-  r.events.filter(ev => ev.kind !== "takeover").forEach(ev =>
-    add(ev.frame, [ev.kind, ev.source, ev.reason, ev.text].filter(Boolean).join(" · "), "", { tick: true }));
+  recorded.filter(ev => !ev.used).forEach(ev =>
+    add(ev.frame, [ev.kind, ev.source, ev.reason, ev.text].filter(Boolean).join(" · "), "", { tick: ev.frame >= 0 }));
   cuts(r).forEach(c => add(c.start, `Cut ${((c.end - c.start) / fps).toFixed(1)} s${c.reason ? ": " + c.reason : ""}`, "muted"));
   suggestions(r).forEach(x => add(x.payload.start, `Suggested cut ${((x.payload.end - x.payload.start) / fps).toFixed(1)} s: ${x.reason || ""}`, "muted"));
   e.labels.forEach(l => add(l.start, `Label: ${l.text}`, "lbl", { open: l.id,
@@ -369,40 +392,42 @@ function majorEvents(r) {
   add(r.length, e.rejected ? "Run rejected" : e.termination_reason === "success" ? "Run ends: success"
     : `Run ends: ${e.termination_reason}${e.failure_mode ? " (" + e.failure_mode.replace(/_/g, " ") + ")" : ""}`,
     e.termination_reason === "success" ? "ok" : "bad");
-  return out.sort((a, b) => a.frame - b.frame);
+  return out.sort((a, b) => a.frame - b.frame || a.order - b.order);
 }
 function eventsCard(r) {
   return `<div class="card major"><h3>Major events</h3>${majorEvents(r).map(m => `
-    <div class="ev ${m.tone}" tabindex="0" data-frame="${Math.min(m.frame, r.length - 1)}"${m.open ? ` data-open="${esc(m.open)}"` : ""}>
-      <span class="time">${fmt(m.frame / r.fps)}</span><span class="dot"></span>
+    <div class="ev ${m.tone}" tabindex="0" data-frame="${Math.max(0, Math.min(m.frame, r.length - 1))}"${m.open ? ` data-open="${esc(m.open)}"` : ""}>
+      <span class="time">${m.frame < 0 ? "before" : fmt(m.frame / r.fps)}</span><span class="dot"></span>
       <span>${esc(m.text)}${m.note ? `<span class="sub">${esc(m.note)}</span>` : ""}</span></div>`).join("")}</div>`;
 }
 
 function aboutCard(r) {
-  const e = eff(r), dur = r.length / r.fps, take = r.takeovers[0];
+  const e = eff(r), dur = r.length / r.fps, ivs = interventions(r), take = ivs[0];
   const failed = e.subgoals.find(x => x.status === "failed");
   const result = e.rejected ? "Rejected" : e.termination_reason === "success" ? `Success in ${dur.toFixed(1)} s`
-    : [take ? "Rescued" : human(e.termination_reason), e.failure_mode && human(e.failure_mode),
+    : [human(e.termination_reason), e.failure_mode && human(e.failure_mode),
        failed && `${esc(failed.name)} failed at ${fmt(failed.end_frame / r.fps)}`].filter(Boolean).join(" · ");
   const share = ["base", "expert", "blend", "none"].filter(m => frac(r, m) > 0)
     .map(m => `${MODE[m].toLowerCase()} ${Math.round(100 * frac(r, m))}%`).join(" · ");
-  const drove = share + (take ? ` · ${r.takeovers.length} takeover${r.takeovers.length > 1 ? "s" : ""}, first at ${fmt(take.start_frame / r.fps)} by ${esc(take.expert_source)}` : "");
+  const drove = share + (take ? ` · ${ivs.length} intervention${ivs.length > 1 ? "s" : ""}, first at ${fmt(take.start / r.fps)}${take.sources.length ? " by " + esc(take.sources.join(", ")) : ""}` : "");
   const when = r.started_at ? new Date(r.started_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : null;
+  const L = r.latency_ms || {};
   const checks = [
-    r.latency_ms && `frame to command ${r.latency_ms.p50} ms typical, ${r.latency_ms.p95} ms slowest 5%`,
-    r.safety_modified && `${r.safety_modified} frames changed by the safety filter`,
-    cuts(r).length && `${(cutFrames(r) / r.fps).toFixed(1)} s cut`,
-  ].filter(Boolean);
+    L.measured ? `Frame to command: ${L.p50} ms median, ${L.p95} ms p95` : "Frame to command: not measured (frame and command times are equal)",
+    `Safety filter changed ${r.safety_modified} frame${r.safety_modified === 1 ? "" : "s"}`,
+    cuts(r).length ? `${(cutFrames(r) / r.fps).toFixed(1)} s cut from training` : "Nothing cut",
+  ];
   const row = (k, v) => v ? `<dt>${k}</dt><dd>${v}</dd>` : "";
   return `<div class="card about"><h3>Run</h3><dl>
       ${row("Result", result)}
       ${row("Policy", r.policy && esc(r.policy) + (r.policy_revision ? ` <span class="sub inl">${esc(String(r.policy_revision).slice(0, 12))}</span>` : ""))}
-      ${row("Robot", [r.robot, r.operator].filter(Boolean).map(esc).join(" · "))}
+      ${row("Robot", r.robot && esc(r.robot))}
+      ${row("Operator", r.operator && esc(r.operator))}
       ${row("Recorded", [when && esc(when), `${dur.toFixed(1)} s`].filter(Boolean).join(" · "))}
       ${row("Drive mode", drove)}
     </dl>
     ${conditions(r)}
-    ${checks.length ? `<h3 class="sub2">Data check</h3><ul class="checks">${checks.map(c => `<li>${c}</li>`).join("")}</ul>` : ""}
+    <h3 class="sub2">Data check</h3><ul class="checks">${checks.map(c => `<li>${c}</li>`).join("")}</ul>
     <div class="ids" title="run ${esc(r.run_id)}">episode ${r.episode} · run ${esc(r.run_id.slice(0, 8))}</div>
   </div>`;
 }
@@ -594,5 +619,5 @@ document.addEventListener("keydown", e => {
 });
 
 redrawList();
-const first = runs.find(r => r.takeovers.length) || runs[0];
+const first = runs.find(r => interventions(r).length) || runs[0];
 if (first) select(first.run_id);

@@ -90,8 +90,9 @@ def collect(root: Path) -> dict:
             "policy": policy.get("source"), "policy_revision": policy.get("revision"),
             "robot": env.get("robot_id"), "operator": env.get("operator"),
             "conditions": env.get("extras", {}),
-            "latency_ms": ({"p50": round(float(np.percentile(lat, 50)), 1), "p95": round(float(np.percentile(lat, 95)), 1)}
-                           if len(lat) and float(lat.max()) > 0 else None),
+            "latency_ms": {"p50": round(float(np.percentile(lat, 50)), 1) if len(lat) else None,
+                           "p95": round(float(np.percentile(lat, 95)), 1) if len(lat) else None,
+                           "measured": bool(len(lat) and float(np.abs(lat).max()) > 0)},
             "started_at": m.get("started_at"),
             "videos": videos.get(m["episode_index"], []),
             "review": _review_state(run_path, m),
