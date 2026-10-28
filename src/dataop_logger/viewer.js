@@ -443,7 +443,12 @@ function wire(r, t0) {
         hi = Math.min(r.length, lo + w);
       }
       if (sel && sel.cutId) sel = null;          // a cut's span is fixed: undo it and cut again
-      sel = sel ? { ...sel, start: lo, end: hi, dirty: true } : { start: lo, end: hi, text: "", newseg: "", ...defaultsFor(r, lo, hi) };
+      if (sel) {                                 // resize; untouched defaults follow the new span
+        const d = sel.id ? {} : defaultsFor(r, lo, hi);
+        sel = { ...sel, start: lo, end: hi, dirty: true,
+                ...(sel.id || sel.driverSet ? {} : { driver: d.driver }),
+                ...(sel.id || sel.segmentSet || sel.newseg ? {} : { segment: d.segment }) };
+      } else sel = { start: lo, end: hi, text: "", newseg: "", ...defaultsFor(r, lo, hi) };
       notice = "";
       render(r, lo / r.fps);
       const t = document.getElementById("lbtext"); if (t && !sel.id) t.focus();
@@ -458,8 +463,8 @@ function wire(r, t0) {
   if (newseg) newseg.oninput = () => { sel.newseg = newseg.value; sel.dirty = true; };
   document.getElementById("detail").onclick = ev => {
     const b = ev.target.closest("button"); if (!b || b.id) return;
-    if (b.dataset.driver) { sel.driver = sel.driver === b.dataset.driver ? null : b.dataset.driver; sel.dirty = true; return render(r, p.t); }
-    if (b.dataset.seg !== undefined) { sel.segment = sel.segment === b.dataset.seg && !sel.newseg ? null : b.dataset.seg; sel.newseg = ""; sel.dirty = true; return render(r, p.t); }
+    if (b.dataset.driver) { sel.driver = sel.driver === b.dataset.driver ? null : b.dataset.driver; sel.driverSet = sel.dirty = true; return render(r, p.t); }
+    if (b.dataset.seg !== undefined) { sel.segment = sel.segment === b.dataset.seg && !sel.newseg ? null : b.dataset.seg; sel.newseg = ""; sel.segmentSet = sel.dirty = true; return render(r, p.t); }
     if (b.dataset.show !== undefined) return p.seek(Math.max(0, +b.dataset.show / r.fps - 0.5));
     if (b.dataset.cut) return decide(r, b.dataset.cut, true, "accept" + editSpan(r, b.dataset.cut));
     if (b.dataset.keep) return decide(r, b.dataset.keep, false, "keep" + editSpan(r, b.dataset.keep));

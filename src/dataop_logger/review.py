@@ -129,11 +129,12 @@ def transaction(run_path: Path, expect_rev: int | None = None):
                     entry = {"id": uuid.uuid4().hex[:12], "at": _now(), "t": time.time_ns(), "what": box["what"],
                              "changes": changes, "undone": False}
                     hist = review.setdefault("history", [])
-                    hist.append(entry)
+                    if len(json.dumps(entry)) <= HISTORY_BYTES:   # a single huge step is not kept for undo
+                        hist.append(entry)
                     del hist[:-HISTORY_LIMIT]
-                    while len(hist) > 1 and len(json.dumps(hist)) > HISTORY_BYTES:
+                    while hist and len(json.dumps(hist)) > HISTORY_BYTES:
                         del hist[0]
-                    box["entry"] = entry["id"]
+                    box["entry"] = entry["id"] if hist and hist[-1] is entry else None
             review["rev"] += 1
             store.atomic_write_json(_path(run_path), review)
         finally:
@@ -141,8 +142,12 @@ def transaction(run_path: Path, expect_rev: int | None = None):
 
 
 def undoable(review: dict) -> list[dict]:
-    """Steps that can still be offered for undo, oldest first: [{entry, what, t}]."""
-    return [{"entry": h["id"], "what": h["what"], "t": h["t"]} for h in review.get("history", []) if not h["undone"]]
+    """Steps that can be undone right now, oldest first: [{entry, what, t}]. A step is offered only while every
+    edit it touched is still exactly as the step left it, so a later change (from the page, an agent or a script)
+    hides it until that later change is undone."""
+    current = {e["id"]: e for e in review["edits"]}
+    return [{"entry": h["id"], "what": h["what"], "t": h["t"]} for h in review.get("history", [])
+            if not h["undone"] and all(current.get(c["id"]) == c["after"] for c in h["changes"])]
 
 
 def undo(run_path: Path, manifest: dict, entry_id: str, expect_rev: int | None = None) -> dict:
@@ -407,6 +412,22 @@ def _valid_reading(it) -> bool:
             and text(it.get("by"), 100) and text(it.get("at"), 40))
 
 
+def _valid_edit(e: dict, manifest: dict) -> bool:
+    """One stored edit as this code writes it (used for history snapshots)."""
+    if not EDIT_ID.match(str(e.get("id"))) or e.get("kind") not in KINDS or e.get("status") not in STATUSES \
+            or e.get("source") not in SOURCES:
+        return False
+    try:
+        if check_payload(e["kind"], e.get("payload"), manifest) != e.get("payload"):
+            return False
+    except ReviewError:
+        return False
+    if e["status"] == "accepted" and (isinstance(e.get("accepted_seq"), bool) or not isinstance(e.get("accepted_seq"), int)):
+        return False
+    readings = ([e["interpretation"]] if e.get("interpretation") is not None else []) + e.get("interpretation_history", [])
+    return isinstance(e.get("interpretation_history", []), list) and all(_valid_reading(x) for x in readings)
+
+
 def check_review(manifest: dict, review: dict) -> None:
     """Reject a stored review that this code would never have written: fail closed before it shapes training."""
     for k in ("rev", "seq"):
@@ -436,13 +457,16 @@ def check_review(manifest: dict, review: dict) -> None:
             if e["kind"] != "label" or not _valid_reading(it):
                 raise ReviewError(f"edit {e['id']} has a malformed interpretation")
     hist = review.get("history", [])
-    if not isinstance(hist, list) or len(hist) > HISTORY_LIMIT:
-        raise ReviewError("review history must be a list of at most 200 steps")
+    if not isinstance(hist, list) or len(hist) > HISTORY_LIMIT or len(json.dumps(hist)) > HISTORY_BYTES:
+        raise ReviewError("review history must be a list of at most 200 steps and 2 MB")
+    step_ids = set()
     for h in hist:
-        if not isinstance(h, dict) or not EDIT_ID.match(str(h.get("id"))) or not isinstance(h.get("what"), str) \
-                or not isinstance(h.get("t"), int) or not isinstance(h.get("undone"), bool) \
-                or not isinstance(h.get("changes"), list) or not h["changes"]:
+        if not isinstance(h, dict) or not EDIT_ID.match(str(h.get("id"))) or h["id"] in step_ids \
+                or not isinstance(h.get("what"), str) or not isinstance(h.get("at"), str) \
+                or isinstance(h.get("t"), bool) or not isinstance(h.get("t"), int) or h["t"] <= 0 \
+                or not isinstance(h.get("undone"), bool) or not isinstance(h.get("changes"), list) or not h["changes"]:
             raise ReviewError("review history has a malformed step")
+        step_ids.add(h["id"])
         touched = set()
         for c in h["changes"]:
             if not isinstance(c, dict) or not EDIT_ID.match(str(c.get("id"))) or c["id"] in touched:
@@ -450,7 +474,7 @@ def check_review(manifest: dict, review: dict) -> None:
             touched.add(c["id"])
             for snap in (c.get("before"), c.get("after")):
                 if snap is not None and (not isinstance(snap, dict) or snap.get("id") != c["id"]
-                                         or snap.get("kind") not in KINDS or snap.get("status") not in STATUSES):
+                                         or not _valid_edit(snap, manifest)):
                     raise ReviewError("review history has a malformed snapshot")
     seqs = [e["accepted_seq"] for e in review["edits"] if "accepted_seq" in e]
     if any(isinstance(q, bool) or not isinstance(q, int) or not 1 <= q <= review["seq"] for q in seqs) \

@@ -1056,3 +1056,35 @@ def test_undo_history_is_validated_and_one_step_per_recording(tmp_path):
     with pytest.raises(rv.ReviewError):
         rv.undo(run.run_path, m, rec["entry"])
     assert json.loads((run.run_path / "review.json").read_text()) == bad          # nothing was saved
+
+
+def test_undoable_hides_steps_changed_later(tmp_path):
+    from dataop_logger import review as rv
+    ds, run, m = _review_fixture(tmp_path)
+    with rv.recording("cut") as first:
+        rv.add_edit(run.run_path, m, "exclude", {"start": 0, "end": 2})
+    with rv.recording("label") as second:
+        lb = rv.add_edit(run.run_path, m, "label", {"start": 4, "end": 6, "text": "x"})
+    rv.interpret(run.run_path, lb["id"], "keep", "fine")          # not a viewer step: the label step can't be undone
+    assert [u["entry"] for u in rv.undoable(rv.load(run.run_path))] == [first["entry"]]
+    rv.undo(run.run_path, m, first["entry"])                      # the older independent step is still reachable
+    assert rv.undoable(rv.load(run.run_path)) == []
+    r = json.loads((run.run_path / "review.json").read_text())   # a snapshot missing fields fails validation
+    del r["history"][0]["changes"][0]["after"]["payload"]
+    (run.run_path / "review.json").write_text(json.dumps(r))
+    with pytest.raises(rv.ReviewError):
+        rv.effective(m, rv.load(run.run_path))
+
+
+def test_history_byte_cap(tmp_path, monkeypatch):
+    from dataop_logger import review as rv
+    ds, run, m = _review_fixture(tmp_path)
+    monkeypatch.setattr(rv, "HISTORY_BYTES", 2000)
+    with rv.recording("big") as rec:
+        rv.add_edit(run.run_path, m, "label", {"start": 1, "end": 3, "text": "y" * 1990})
+    assert rec["entry"] is None and rv.load(run.run_path).get("history", []) == []
+    for i in range(10):
+        with rv.recording("cut"):
+            rv.add_edit(run.run_path, m, "exclude", {"start": i, "end": i + 1})
+    hist = rv.load(run.run_path)["history"]
+    assert 0 < len(hist) < 10 and len(json.dumps(hist)) <= 2000
