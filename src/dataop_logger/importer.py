@@ -392,8 +392,7 @@ def import_dataset(source: str, into: str | None = None, preset: str | None = "p
     elif must_copy:
         raise ImportError_("a Hub dataset is imported into a copy: pass --into <folder>")
     p = plan(src if dry_run else root, preset, mapping, episodes)
-    if into and preset == "watcher":                   # side files live next to the source, not the copy
-        p["root"] = str(src)
+    p["root"] = str(src)                               # side-file patterns ({root}, {name}) refer to the source dataset
     report = {"dataset": str(root), "source": str(src), "fields": p["fields"], "missing_columns": p["missing_columns"],
               "to_bind": len(p["episodes"]), "skipped": p["skipped"], "dry_run": dry_run, "runs": []}
     results = {k: _results(p["mapping"][k], Path(p["root"])) if isinstance(p["mapping"].get(k), dict)

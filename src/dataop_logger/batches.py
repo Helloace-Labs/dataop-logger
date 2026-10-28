@@ -78,13 +78,38 @@ def _read(root: Path) -> dict:
     if not isinstance(d, dict) or d.get("version") != 1 or not isinstance(d.get("batches"), list) \
             or not isinstance(d.get("members"), dict):
         raise BatchError(f"{p} is not a version 1 batches file")
-    ids = {b.get("batch_id") for b in d["batches"]}
     for b in d["batches"]:
-        if not isinstance(b, dict) or b.get("status") not in STATUSES or not isinstance(b.get("name"), str):
-            raise BatchError(f"{p} has a malformed batch")
+        _check_batch(p, b)
+    ids = {b["batch_id"] for b in d["batches"]}
     if any(v not in ids for v in d["members"].values()):
         raise BatchError(f"{p} lists a run in a batch that does not exist")
     return d
+
+
+def _check_batch(p: Path, b) -> None:
+    """Every field a batch needs, with its type, so nothing downstream trips over a hand-edited file."""
+    bad = lambda what: BatchError(f"{p} has a malformed batch ({what})")
+    if not isinstance(b, dict):
+        raise bad("not an object")
+    for k, t in (("batch_id", str), ("name", str), ("status", str), ("exports", list), ("history", list)):
+        if not isinstance(b.get(k), t):
+            raise bad(f"{k} missing or not a {t.__name__}")
+    if b["status"] not in STATUSES:
+        raise bad(f"status {b['status']!r}")
+    for k in ("policy", "parent", "locked"):
+        if b.get(k) is not None and not isinstance(b[k], dict):
+            raise bad(f"{k} is not an object")
+    lk = b.get("locked")
+    if (b["status"] == "locked") != (lk is not None):
+        raise bad("status and lock disagree")
+    if lk is not None:
+        runs = lk.get("runs")
+        if not isinstance(runs, dict) or not all(
+                isinstance(v, dict) and isinstance(v.get("review_rev"), int) and isinstance(v.get("review_digest"), str)
+                for v in runs.values()):
+            raise bad("lock runs")
+    if not all(isinstance(x, dict) for x in b["exports"] + b["history"]):
+        raise bad("exports or history entries")
 
 
 def _place(root: Path, d: dict) -> bool:
@@ -370,15 +395,32 @@ def edit(root: Path, ref: str, by: str = "human", name: str | None = None, purpo
     return b
 
 
-def add_export(root: Path, batch_id: str, record: dict, planned_lock: dict | None) -> bool:
-    """Register a finished export. It is current only if the batch still holds exactly the lock it was planned from;
-    an export that finished after an unlock (or from an unlocked batch) is registered as stale. Returns stale."""
-    with _transaction(root) as d:
-        b = find(d, batch_id)
-        stale = planned_lock is None or b["status"] != "locked" or b["locked"] != planned_lock
-        b["exports"].append({**record, "stale": stale})
-        _log(b, record.get("by", "dataop"), f"exported {record.get('recipe')} to {record.get('path')}"
-             + (" (already out of date: the batch changed while it was written)" if stale and planned_lock else ""))
+def add_export(sources: list[tuple[Path, str, dict | None]], record: dict) -> bool:
+    """Register a finished export with every source batch at once: (root, batch_id, lock it was planned from).
+    All dataset roots are locked together (in path order), so the export is current everywhere only if every batch
+    still holds exactly its planned lock; otherwise it is registered as stale everywhere. Returns stale."""
+    from contextlib import ExitStack
+    roots = sorted({str(Path(r).resolve()) for r, _, _ in sources})
+    with ExitStack() as stack:
+        for r in roots:
+            store.dataop_dir(Path(r)).mkdir(parents=True, exist_ok=True)
+            f = stack.enter_context(open(store.dataop_dir(Path(r)) / "batches.lock", "a+"))
+            fcntl.flock(f, fcntl.LOCK_EX)
+            stack.callback(fcntl.flock, f, fcntl.LOCK_UN)
+        regs = {r: _read(Path(r)) for r in roots}
+        targets, stale = [], False
+        for root, bid, planned in sources:
+            d = regs[str(Path(root).resolve())]
+            b = find(d, bid)
+            stale |= planned is None or b["status"] != "locked" or b["locked"] != planned
+            targets.append((d, b, planned))
+        for d, b, planned in targets:
+            b["exports"].append({**record, "stale": stale})
+            _log(b, record.get("by", "dataop"), f"exported {record.get('recipe')} to {record.get('path')}"
+                 + (" (already out of date: a source batch changed while it was written)" if stale and planned else ""))
+        for r in roots:
+            regs[r]["rev"] += 1
+            store.atomic_write_json(_path(Path(r)), regs[r])
     return stale
 
 
@@ -388,8 +430,8 @@ def check(root: Path) -> list[str]:
     from . import review as rv
     try:
         d = _read(root)
-    except BatchError as e:
-        return [str(e)]
+    except (BatchError, AttributeError, TypeError, KeyError) as e:
+        return [f"batches.json: {e}"]
     errs = []
     ids = [b["batch_id"] for b in d["batches"]]
     names = [b["name"] for b in d["batches"]]

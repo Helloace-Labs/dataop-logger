@@ -430,14 +430,20 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
               "hook": hook and {"spec": hook, "file_sha256": hook_sha,
                                 "results_sha256": store.json_sha256(hook_results)},
               "split": val > 0 and {"method": "sha256(run_id)[:12] / 16^12 < val", "val": val}}
-    stale = False
-    for root, ref in sources:                       # current only if each batch still holds the lock it was planned from
+    regs = []
+    for root, ref in sources:
         b = B.find(B.load(Path(root).expanduser()), ref)
-        stale |= B.add_export(Path(root).expanduser(), b["batch_id"], {
-            "export_id": export_id, "at": record["at"], "by": by, "recipe": recipe, "path": str(out_root),
-            "episodes": written["train"]["episodes"], "frames": report["frames"], "options": report["options"]},
-            planned_locks[(str(Path(root).expanduser()), b["batch_id"])])
-    record["stale"] = stale
+        regs.append((Path(root).expanduser(), b["batch_id"], planned_locks[(str(Path(root).expanduser()), b["batch_id"])]))
+    try:                                            # one decision for every source: current only if all kept their lock
+        stale = B.add_export(regs, {"export_id": export_id, "at": record["at"], "by": by, "recipe": recipe,
+                                    "path": str(out_root), "episodes": written["train"]["episodes"],
+                                    "frames": report["frames"], "options": report["options"]})
+    except BaseException:
+        for split, path in targets.items():         # keep the written data, but say it was never registered
+            store.atomic_write_json(path / "dataop_export.json", {**record, "this_split": split, "registered": False,
+                                                                  "stale": True})
+        raise
+    record["stale"], record["registered"] = stale, True
     for split, path in targets.items():             # the same record in every split, naming which one this is
         store.atomic_write_json(path / "dataop_export.json", {**record, "this_split": split})
     report.update(export_id=export_id, written=written, stale=stale)

@@ -1480,9 +1480,9 @@ def test_export_finishing_after_an_unlock_is_registered_stale(tmp_path, monkeypa
     ds, ok, bad = _locked_batch(tmp_path)
     real = B.add_export
 
-    def unlock_first(root, bid, rec, planned):            # the batch is unlocked while the export is being written
-        B.set_status(root, bid, "reviewing", reason="relabel")
-        return real(root, bid, rec, planned)
+    def unlock_first(sources, rec):                         # the batch is unlocked while the export is being written
+        B.set_status(sources[0][0], sources[0][1], "reviewing", reason="relabel")
+        return real(sources, rec)
     monkeypatch.setattr(B, "add_export", unlock_first)
     rep = X.export([(ds.root, "round 1")], "dagger", str(tmp_path / "late"))
     assert rep["stale"] and B.summary(ds.root)[0]["exports"][-1]["stale"]
@@ -1497,3 +1497,34 @@ def test_export_val_split_writes_the_record_in_both(tmp_path):
     for split in rep["written"]:
         rec = json.loads((Path(rep["written"][split]["path"]) / "dataop_export.json").read_text())
         assert rec["this_split"] == split and rec["export_id"] == rep["export_id"]
+
+
+def test_multi_source_export_is_stale_everywhere_if_one_source_changed(tmp_path, monkeypatch):
+    from dataop_logger import batches as B, export as X
+    a_ds, _, _ = _locked_batch(tmp_path / "a")
+    b_ds, _, _ = _locked_batch(tmp_path / "b")
+    real = B.add_export
+
+    def unlock_b(sources, rec):
+        B.set_status(b_ds.root, "round 1", "reviewing", reason="relabel")
+        return real(sources, rec)
+    monkeypatch.setattr(B, "add_export", unlock_b)
+    rep = X.export([(a_ds.root, "round 1"), (b_ds.root, "round 1")], "dagger", str(tmp_path / "both"))
+    assert rep["stale"]
+    assert B.summary(a_ds.root)[0]["exports"][-1]["stale"] and B.summary(b_ds.root)[0]["exports"][-1]["stale"]
+
+
+@pytest.mark.parametrize("breakage", [
+    lambda b: b.update(locked="yes"),
+    lambda b: b["locked"].update(runs={"x": "y"}),
+    lambda b: b.update(exports=None),
+    lambda b: b.update(history="none"),
+])
+def test_malformed_batch_fields_are_validation_errors(tmp_path, breakage):
+    ds, ok, bad = _locked_batch(tmp_path)
+    p = ds.root / "dataop" / "batches.json"
+    d = json.loads(p.read_text())
+    breakage(d["batches"][0])
+    p.write_text(json.dumps(d))
+    res = V.validate(ds.root)
+    assert not res["ok"] and any("batches" in e for e in res["errors"])
