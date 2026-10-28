@@ -25,7 +25,7 @@ def _spans(values: list) -> list[tuple[int, int, object]]:
     return out
 
 
-def major_events(manifest: dict, review: dict, modes: list[str], sources: list) -> list[dict]:
+def major_events(manifest: dict, review: dict, modes: list[str], sources: list, with_segments: bool = False):
     """[{key, kind, frame, title, note, note_by, estimated?}] in time order. Uses the review as corrected."""
     eff = rv.effective(manifest, review)
     n, rate = manifest["length"], manifest["action_schema"]["rate_hz"]
@@ -60,9 +60,13 @@ def major_events(manifest: dict, review: dict, modes: list[str], sources: list) 
         if lb.get("segment"):
             for f in range(lb["start"], min(lb["end"], n)):
                 seg[f] = lb["segment"]
+    seg_spans = []
     for a, b, name in _spans(seg):
         if name is None:
             continue
+        rec0 = status.get((name, a))
+        seg_spans.append({"name": name, "start": a, "end": b,
+                          "status": rec0["status"] if rec0 else None, "from_label": rec0 is None})
         rec = status.get((name, a))
         note = None
         if rec and rec["status"] == "failed":
@@ -92,4 +96,5 @@ def major_events(manifest: dict, review: dict, modes: list[str], sources: list) 
         if e["key"] in notes:
             e["note"], e["note_by"] = notes[e["key"]]["text"], notes[e["key"]]["by"]
     order = {"drive": 0, "segment": 1, "failure": 2, "end": 3}
-    return sorted(events, key=lambda e: (e["frame"], order[e["kind"]]))
+    events = sorted(events, key=lambda e: (e["frame"], order[e["kind"]]))
+    return (events, seg_spans) if with_segments else events

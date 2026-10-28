@@ -65,10 +65,12 @@ def _review_state(run_path: Path, m: dict) -> dict:
     try:
         r = rv.load(run_path)
         return {"edits": r["edits"], "rev": r["rev"], "effective": rv.effective(m, r), "undoable": rv.undoable(r),
-                "major": ev.major_events(m, r, modes, sources), "error": None}
+                **dict(zip(("major", "segments"), ev.major_events(m, r, modes, sources, with_segments=True))),
+                "error": None}
     except rv.ReviewError as e:                        # shown on the run; editing it is disabled
         return {"edits": [], "rev": -1, "effective": rv.effective(m, rv.empty()), "undoable": [],
-                "major": ev.major_events(m, rv.empty(), modes, sources), "error": str(e)}
+                **dict(zip(("major", "segments"), ev.major_events(m, rv.empty(), modes, sources, with_segments=True))),
+                "error": str(e)}
 
 
 def collect(root: Path) -> dict:

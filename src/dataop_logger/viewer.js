@@ -45,6 +45,11 @@ function driveModes(r) {        // policy and rescue, then any other drive modes
   const used = runs.filter(x => x.task === r.task).flatMap(x => eff(x).labels.map(l => l.driver).filter(Boolean));
   return [...new Set(["policy", "rescue", ...used])];
 }
+const SEG_SHADES = 4;
+function segShade(name) {       // one color family for task segments; each segment name keeps its own shade
+  const names = [...new Set(runs.flatMap(r => (r.review.segments || []).map(s => s.name)))];
+  return Math.max(0, names.indexOf(name)) % SEG_SHADES;
+}
 function segmentNames(r) {      // this run's steps first, then segments people used on the same task
   const own = eff(r).subgoals.map(s => s.name);
   const same = runs.filter(x => x.task === r.task).flatMap(x => eff(x).labels.map(l => l.segment).filter(Boolean));
@@ -256,7 +261,7 @@ function defaultsFor(r, lo, hi) {       // who drove and the step that cover mos
   const top = Object.entries(drove).sort((x, y) => y[1] - x[1])[0];
   const driver = top ? ({ base: "policy", expert: "rescue" })[top[0]] || null : null;
   let segment = null, best = 0;
-  eff(r).subgoals.forEach(s => { const n = Math.min(s.end_frame, hi) - Math.max(s.start_frame, lo); if (n > best) { best = n; segment = s.name; } });
+  (r.review.segments || []).forEach(s => { const n = Math.min(s.end, hi) - Math.max(s.start, lo); if (n > best) { best = n; segment = s.name; } });
   return { driver, segment };
 }
 
@@ -312,8 +317,12 @@ function render(r, t0) {
       <div class="lblane">${e.labels.map(l => `<div class="lb ${l.interpretation && l.interpretation.train === "exclude" ? "out" : ""} ${sel && sel.id === l.id ? "on" : ""}"
         data-label="${esc(l.id)}" style="left:${pct(l.start)}%;width:${pct(l.end - l.start)}%"
         title="${esc([l.text, l.driver, l.segment].filter(Boolean).join(" · "))}">${esc(l.segment || l.text)}</div>`).join("")}</div>
-      <div class="lane">${sgs.map(s => `<div class="sg ${s.status}" style="left:${pct(s.start_frame)}%;width:${pct(s.end_frame - s.start_frame)}%"
-        title="${esc(s.name)}: ${s.status}${s.reason ? " (" + esc(s.reason) + ")" : ""}, frames ${s.start_frame}–${s.end_frame}">${esc(s.name)}</div>`).join("")}</div>
+      <div class="lane" aria-label="Task segments">${(r.review.segments || []).map(sg => {
+        const shade = segShade(sg.name);
+        const tip = `Task segment: ${sg.name} · ${fmt(sg.start / r.fps)}–${fmt(sg.end / r.fps)}${sg.status === "failed" ? " · failed" : ""}${sg.from_label ? " · from a label" : ""}`;
+        return `<div class="sg shade${shade}" style="left:${pct(sg.start)}%;width:${pct(sg.end - sg.start)}%" title="${esc(tip)}" data-tip="${esc(tip)}">
+          <span>${esc(sg.name)}</span></div>`;
+      }).join("")}</div>
       <div class="track">${r.segments.map(s => `<div style="width:${pct(s[1] - s[0])}%;background:${color(s[2])}"
         title="${MODE[s[2]]}${s[3] ? " (" + esc(s[3]) + ")" : ""}: frames ${s[0]}–${s[1]}"></div>`).join("")}</div>
       ${sug.map(x => `<div class="sugg-span" style="left:${pct(x.payload.start)}%;width:${pct(x.payload.end - x.payload.start)}%" title="${esc(x.reason || "")}"></div>`).join("")}
