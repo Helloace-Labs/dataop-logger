@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from . import review as rv
 
-DRIVER = {"base": "policy", "expert": "rescue", "blend": "shared", "none": "nobody"}
+DRIVER = {"base": "policy", "expert": "rescue", "blend": "shared", "none": "nobody", "unknown": "not recorded"}
 
 
 def _spans(values: list) -> list[tuple[int, int, object]]:

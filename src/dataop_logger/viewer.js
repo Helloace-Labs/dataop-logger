@@ -1,6 +1,6 @@
 const DATA = /*__DATA__*/null;
 const API = "/dataop/api/review";
-const MODE = { base: "Policy", expert: "Rescue", blend: "Blend", none: "Nobody" };
+const MODE = { base: "Policy", expert: "Rescue", blend: "Blend", none: "Nobody", unknown: "Not recorded" };
 const KIND = { outcome: "Outcome", failure_start: "Failure starts", step_boundary: "Step boundary", reject_run: "Run rejected" };
 const color = m => `var(--${m})`;
 const fmt = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`;
@@ -9,6 +9,13 @@ const human = s => esc(String(s ?? "").replace(/_/g, " "));
 const runs = DATA.runs;
 const editable = DATA.editable;
 let filter = "all", current = null;
+// Batches: the runs collected with one policy version and reviewed together (one DAgger round). Newest first.
+let batches = DATA.batches || [], batchesRev = DATA.batches_rev;
+let batchSel = (batches.find(b => b.n_runs) || {}).batch_id || "all";
+let unlocking = false;          // the unlock reason field is open
+const batchOf = r => batches.find(b => b.runs.includes(r.run_id));
+const locked = r => { const b = batchOf(r); return !!b && b.status === "locked"; };
+const inBatch = () => runs.filter(r => batchSel === "all" || (batchOf(r) || {}).batch_id === batchSel);
 let player = null;              // {t, seek, toggle} for the open run
 let editing = false;            // edit mode for the open run
 let sel = null;                 // {start, end, id?, cutId?, text, driver, segment, newseg} while editing a span
@@ -22,7 +29,7 @@ const undoList = () => runs.flatMap(r => (r.review.undoable || []).map(u => ({ r
 const eff = r => r.review.effective;
 const runNo = r => r.episode + 1;
 const frameOf = r => Math.min(r.length - 1, Math.floor(player.t * r.fps + 1e-6));
-const canEdit = r => editable && !r.review.error;
+const canEdit = r => editable && !r.review.error && !locked(r);
 // who drove each frame, as corrected (moved switch points); falls back to the recording
 const drv = r => r.review && r.review.drive ? r.review.drive.map(d => [d.start, d.end, d.mode, d.source]) : r.segments;
 function frac(r, mode) { return drv(r).filter(s => s[2] === mode).reduce((a, s) => a + s[1] - s[0], 0) / r.length; }
@@ -68,29 +75,80 @@ function outcomePill(r) {
   if (e.rejected) return `<span class="pill tag">rejected</span>`;
   const help = interventions(r).length ? ` <span class="pill warn" title="A person or rescue skill took control during this run">rescue used</span>` : "";
   if (e.termination_reason === "success") return `<span class="pill ok">success</span>${help}`;
+  if (e.termination_reason === "unknown") return `<span class="pill tag" title="The imported data does not say how this run ended; set it in Edit">outcome unknown</span>${help}`;
   return `<span class="pill bad">${esc(e.termination_reason)}</span>${help}`;
 }
 
 document.getElementById("ds").textContent = DATA.dataset;
-function drawStats() {          // dataset summary, at the top of the run list
-  const n = runs.length, ok = runs.filter(r => eff(r).termination_reason === "success").length;
-  const take = runs.reduce((a, r) => a + interventions(r).length, 0);
+const STATUS = { collecting: "Collecting runs", reviewing: "In review", locked: "Locked for export" };
+function batchBar() {            // which batch the list shows, its review progress and what to do next
+  if (!batches.length) return "";
+  const b = batches.find(x => x.batch_id === batchSel);
+  const opts = batches.map(x => `<option value="${esc(x.batch_id)}" ${x.batch_id === batchSel ? "selected" : ""}>${esc(x.name)} · ${x.n_runs} run${x.n_runs === 1 ? "" : "s"}</option>`).join("");
+  let action = "";
+  if (b && editable) {
+    if (b.status === "collecting") action = `<button class="btn" data-batch="reviewing" title="New runs go to a new batch; review continues here">Close batch</button>`;
+    else if (b.status === "reviewing") action = `<button class="btn" data-batch="locked" title="Freeze the review so a training set can be generated from exactly this state">Lock for export</button>`;
+    else action = unlocking
+      ? `<input class="segin" id="unlockwhy" maxlength="200" placeholder="Why unlock? (kept in history)" aria-label="Reason to unlock"><button class="btn" data-batch="unlock">Unlock</button><button class="btn ghost" data-batch="cancel">Cancel</button>`
+      : `<button class="btn ghost" data-batch="askunlock" title="Allow edits again; exports made before are marked out of date">Unlock</button>`;
+  }
+  const prog = b ? `<span class="bprog" title="Runs someone marked as reviewed">${b.reviewed} of ${b.n_runs} reviewed</span>` : "";
+  const warn = b && b.mixed_policy ? `<span class="pill warn" title="Runs in this batch were recorded with different policies">mixed policies</span>` : "";
+  const lineage = b && b.parent ? `<div class="blin">Collected with the model trained from ${esc((batches.find(x => x.batch_id === b.parent.batch_id) || {}).name || "an earlier batch")}</div>` : "";
+  return `<div class="bbar">
+    <div class="brow"><label class="blabel" for="bsel">Batch</label><select id="bsel" class="bsel">${opts}<option value="all" ${batchSel === "all" ? "selected" : ""}>All runs</option></select></div>
+    ${b ? `<div class="brow"><span class="bstat ${b.status}">${STATUS[b.status]}</span>${prog}${warn}<span class="bact">${action}</span></div>${lineage}` : ""}
+    ${batchNotice ? `<div class="bnote">${esc(batchNotice)}</div>` : ""}
+  </div>`;
+}
+let batchNotice = "";
+async function sendBatch(body) {
+  batchNotice = "";
+  try {
+    const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1" },
+                                   body: JSON.stringify({ rev: batchesRev, ...body }) });
+    const out = await res.json();
+    if (out.batches) { batches = out.batches; batchesRev = out.batches_rev; }
+    if (!res.ok) throw new Error(out.error || res.statusText);
+    unlocking = false;
+  } catch (err) { batchNotice = `Not saved: ${err.message}`; }
+  redrawList();
+  if (current) render(current, player ? player.t : 0);
+}
+function drawStats() {          // batch summary, at the top of the run list
+  const rs = inBatch();
+  const n = rs.length, ok = rs.filter(r => eff(r).termination_reason === "success").length;
+  const unk = rs.filter(r => eff(r).termination_reason === "unknown").length;
+  const take = rs.reduce((a, r) => a + interventions(r).length, 0);
   document.getElementById("stats").innerHTML = "";
   const el = document.getElementById("fails");
   el.hidden = false;
-  const pctOk = n ? Math.round(100 * ok / n) : 0, bad = n - ok;
+  const known = n - unk, pctOk = known ? Math.round(100 * ok / known) : 0, bad = known - ok;
   const opt = (f, cls, label) => `<button class="sopt ${cls}" data-f="${f}" aria-pressed="${filter === f}">${label}</button>`;
-  el.innerHTML = `<div class="summary2">
-    <div class="shead"><span class="srate"><b>${n ? pctOk : "–"}</b><small>%</small></span>
-      <span class="slabel">success across<br><b>${n}</b> run${n === 1 ? "" : "s"}</span></div>
-    <div class="sbar" role="img" aria-label="${ok} successful and ${bad} failed runs">
-      <i class="ok" style="width:${n ? 100 * ok / n : 0}%"></i><i class="bad" style="width:${n ? 100 * bad / n : 0}%"></i></div>
-    <div class="sopts">${opt("all", "all", `All ${n}`)}${opt("success", "ok", `${ok} success`)}${opt("failure", "bad", `${bad} failure`)}
+  el.innerHTML = batchBar() + `<div class="summary2">
+    <div class="shead"><span class="srate"><b>${known ? pctOk : "–"}</b><small>%</small></span>
+      <span class="slabel">success across<br><b>${known}</b> run${known === 1 ? "" : "s"}${unk ? ` with a known outcome` : ""}</span></div>
+    <div class="sbar" role="img" aria-label="${ok} successful, ${bad} failed and ${unk} unknown runs">
+      <i class="ok" style="width:${n ? 100 * ok / n : 0}%"></i><i class="bad" style="width:${n ? 100 * bad / n : 0}%"></i>${unk ? `<i class="unk" style="width:${100 * unk / n}%"></i>` : ""}</div>
+    <div class="sopts">${opt("all", "all", `All ${n}`)}${opt("success", "ok", `${ok} success`)}${opt("failure", "bad", `${bad} failure`)}${unk ? opt("unknown", "unk", `${unk} unknown`) : ""}
       <span class="sint" title="Times a person or rescue skill took control">${take} intervention${take === 1 ? "" : "s"}</span></div>
   </div>`;
 }
 function drawFails() {}
+document.getElementById("fails").onchange = e => {
+  if (e.target.id === "bsel") { batchSel = e.target.value; unlocking = false; batchNotice = ""; redrawList(); }
+};
 document.getElementById("fails").onclick = e => {
+  const bb = e.target.closest("[data-batch]");
+  if (bb) {
+    const op = bb.dataset.batch;
+    if (op === "askunlock" || op === "cancel") { unlocking = op === "askunlock"; batchNotice = ""; redrawList();
+      if (unlocking) document.getElementById("unlockwhy").focus(); return; }
+    const reason = op === "unlock" ? document.getElementById("unlockwhy").value.trim() : undefined;
+    if (op === "unlock" && !reason) { batchNotice = "Say why you are unlocking; it is kept in the batch history."; return redrawList(); }
+    return sendBatch({ op: "batch_status", batch: batchSel, status: op, reason });
+  }
   const o = e.target.closest(".sopt"); if (o) { filter = o.dataset.f; return redrawList(); }
   const b = e.target.closest("[data-fm]"); if (!b) return;
   filter = filter === "fm:" + b.dataset.fm ? "all" : "fm:" + b.dataset.fm;
@@ -107,14 +165,15 @@ document.getElementById("filters").onclick = e => {
   filter = b.dataset.f; redrawList();
 };
 function visible() {
-  return runs.filter(r => filter === "all" ? true : filter.startsWith("fm:") ? eff(r).failure_mode === filter.slice(3)
-    : filter === "success" ? eff(r).termination_reason === "success" : eff(r).termination_reason !== "success");
+  return inBatch().filter(r => filter === "all" ? true : filter.startsWith("fm:") ? eff(r).failure_mode === filter.slice(3)
+    : filter === "success" ? eff(r).termination_reason === "success" : filter === "unknown" ? eff(r).termination_reason === "unknown"
+    : !["success", "unknown"].includes(eff(r).termination_reason));
 }
 function drawRows() {
   document.getElementById("rows").innerHTML = visible().map(r => `
     <tr class="row" tabindex="0" data-id="${esc(r.run_id)}" aria-selected="${current && current.run_id === r.run_id}">
       <td><b>${runNo(r)}</b></td>
-      <td>${eff(r).termination_reason === "success" ? `<span class="pill ok">success</span>` : `<span class="pill bad">failure</span>`}</td>
+      <td>${eff(r).termination_reason === "success" ? `<span class="pill ok">success</span>` : eff(r).termination_reason === "unknown" ? `<span class="pill tag">unknown</span>` : `<span class="pill bad">failure</span>`}</td>
       <td><div class="mini" title="${drv(r).map(s => MODE[s[2]] + " " + s[0] + "–" + s[1]).join(", ")}">
         ${drv(r).map(s => `<div style="width:${100 * (s[1] - s[0]) / r.length}%;background:${color(s[2])}"></div>`).join("")}</div></td>
       <td class="num">${(r.length / r.fps).toFixed(1)}s</td>
@@ -417,7 +476,10 @@ function render(r, t0) {
   if (!canEdit(r)) editing = false;
   document.getElementById("detail").innerHTML = `
     <div class="title"><h2>Run ${runNo(r)}</h2>${outcomePill(r)}
-      <span class="task">${esc(r.task)}</span></div>
+      <span class="task">${esc(r.task)}</span>
+      ${locked(r) ? `<span class="pill tag" title="This run's batch is locked for export; unlock the batch to edit">locked</span>` : ""}
+      ${editable && !r.review.error ? `<button class="btn ${e.reviewed ? "done" : ""} revbtn" id="reviewed" aria-pressed="${!!e.reviewed}" ${locked(r) ? "disabled" : ""}
+        title="${e.reviewed ? "Marked as reviewed. Click to mark it as not reviewed" : "Mark this run as reviewed once its labels look right"}">${e.reviewed ? "✓ Reviewed" : "Mark reviewed"}</button>` : ""}</div>
     ${r.review.error ? `<div class="banner bad">This run's review file could not be read, so editing is off: ${esc(r.review.error)}</div>` : ""}
     <div class="videos">${r.videos.map(v => `<figure><video muted playsinline preload="auto" data-t0="${v.t0}" src="../../${esc(v.src)}"></video>
       <figcaption>${esc(v.key)}</figcaption></figure>`).join("") || `<div class="empty">This episode has no video.</div>`}</div>
@@ -425,7 +487,7 @@ function render(r, t0) {
       <button class="btn" id="play">Play</button>
       <button class="btn" id="speed" title="Playback speed">1×</button>
       <span class="time" id="time"></span>
-      <div class="legend">${["base", "expert", "blend", "none"].filter(m => frac(r, m) > 0)
+      <div class="legend">${["base", "expert", "blend", "none", "unknown"].filter(m => frac(r, m) > 0)
         .map(m => `<span><i style="background:${color(m)}"></i>${MODE[m]} ${Math.round(100 * frac(r, m))}%</span>`).join("")}
         ${(r.review.segments || []).length ? `<span class="seglegend first" title="Each task segment is a different shade of this color"><i class="segsw"></i>Task segment</span>` : ""}
         ${cs.length ? `<span><i class="hatch"></i>cut</span>` : ""}${sug.length ? `<span><i class="sugsw"></i>suggested cut</span>` : ""}</div>
@@ -526,7 +588,7 @@ function aboutCard(r) {
   const result = e.rejected ? "Rejected" : e.termination_reason === "success" ? `Success in ${dur.toFixed(1)} s`
     : [human(e.termination_reason), e.failure_mode && human(e.failure_mode),
        failed && `${esc(failed.name)} failed at ${fmt(failed.end_frame / r.fps)}`].filter(Boolean).join(" · ");
-  const share = ["base", "expert", "blend", "none"].filter(m => frac(r, m) > 0)
+  const share = ["base", "expert", "blend", "none", "unknown"].filter(m => frac(r, m) > 0)
     .map(m => `${MODE[m].toLowerCase()} ${Math.round(100 * frac(r, m))}%`).join(" · ");
   const drove = share + (take ? ` · ${ivs.length} intervention${ivs.length > 1 ? "s" : ""}, first at ${fmt(take.start / r.fps)}${take.sources.length ? " by " + esc(take.sources.join(", ")) : ""}` : "");
   const when = r.started_at ? new Date(r.started_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }) : null;
@@ -603,6 +665,13 @@ async function act(r, what) {
 function wire(r, t0) {
   const vids = [...document.querySelectorAll("#detail video")];
   const dur = r.length / r.fps, head = document.getElementById("head"), tl = document.getElementById("tl");
+  const revBtn = document.getElementById("reviewed");
+  if (revBtn) revBtn.onclick = async () => {
+    const now = !eff(r).reviewed, b = batchOf(r);
+    if (await send(r, { op: "reviewed", reviewed: now, what: now ? "mark reviewed" : "mark not reviewed" }) && b) {
+      b.reviewed += now ? 1 : -1; redrawList();
+    }
+  };
   const playBtn = document.getElementById("play"), speedBtn = document.getElementById("speed");
   let playing = false, rate = 1, last = 0;
   const p = player = { t: t0 || 0 };

@@ -15,6 +15,7 @@ import numpy as np
 import pyarrow.dataset as pads
 import pyarrow.parquet as pq
 
+from . import batches as B
 from . import events as ev
 from . import lists as ls
 from . import review as rv
@@ -118,7 +119,16 @@ def collect(root: Path) -> dict:
     except ls.ListError as e:
         lists = {"version": 1, "rev": -1, "failure_types": [], "task_segments": [], "error": str(e)}
     return {"dataset": root.name, "root": str(root), "runs": runs, "failure_modes": modes, "lists": lists,
-            "editable": False}
+            "editable": False, **_batch_state(root)}
+
+
+def _batch_state(root: Path) -> dict:
+    """Batches newest first with their runs, and the revision the page sends back with batch changes."""
+    try:
+        bs = B.summary(root)
+        return {"batches": bs, "batches_rev": B._read(root)["rev"], "batches_error": None}
+    except (B.BatchError, OSError) as e:
+        return {"batches": [], "batches_rev": -1, "batches_error": str(e)}
 
 
 def build(root: Path, editable: bool = False) -> Path:
@@ -206,6 +216,24 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
                 else:
                     raise rv.ReviewError("unknown lists operation")
                 return self._json(200, {"lists": d})
+            if isinstance(op, str) and op.startswith("batch_"):      # a batch of runs, not one run
+                rev = req.get("rev")
+                if isinstance(rev, bool) or not isinstance(rev, int):
+                    raise rv.ReviewError("rev (the batches revision the page shows) is required")
+                if op == "batch_status":
+                    status = req.get("status")
+                    cur = B.find(B.load(self.dataset_root), req.get("batch"))
+                    if (cur["status"] == "locked") != (status == "unlock"):
+                        raise rv.ReviewError("unlock a locked batch before changing it" if cur["status"] == "locked"
+                                             else "this batch is not locked")
+                    B.set_status(self.dataset_root, req.get("batch"),
+                                 "reviewing" if status == "unlock" else status, by="person",
+                                 reason=req.get("reason"), expect_rev=rev)
+                elif op == "batch_new":
+                    B.new(self.dataset_root, req.get("name"), by="person", expect_rev=rev)
+                else:
+                    raise rv.ReviewError("unknown batch operation")
+                return self._json(200, _batch_state(self.dataset_root))
             run_path, m = _find_run(self.dataset_root, req.get("run_id"))
             rev = req.get("rev")
             if isinstance(rev, bool) or not isinstance(rev, int):
@@ -221,6 +249,8 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
                 summary = self._apply(op, req, run_path, m, rev)
         except rv.ReviewConflict as e:
             return self._json(409, {"error": str(e), "state": _review_state(run_path, m)})
+        except B.BatchError as e:
+            return self._json(409 if "changed" in str(e) else 400, {"error": str(e), **_batch_state(self.dataset_root)})
         except ls.ListError as e:
             code = 409 if "changed" in str(e) else 400
             try:
@@ -257,8 +287,10 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
                        for k in ("created", "already_suggested", "already_cut", "previously_kept")}
         elif op == "replace":
             rv.replace_edit(run_path, m, req.get("edit_id"), req.get("payload"), expect_rev=rev)
+        elif op == "reviewed":
+            rv.set_reviewed(run_path, req.get("reviewed"), by="person", expect_rev=rev)
         else:
-            raise rv.ReviewError("op must be add, note, decide, decide_many, replace, find_idle or undo")
+            raise rv.ReviewError("op must be add, note, decide, decide_many, replace, find_idle, reviewed or undo")
         return summary
 
     def send_head(self):

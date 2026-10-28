@@ -739,8 +739,8 @@ def test_find_idle_and_suggest_cut(tmp_path):
     found = rv.find_idle(ds.root, run.run_path, m)
     sugg = [f["edit"] for f in found]
     assert [(e["payload"]["start"], e["payload"]["end"]) for e in sugg] == [(31, 89)] and found[0]["status"] == "created"
-    assert sugg[0]["reason"] == "arm still for 1.9 s mid-run, policy driving"
-    assert sugg[0]["by"] == "dataop idle finder (measured joints)"
+    assert sugg[0]["reason"] == "no movement for 1.9 s mid-run, policy driving"
+    assert sugg[0]["by"] == "dataop idle finder (measured state)"
     again = rv.find_idle(ds.root, run.run_path, m)
     assert again[0]["edit"]["id"] == sugg[0]["id"] and again[0]["status"] == "already_suggested"
     assert rv.train_mask(m, rv.load(run.run_path), ["base"] * 120).all()             # a suggestion cuts nothing
@@ -1226,3 +1226,145 @@ def test_agent_annotates_through_the_schema(tmp_path):
                                           "vlm-agent: policy fails at 0.8 s"]
     rv.undo(run.run_path, m, undo[-1]["entry"])
     assert runs_json(ds.root)["runs"][0]["failure"]["estimated"]
+
+
+# ── round 16 fixes, batches and import ─────────────────────────────────────────
+
+def test_idle_spans_do_not_depend_on_units():
+    from dataop_logger import review as rv
+    moving = np.linspace(0.0, 1.0, 60, dtype=np.float32)[:, None]          # moves its whole range in 2 s
+    assert rv.idle_spans(moving, 30) == []
+    plateaus = np.asarray([0] * 15 + [10] * 15, np.float32)[:, None]
+    assert rv.idle_spans(plateaus, 10) == rv.idle_spans(plateaus * 0.001, 10) == rv.idle_spans(plateaus * 1000, 10)
+
+
+def test_annotate_writes_nothing_when_one_field_is_bad(tmp_path):
+    from dataop_logger import annotate, lists, review as rv
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        run = record(log, 30)                                    # the policy drove all of it: no takeover to move
+    ds.finalize()
+    lists.add(ds.root, "task_segments", "reach")
+    with pytest.raises(rv.ReviewError):
+        annotate.annotate(ds.root, run.run_id, "agent", segments=[{"name": "reach", "start_s": 0, "end_s": 0.5}],
+                          takeover_at=0.2)
+    assert rv.load(run.run_path)["edits"] == []
+
+
+def test_noop_review_change_keeps_revision(tmp_path):
+    from dataop_logger import review as rv
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        run = record(log, 10)
+    ds.finalize()
+    rv.set_reviewed(run.run_path, True)
+    rev = rv.load(run.run_path)["rev"]
+    rv.set_reviewed(run.run_path, True)
+    assert rv.load(run.run_path)["rev"] == rev
+
+
+def test_lists_cli_describe_and_delete(tmp_path):
+    from dataop_logger import lists
+    from dataop_logger.cli import main
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        record(log, 5)
+    ds.finalize()
+    assert main(["lists", str(ds.root), "add", "failure_types", "slip"]) == 0
+    assert main(["lists", str(ds.root), "describe", "failure_types", "slip", "--description", "object slides out"]) == 0
+    assert lists.load(ds.root)["failure_types"][-1]["description"] == "object slides out"
+    assert main(["lists", str(ds.root), "delete", "failure_types", "slip"]) == 0
+    assert all(e["name"] != "slip" for e in lists.load(ds.root)["failure_types"])
+
+
+def test_batches_runs_join_lock_and_unlock(tmp_path):
+    from dataop_logger import batches as B, review as rv
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, batch="round 1") as log:
+        a = record(log, 6)
+        b = record(log, 6, takeover_at=3, reason="failure")
+    ds.finalize()
+    s = B.summary(ds.root)
+    assert [(x["name"], x["status"], x["n_runs"], x["rescued"]) for x in s] == [("round 1", "collecting", 2, 1)]
+    with pytest.raises(B.BatchError):                       # every run must be reviewed before the lock
+        B.set_status(ds.root, "round 1", "locked")
+    for r in (a, b):
+        rv.set_reviewed(r.run_path, True)
+    B.set_status(ds.root, "round 1", "locked", by="tester")
+    m = store.read_manifest(a.run_path)
+    with pytest.raises(rv.ReviewError, match="locked"):
+        rv.add_edit(a.run_path, m, "note", {"frame": 1, "text": "x"})
+    with pytest.raises(B.BatchError):
+        B.set_status(ds.root, "round 1", "reviewing")       # unlocking needs a reason
+    B.set_status(ds.root, "round 1", "reviewing", reason="fix a label")
+    rv.add_edit(a.run_path, m, "note", {"frame": 1, "text": "x"})
+    with RunLogger(ds, SCHEMA, batch="round 1") as log:     # a closed batch takes no new runs
+        with pytest.raises(Exception, match="reviewing"):
+            record(log, 4)
+
+
+def test_batches_place_existing_runs_by_policy(tmp_path):
+    from dataop_logger import batches as B
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        record(log, 5)
+        record(log, 5)
+    ds.finalize()
+    (ds.root / "dataop" / "batches.json").unlink()          # as if recorded before batches existed
+    s = B.summary(ds.root)
+    assert len(s) == 1 and s[0]["n_runs"] == 2 and s[0]["policy"]["source"] == "train/smolvla_100"
+
+
+def _plain_dataset(tmp_path, episodes):
+    """A LeRobot dataset recorded without dataop, with an intervention flag and LeRobot's next.success."""
+    feats = {**features(), "intervention": {"dtype": "bool", "shape": (1,), "names": None},
+             "next.success": {"dtype": "bool", "shape": (1,), "names": None}}
+    ds = lerobot_dataset.LeRobotDataset.create("test/plain", fps=30, features=feats, root=tmp_path / "plain",
+                                               use_videos=False)
+    for n, take, ok in episodes:
+        for i in range(n):
+            a = np.arange(6, dtype=np.float32) + i
+            ds.add_frame({"observation.state": a, "action": a, "task": TASK,
+                          "intervention": np.array([take is not None and i >= take]),
+                          "next.success": np.array([ok and i == n - 1])})
+        ds.save_episode()
+    ds.finalize()
+    return ds
+
+
+def test_import_plain_and_hil_mapping(tmp_path):
+    from dataop_logger import batches as B, importer
+    ds = _plain_dataset(tmp_path, [(12, None, True), (15, 6, False)])
+    dry = importer.import_dataset(str(ds.root), preset="plain", dry_run=True)
+    assert dry["to_bind"] == 2 and not (ds.root / "dataop" / "runs").exists()
+    mapping = {"control": {"column": "intervention"}, "expert_source": "human", "base_action": "sent_on_policy_frames",
+               "outcome": {"column": "next.success"}}
+    rep = importer.import_dataset(str(ds.root), mapping=mapping, batch="hil")
+    assert [r["outcome"] for r in rep["runs"]] == ["success", "failure"]
+    assert [r["policy_frames"] for r in rep["runs"]] == [12, 6]
+    res = V.validate(ds.root)
+    assert res["ok"], res["errors"]
+    assert [(b["name"], b["n_runs"], b["rescued"]) for b in B.summary(ds.root)] == [("hil", 2, 1)]
+    again = importer.import_dataset(str(ds.root), mapping=mapping)
+    assert again["runs"] == [] and len(again["skipped"]) == 2                     # idempotent
+
+
+def test_import_unknown_fields_stay_unknown(tmp_path):
+    import pyarrow.parquet as pq
+    from dataop_logger import importer
+    ds = _plain_dataset(tmp_path, [(10, None, True)])
+    rep = importer.import_dataset(str(ds.root))
+    assert rep["runs"][0]["outcome"] == "unknown"
+    run = store.runs_dir(ds.root) / rep["runs"][0]["run_id"]
+    t = pq.read_table(run / "ticks.parquet")
+    assert set(t.column("control_mode").to_pylist()) == {"unknown"} and not any(t.column("base_valid").to_pylist())
+    assert V.validate(ds.root)["ok"]
+
+
+def test_import_refuses_lerobot_v21(tmp_path):
+    import json
+    from dataop_logger import importer
+    (tmp_path / "old" / "meta").mkdir(parents=True)
+    (tmp_path / "old" / "meta" / "info.json").write_text(json.dumps({"codebase_version": "v2.1"}))
+    with pytest.raises(importer.ImportError_, match="convert_dataset_v21_to_v30"):
+        importer.import_dataset(str(tmp_path / "old"))

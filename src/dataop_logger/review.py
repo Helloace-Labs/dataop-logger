@@ -37,7 +37,7 @@ import numpy as np
 import pyarrow.parquet as pq
 
 from . import store
-from .schema import TERMINATION_REASONS
+from .schema import LIVE_TERMINATION_REASONS as TERMINATION_REASONS
 
 KINDS = ("outcome", "failure_start", "exclude", "step_boundary", "segment_edge", "drive_boundary", "segment_plan",
          "reject_run", "note", "label", "event_note")
@@ -111,7 +111,13 @@ def transaction(run_path: Path, expect_rev: int | None = None):
     with open(Path(run_path) / "review.lock", "a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
+            from . import batches
+            try:
+                batches.check_editable(Path(run_path).parent.parent.parent, Path(run_path).name)
+            except batches.BatchError as e:
+                raise ReviewError(str(e)) from None
             review = load(run_path)
+            snapshot = copy.deepcopy(review)
             if expect_rev is not None and review["rev"] != expect_rev:
                 raise ReviewConflict(f"the review changed (now at rev {review['rev']}, you had {expect_rev})")
             box = _RECORDING.get()
@@ -135,10 +141,21 @@ def transaction(run_path: Path, expect_rev: int | None = None):
                     while hist and len(json.dumps(hist)) > HISTORY_BYTES:
                         del hist[0]
                     box["entry"] = entry["id"] if hist and hist[-1] is entry else None
-            review["rev"] += 1
-            store.atomic_write_json(_path(run_path), review)
+            if review != snapshot:                      # a no-op keeps its revision, so it never causes a conflict
+                review["rev"] += 1
+                store.atomic_write_json(_path(run_path), review)
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def set_reviewed(run_path: Path, reviewed: bool, by: str = "person", expect_rev: int | None = None) -> None:
+    """Mark the run as reviewed (a person or agent has checked it), or not. Batches count reviewed runs."""
+    if not isinstance(reviewed, bool):
+        raise ReviewError("reviewed must be true or false")
+    with transaction(run_path, expect_rev) as review:
+        review["reviewed"] = reviewed
+        review["reviewed_at"] = _now() if reviewed else None
+        review["reviewed_by"] = (by or "person")[:80] if reviewed else None
 
 
 def undoable(review: dict) -> list[dict]:
@@ -653,14 +670,22 @@ def _episode_state(root: Path, episode_index: int, n: int) -> np.ndarray | None:
     return np.asarray(t.column("observation.state").to_pylist(), dtype=np.float32).reshape(n, -1)
 
 
-def idle_spans(motion: np.ndarray, rate: float, min_s: float = 1.0, still: float = 1.5) -> list[tuple[int, int]]:
-    """Stretches covered by consecutive one-second windows in which no joint moves more than `still`
-    (max - min). Returns [start, end) spans of at least min_s; spans on either side of a movement never merge."""
+def idle_spans(motion: np.ndarray, rate: float, min_s: float = 1.0, still: float = 0.02) -> list[tuple[int, int]]:
+    """Stretches covered by consecutive one-second windows in which no dimension moves more than `still` of its own
+    range in this run (robust range: 2nd to 98th percentile), so units and scales do not matter. Dimensions that
+    never move are ignored. Returns [start, end) spans of at least min_s; spans on either side of a movement never
+    merge."""
     n = len(motion)
     w = max(2, int(round(rate)))
     if n < w:
         return []
-    quiet = [float((motion[i:i + w].max(axis=0) - motion[i:i + w].min(axis=0)).max()) < still
+    motion = np.asarray(motion, dtype=np.float64).reshape(n, -1)
+    scale = np.percentile(motion, 98, axis=0) - np.percentile(motion, 2, axis=0)
+    live = scale > 1e-9
+    if not live.any():
+        return [(0, n)] if n >= max(1, int(round(min_s * rate))) else []
+    rel = motion[:, live] / scale[live]
+    quiet = [float((rel[i:i + w].max(axis=0) - rel[i:i + w].min(axis=0)).max()) < still
              for i in range(n - w + 1)]
     # Each run of consecutive quiet windows is one stretch: windows that share frames belong together, and a
     # movement between two still plateaus breaks the run, so the two plateaus stay separate stretches.
@@ -684,13 +709,14 @@ def idle_spans(motion: np.ndarray, rate: float, min_s: float = 1.0, still: float
 
 
 def find_idle(root: Path, run_path: Path, manifest: dict, by: str = "dataop idle finder",
-              min_s: float = 1.0, still: float = 1.5, expect_rev: int | None = None) -> list[dict]:
+              min_s: float = 1.0, still: float = 0.02, expect_rev: int | None = None) -> list[dict]:
     """Suggest cutting idle stretches of one run (our built-in model for the "find idle frames" AI feature).
-    Uses measured joint positions when the dataset has them, otherwise the sent commands. Suggestions are agent
+    Uses the measured state when the dataset has one, otherwise the sent commands, each scaled by its own range in
+    the run, so it works for any units or action space. Suggestions are agent
     proposals of kind "exclude" with a short description; a person cuts or keeps each one."""
     n, rate = manifest["length"], manifest["action_schema"]["rate_hz"]
     motion = _episode_state(root, manifest["episode_index"], n)
-    source = "measured joints"
+    source = "measured state"
     if motion is None:
         t = pq.read_table(run_path / "ticks.parquet", columns=["sent_action"])
         motion = np.asarray(t.column("sent_action").to_pylist(), dtype=np.float32).reshape(n, -1)
@@ -702,8 +728,9 @@ def find_idle(root: Path, run_path: Path, manifest: dict, by: str = "dataop idle
         where = "at the start" if a == 0 else "at the end" if b == n else "mid-run"
         span = modes[a:b]
         who = max(set(span), key=span.count)
-        who = {"base": "policy driving", "expert": "rescue driving", "blend": "shared control", "none": "nobody driving"}[who]
-        items.append({"start": a, "end": b, "reason": f"arm still for {(b - a) / rate:.1f} s {where}, {who}"})
+        who = {"base": "policy driving", "expert": "rescue driving", "blend": "shared control", "none": "nobody driving",
+               "unknown": "driver not recorded"}.get(who, f"{who} driving")
+        items.append({"start": a, "end": b, "reason": f"no movement for {(b - a) / rate:.1f} s {where}, {who}"})
     return add_suggestions(run_path, manifest, items, by, expect_rev=expect_rev)
 
 

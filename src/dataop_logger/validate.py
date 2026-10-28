@@ -16,7 +16,7 @@ import pyarrow.parquet as pq
 
 from . import adapter, store
 from .fingerprint import fingerprint
-from .schema import CONTROL_MODES, TERMINAL_FLAG, TERMINATION_REASONS, ActionSchema
+from .schema import CONTROL_MODES, OBS_TIMESTAMP_KINDS, TERMINAL_FLAG, TERMINATION_REASONS, ActionSchema
 
 TICK_COLUMNS = ("frame_index", "control_mode", "expert_source", "blend_weight", "base_action", "base_valid",
                 "expert_action", "expert_valid", "sent_action", "safety_modified", "inference_id", "chunk_offset",
@@ -94,6 +94,8 @@ def _check_run(run_path: Path, m: dict, episodes: dict, errors: list) -> bool:
         return False
     if schema.id != m["action_schema"].get("id"):
         err("action schema id does not match its content")
+    if (m.get("clock") or {}).get("obs_timestamp_kind") not in OBS_TIMESTAMP_KINDS:
+        err("clock.obs_timestamp_kind is missing or unknown")
     if m["termination_reason"] not in TERMINATION_REASONS:
         err(f"unknown termination_reason {m['termination_reason']!r}")
     try:
@@ -139,11 +141,12 @@ def _check_run(run_path: Path, m: dict, episodes: dict, errors: list) -> bool:
             err(f"tick {i}: blend without both base_action and expert_action")
         if ev[i] and not src:
             err(f"tick {i}: expert_action without expert_source")
-        want_w = {"expert": 1.0, "base": 0.0, "none": 0.0}.get(mode)
+        want_w = {"expert": 1.0, "base": 0.0, "none": 0.0, "unknown": 0.0}.get(mode)
         if (want_w is not None and w != want_w) or not 0.0 <= w <= 1.0:
             err(f"tick {i}: blend_weight {w} invalid for {mode}")
         iid, off = col["inference_id"][i], col["chunk_offset"][i]
-        if (iid == -1) != (not bv[i]) or (iid != -1 and (iid < 0 or off < 0)) or (iid == -1 and off != -1):
+        # a known base action may lack its inference record (imported data); an inference record needs one
+        if (iid != -1 and (not bv[i] or iid < 0 or off < 0)) or (iid == -1 and off != -1):
             err(f"tick {i}: inference_id/chunk_offset inconsistent with base_valid")
         if not np.isfinite(col["reward"][i]):
             err(f"tick {i}: reward is not finite")
@@ -414,6 +417,14 @@ def remap(old_root: Path, new_root: Path, action_key: str = "action", repo_id: s
         taken.add(matches[0])
         report.append(f"{m['run_id']}: episode {m['episode_index']} -> {matches[0]}")
     store.rebuild_index(Path(new_root))
+    for name in ("lists.json", "batches.json"):       # the dataset's agreed lists and its batches move with the runs
+        src, dst = store.dataop_dir(Path(old_root)) / name, store.dataop_dir(Path(new_root)) / name
+        if src.exists():
+            if dst.exists() and dst.read_bytes() != src.read_bytes():
+                report.append(f"kept the destination's {name}; it differs from the source's (merge by hand)")
+            else:
+                store.atomic_write_bytes(dst, src.read_bytes())
+                report.append(f"copied {name}")
     return report
 
 

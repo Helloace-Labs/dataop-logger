@@ -1,4 +1,5 @@
-"""dataop-logger validate | repair | inspect | remap | view | labels | interpret | events | note | find-idle | suggest-cut"""
+"""dataop-logger validate | repair | inspect | remap | view | labels | interpret | events | note | find-idle | suggest-cut |
+batches"""
 from __future__ import annotations
 
 import argparse
@@ -9,11 +10,12 @@ from . import validate as V
 
 
 def main(argv=None) -> int:
+    from .batches import BatchError
     from .lists import ListError
     from .review import ReviewError
     try:
         return _main(argv)
-    except (ReviewError, ListError) as e:
+    except (ReviewError, ListError, BatchError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
@@ -62,9 +64,9 @@ def _main(argv=None) -> int:
     an.add_argument("--failure-type", default=None, help="a name from the dataset's failure types")
     an.add_argument("--takeover-at", type=float, default=None, help="seconds where control really switched from the policy")
     an.add_argument("--by", required=True, help="name of the agent")
-    lp = sub.add_parser("lists", help="the dataset's agreed failure types and task segments; add or rename entries")
+    lp = sub.add_parser("lists", help="the dataset's agreed failure types and task segments; add, rename, describe, delete")
     lp.add_argument("root")
-    lp.add_argument("action", nargs="?", choices=["show", "add", "rename"], default="show")
+    lp.add_argument("action", nargs="?", choices=["show", "add", "rename", "describe", "delete"], default="show")
     lp.add_argument("kind", nargs="?", choices=["failure_types", "task_segments"])
     lp.add_argument("name", nargs="?")
     lp.add_argument("new_name", nargs="?", help="for rename")
@@ -88,7 +90,87 @@ def _main(argv=None) -> int:
     sc.add_argument("end", type=int)
     sc.add_argument("--reason", required=True, help="short description shown to the person")
     sc.add_argument("--by", default="agent", help="name of the agent making the suggestion")
+    bp = sub.add_parser("batches", help="batches of runs (one per policy version or DAgger round): list, open, close, lock")
+    bp.add_argument("root")
+    bs = bp.add_subparsers(dest="op", required=True)
+    bs.add_parser("list", help="every batch with its counts (JSON)")
+    b1 = bs.add_parser("show", help="one batch with its runs, exports and history (JSON)")
+    b1.add_argument("batch", help="batch id or name")
+    b1 = bs.add_parser("new", help="open a new batch; new runs join it and the batch collecting until now is closed")
+    b1.add_argument("name")
+    b1.add_argument("--purpose", default="")
+    for op, hlp in (("close", "stop adding new runs; review continues"), ("reopen", "add new runs again"),
+                    ("lock", "freeze the review so a training set can be exported"),
+                    ("unlock", "allow review edits again; earlier exports are marked stale")):
+        b1 = bs.add_parser(op, help=hlp)
+        b1.add_argument("batch")
+        if op == "unlock":
+            b1.add_argument("--reason", required=True)
+        if op == "lock":
+            b1.add_argument("--force", action="store_true", help="lock even with unreviewed runs or open suggestions")
+    b1 = bs.add_parser("move", help="move runs into another batch")
+    b1.add_argument("batch")
+    b1.add_argument("run_ids", nargs="+")
+    b1 = bs.add_parser("edit", help="rename, describe, or record the model trained from this batch (lineage)")
+    b1.add_argument("batch")
+    b1.add_argument("--name")
+    b1.add_argument("--purpose")
+    b1.add_argument("--model", help="source or source@revision of the model trained from this batch's export")
+    for x in bs.choices.values():
+        x.add_argument("--by", default="human", help="who is making the change (a person's or an agent's name)")
+    ip = sub.add_parser("import", help="bind runs to an existing LeRobot v3.0 dataset (local folder or Hub repo id)")
+    ip.add_argument("source", help="dataset folder, or a Hugging Face Hub repo id (needs --into)")
+    ip.add_argument("--into", help="copy the dataset here first and import into the copy")
+    ip.add_argument("--preset", default="plain", help="field mapping preset: plain, lerobot-hil or watcher")
+    ip.add_argument("--map", help="JSON file with a field mapping (overrides the preset's entries)")
+    ip.add_argument("--batch", help="batch the imported runs join (default: 'import <folder name>')")
+    ip.add_argument("--episodes", help="only these episodes, e.g. 0-9,12")
+    ip.add_argument("--dry-run", action="store_true", help="show what would be imported; write nothing")
+    ip.add_argument("--by", default="import")
     a = p.parse_args(argv)
+
+    if a.cmd == "import":
+        import json
+        from . import importer
+        eps = None
+        if a.episodes:
+            eps = []
+            for part in a.episodes.split(","):
+                lo, _, hi = part.partition("-")
+                eps += list(range(int(lo), int(hi or lo) + 1))
+        try:
+            rep = importer.import_dataset(a.source, into=a.into, preset=a.preset,
+                                          mapping=json.loads(Path(a.map).read_text()) if a.map else None,
+                                          batch=a.batch, episodes=eps, dry_run=a.dry_run, by=a.by)
+        except importer.ImportError_ as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        print(V.to_json(rep))
+        return 0
+    if a.cmd == "batches":
+        from . import batches as B
+        root = Path(a.root)
+        if a.op in ("list", "show"):
+            s = B.summary(root)
+            print(V.to_json(s if a.op == "list" else next(x for x in s if x["batch_id"] == B.find(B.load(root), a.batch)["batch_id"])))
+            return 0
+        if a.op == "new":
+            b = B.new(root, a.name, a.purpose, by=a.by)
+        elif a.op in ("close", "reopen", "lock", "unlock"):
+            status = {"close": "reviewing", "reopen": "collecting", "lock": "locked", "unlock": "reviewing"}[a.op]
+            cur = B.find(B.load(root), a.batch)
+            if a.op == "unlock" and cur["status"] != "locked":
+                raise B.BatchError(f"batch {cur['name']!r} is not locked")
+            if a.op != "unlock" and cur["status"] == "locked":
+                raise B.BatchError(f"batch {cur['name']!r} is locked; unlock it first")
+            b = B.set_status(root, a.batch, status, by=a.by, reason=getattr(a, "reason", None),
+                             force=getattr(a, "force", False))
+        elif a.op == "move":
+            b = B.move(root, a.run_ids, a.batch, by=a.by)
+        else:
+            b = B.edit(root, a.batch, by=a.by, name=a.name, purpose=a.purpose, model=a.model)
+        print(f"{b['name']} ({b['batch_id']}): {b['status']}")
+        return 0
 
     if a.cmd == "validate":
         if a.repair:
@@ -150,9 +232,15 @@ def _main(argv=None) -> int:
         elif a.action == "add":
             lists.add(a.root, a.kind, a.name, a.description)
             print(f"added {a.name} to {a.kind}")
-        else:
+        elif a.action == "rename":
             lists.rename(a.root, a.kind, a.name, a.new_name)
             print(f"renamed {a.name} to {a.new_name} in {a.kind}")
+        elif a.action == "describe":
+            lists.describe(a.root, a.kind, a.name, a.description)
+            print(f"described {a.name} in {a.kind}")
+        else:
+            lists.delete(a.root, a.kind, a.name)
+            print(f"deleted {a.name} from {a.kind}")
         return 0
     if a.cmd in ("events", "note"):
         import pyarrow.parquet as pq

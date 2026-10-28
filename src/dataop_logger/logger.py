@@ -8,15 +8,16 @@ import datetime as _dt
 import shutil
 import time
 import uuid
+import warnings
 from contextlib import contextmanager
 from dataclasses import asdict
 
 import numpy as np
 import pyarrow as pa
 
-from . import adapter, store
+from . import adapter, batches, store
 from .fingerprint import fingerprint
-from .schema import (CONTROL_MODES, SCHEMA_VERSION, SUBGOAL_STATUSES, TERMINAL_FLAG, TERMINATION_REASONS,
+from .schema import (LIVE_CONTROL_MODES as CONTROL_MODES, SCHEMA_VERSION, SUBGOAL_STATUSES, TERMINAL_FLAG, LIVE_TERMINATION_REASONS as TERMINATION_REASONS,
                      ActionSchema, EnvInfo, PolicyInfo)
 
 try:                                                     # recorded in manifests
@@ -49,7 +50,9 @@ class RunLogger:
     """One per dataset root. Holds the single-writer lock until close()."""
 
     def __init__(self, dataset, action_schema: ActionSchema, obs_timestamp_kind: str = "bundle_completion",
-                 action_key: str = "action"):
+                 action_key: str = "action", batch: str | None = None):
+        """batch: the batch new runs join (opened if it does not exist). Without it, runs join the batch that is
+        collecting, or a new batch named after the policy."""
         if obs_timestamp_kind not in ("capture", "bundle_completion"):
             raise ValueError("obs_timestamp_kind must be 'capture' or 'bundle_completion'")
         self.dataset = dataset
@@ -57,6 +60,7 @@ class RunLogger:
         self.root = dataset.root
         self.action_key = action_key
         self.obs_timestamp_kind = obs_timestamp_kind
+        self.batch = batch
         self.broken: str | None = None                   # set after a mid-save failure; no more runs
         self._lock = store.WriterLock(self.root)
         self._active: Run | None = None
@@ -83,6 +87,10 @@ class RunLogger:
             raise RunError("a run is already in progress on this dataset")
         if not isinstance(task, str) or not task:
             raise ValueError("task must be a non-empty string")
+        try:
+            batches.target_for(self.root, self.batch)        # refuse before recording into a closed batch
+        except batches.BatchError as e:
+            raise RunError(str(e)) from None
         if adapter.has_pending_frames(self.dataset):
             raise RunError("the dataset has unsaved frames; save or clear the episode buffer before starting a run")
         r = Run(self, task, policy, env, log_predictions)
@@ -405,6 +413,7 @@ class Run:
             "dataset": adapter.dataset_identity(self.dataset),
             "predictions_count": None if self._predictions is None else len(self._predictions),
             "integrity": self._integrity,
+            "batch": {"name": self.logger.batch} if self.logger.batch else None,
             **extra,
         }
 
@@ -460,6 +469,11 @@ class Run:
         store.atomic_write_json(self.run_path / "manifest.json", self._manifest("committed"))
         self.state = "committed"
         store.rebuild_index(self.logger.root)
+        try:
+            batches.join(self.logger.root, self.run_id, self.logger.batch,
+                         asdict(self.policy) if self.policy else None)
+        except Exception as e:                           # the run is saved; batches place it on the next read
+            warnings.warn(f"run {self.run_id} was saved but not added to a batch yet ({e})")
 
 
 def derive_takeovers(rows) -> list[dict]:

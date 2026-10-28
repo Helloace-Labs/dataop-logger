@@ -9,8 +9,12 @@ import numpy as np
 
 SCHEMA_VERSION = 1
 KNOWN_SPACES = {"joint_position", "joint_velocity", "ee_delta", "ee_pose"}
-CONTROL_MODES = ("base", "expert", "blend", "none")
-TERMINATION_REASONS = ("success", "failure", "timeout", "operator_abort", "system_error")
+LIVE_CONTROL_MODES = ("base", "expert", "blend", "none")          # what the logger records
+LIVE_TERMINATION_REASONS = ("success", "failure", "timeout", "operator_abort", "system_error")
+# Imported data may not say who drove or how a run ended; it is stored as "unknown", never guessed.
+CONTROL_MODES = LIVE_CONTROL_MODES + ("unknown",)
+TERMINATION_REASONS = LIVE_TERMINATION_REASONS + ("unknown",)
+OBS_TIMESTAMP_KINDS = ("capture", "bundle_completion", "from_dataset_timestamp")
 SUBGOAL_STATUSES = ("started", "completed", "failed")
 TERMINAL_FLAG = {"success": "terminated", "failure": "terminated",          # final-tick flag each reason implies
                  "timeout": "truncated", "operator_abort": "truncated", "system_error": "truncated"}

@@ -80,31 +80,34 @@ def annotate(root: Path, run_id: str, by: str, segments: list | None = None, fai
     rate, n = m["action_schema"]["rate_hz"], m["length"]
     lists = ls.load(root)
     frame = lambda x: max(0, min(n, int(round(float(x) * rate))))
-    done = []
+    # Work out and check every requested change first, so a bad field writes nothing at all.
+    todo = []
     if segments is not None:
         plan = [{"name": _known(lists, "task_segments", x["name"]), "start": frame(x["start_s"]),
                  "end": frame(x["end_s"])} for x in segments]
-        with rv.recording(f"{by}: task segments"):
-            rv.apply_agent_edit(run_path, m, "segment_plan", {"segments": plan}, by)
-        done.append(f"segments: {', '.join(p['name'] for p in plan)}")
+        todo.append(("segment_plan", {"segments": plan}, f"{by}: task segments",
+                     f"segments: {', '.join(p['name'] for p in plan)}"))
     if takeover_at is not None:
         _, _, _, drive = _state(run_path, m)
         i = next((k for k in range(len(drive) - 1) if drive[k]["mode"] == "base" and drive[k + 1]["mode"] != "base"),
                  None)
         if i is None:
             raise rv.ReviewError("this run has no switch from policy to another drive mode")
-        with rv.recording(f"{by}: takeover at {takeover_at:.1f} s"):
-            rv.apply_agent_edit(run_path, m, "drive_boundary", {"index": i, "frame": frame(takeover_at)}, by)
-        done.append(f"takeover at {takeover_at:.2f} s")
+        todo.append(("drive_boundary", {"index": i, "frame": frame(takeover_at)}, f"{by}: takeover at {takeover_at:.1f} s",
+                     f"takeover at {takeover_at:.2f} s"))
     if failure_type is not None:
         name = _known(lists, "failure_types", failure_type)
         tr = rv.effective(m, rv.load(run_path))["termination_reason"]
-        with rv.recording(f"{by}: failure type {name}"):
-            rv.apply_agent_edit(run_path, m, "outcome",
-                                {"termination_reason": "failure" if tr == "success" else tr, "failure_mode": name}, by)
-        done.append(f"failure type: {name}")
+        todo.append(("outcome", {"termination_reason": "failure" if tr in ("success", "unknown") else tr,
+                                 "failure_mode": name}, f"{by}: failure type {name}", f"failure type: {name}"))
     if failure_at is not None:
-        with rv.recording(f"{by}: policy fails at {failure_at:.1f} s"):
-            rv.apply_agent_edit(run_path, m, "failure_start", {"frame": min(frame(failure_at), n - 1)}, by)
-        done.append(f"policy fails at {failure_at:.2f} s")
+        todo.append(("failure_start", {"frame": min(frame(failure_at), n - 1)}, f"{by}: policy fails at {failure_at:.1f} s",
+                     f"policy fails at {failure_at:.2f} s"))
+    for kind, payload, _, _ in todo:
+        rv.check_payload(kind, payload, m)
+    done = []
+    for kind, payload, what, said in todo:
+        with rv.recording(what):
+            rv.apply_agent_edit(run_path, m, kind, payload, by)
+        done.append(said)
     return done
