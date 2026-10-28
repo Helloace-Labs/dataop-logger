@@ -168,7 +168,7 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
             rev = req.get("rev")
             if isinstance(rev, bool) or not isinstance(rev, int):
                 raise rv.ReviewError("rev (the review revision the page shows) is required")
-            op = req.get("op")
+            op, summary = req.get("op"), None
             if op == "add":
                 if req.get("kind") not in ("label", "exclude"):
                     raise rv.ReviewError("the viewer adds labels and cuts only")
@@ -177,10 +177,9 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
             elif op == "decide":
                 rv.decide(run_path, m, req.get("edit_id"), req.get("accept"), req.get("payload"), expect_rev=rev)
             elif op == "find_idle":                      # AI feature with the built-in model
-                cur = rv.load(run_path)["rev"]
-                if cur != rev:
-                    raise rv.ReviewConflict(f"the review changed (now at rev {cur}, you had {rev})")
-                rv.find_idle(self.dataset_root, run_path, m)
+                found = rv.find_idle(self.dataset_root, run_path, m, expect_rev=rev)
+                summary = {k: sum(f["status"] == k for f in found)
+                           for k in ("created", "already_suggested", "already_cut", "previously_kept")}
             elif op == "replace":
                 rv.replace_edit(run_path, m, req.get("edit_id"), req.get("payload"), expect_rev=rev)
             else:
@@ -189,7 +188,10 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
             return self._json(409, {"error": str(e), "state": _review_state(run_path, m)})
         except (rv.ReviewError, ValueError, KeyError, TypeError) as e:
             return self._json(400, {"error": str(e)})
-        return self._json(200, _review_state(run_path, m))
+        state = _review_state(run_path, m)
+        if op == "find_idle":
+            state["found"] = summary
+        return self._json(200, state)
 
     def send_head(self):
         rng = self.headers.get("Range")

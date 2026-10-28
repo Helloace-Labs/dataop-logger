@@ -111,12 +111,12 @@ def _main(argv=None) -> int:
                 continue
             found = True
             if a.cmd == "find-idle":
-                for e in review.find_idle(a.root, run_path, m):
-                    p = e["payload"]
-                    print(f"{m['run_id']}: suggest cut {p['start']}-{p['end']} ({e['reason']})")
+                for f in review.find_idle(a.root, run_path, m):
+                    p = f["edit"]["payload"]
+                    print(f"{m['run_id']}: {f['status'].replace('_', ' ')}: {p['start']}-{p['end']} ({f['edit']['reason']})")
             else:
-                e = review.suggest_cut(run_path, m, a.start, a.end, a.reason, by=a.by)
-                print(f"{m['run_id']}: suggested cut {a.start}-{a.end} ({e['id']})")
+                f = review.suggest_cut(run_path, m, a.start, a.end, a.reason, by=a.by)
+                print(f"{m['run_id']}: {f['status'].replace('_', ' ')}: {a.start}-{a.end} ({f['edit']['id']})")
         if not found:
             print("no matching committed run", file=sys.stderr)
             return 1

@@ -30,6 +30,12 @@ function activeEdits(r) {
   return acc.filter(e => multi(e.kind) || latest[slot(e)] === e);
 }
 const cuts = r => activeEdits(r).filter(e => e.kind === "exclude").map(e => ({ id: e.id, ...e.payload, by: e.by, reason: e.reason }));
+function cutFrames(r) {        // union of cut spans: overlaps count once
+  const m = new Uint8Array(r.length);
+  cuts(r).forEach(c => m.fill(1, c.start, c.end));
+  return m.reduce((a, v) => a + v, 0);
+}
+const otherProposals = r => r.review.edits.filter(e => e.status === "proposed" && e.kind !== "exclude");
 const suggestions = r => r.review.edits.filter(e => e.status === "proposed" && e.kind === "exclude");
 const corrections = r => activeEdits(r).filter(e => KIND[e.kind]);
 function segmentNames(r) {      // this run's steps first, then segments people used on the same task
@@ -51,7 +57,7 @@ function drawStats() {
   const n = runs.length, ok = runs.filter(r => eff(r).termination_reason === "success").length;
   const take = runs.reduce((a, r) => a + r.takeovers.length, 0);
   const labels = runs.reduce((a, r) => a + eff(r).labels.length, 0);
-  const cutS = runs.reduce((a, r) => a + cuts(r).reduce((b, c) => b + c.end - c.start, 0) / r.fps, 0);
+  const cutS = runs.reduce((a, r) => a + cutFrames(r) / r.fps, 0);
   const min = m => runs.reduce((a, r) => a + r.segments.filter(s => s[2] === m).reduce((b, s) => b + s[1] - s[0], 0) / r.fps, 0) / 60;
   document.getElementById("stats").innerHTML = [
     [n, "runs"], [n ? Math.round(100 * ok / n) + "%" : "–", "policy success"], [take, "takeovers"],
@@ -121,8 +127,9 @@ function step(dir) {
 }
 
 // ── saving ────────────────────────────────────────────────────────────────────
+let noticeOk = false;           // notice is information, not an error
 async function send(r, body) {
-  notice = "";
+  notice = ""; noticeOk = false;
   try {
     const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1" },
                                    body: JSON.stringify({ run_id: r.run_id, rev: r.review.rev, ...body }) });
@@ -135,6 +142,15 @@ async function send(r, body) {
     }
     if (!res.ok) throw new Error(out.error || res.statusText);
     r.review = out;
+    if (out.found) {
+      const f = out.found, n = f.created + f.already_suggested + f.already_cut + f.previously_kept;
+      notice = n === 0 ? "No idle stretches found in this run."
+        : `Found ${n} idle stretch${n === 1 ? "" : "es"}: ${f.created} new` +
+          (f.already_suggested ? `, ${f.already_suggested} already suggested` : "") +
+          (f.already_cut ? `, ${f.already_cut} already cut` : "") +
+          (f.previously_kept ? `, ${f.previously_kept} you chose to keep before` : "") + ".";
+      noticeOk = true;
+    }
     return true;
   } catch (err) {
     notice = `Not saved: ${err.message}`;
@@ -155,7 +171,7 @@ async function saveLabel(r) {
     if (keep.id && !eff(r).labels.some(l => l.id === keep.id)) keep.id = null;   // deleted elsewhere: keep as a new label
     sel = keep; render(r, player.t);
   }
-  if (ok) delete drafts[r.run_id];
+  if (ok) discard(r);
 }
 const decide = (r, id, accept) => send(r, { op: "decide", edit_id: id, accept });
 
@@ -169,7 +185,7 @@ function selPanel(r) {
     return `<div class="card lbpanel">${span}
       <div class="task">These frames are cut: they stay in the recording but are left out of training.${c && c.reason ? ` <span class="sub">${esc(c.reason)}</span>` : ""}</div>
       <div class="lbfoot"><button class="btn" data-act="uncut">Undo cut</button><button class="btn" data-act="cancel">Close</button>
-      <span class="lbstatus ${notice ? "bad" : ""}">${esc(notice)}</span></div></div>`;
+      <span class="lbstatus ${notice && !noticeOk ? "bad" : ""}">${esc(notice)}</span></div></div>`;
   }
   const names = segmentNames(r);
   const lb = sel.id ? eff(r).labels.find(l => l.id === sel.id) : null;
@@ -191,7 +207,7 @@ function selPanel(r) {
       <button class="btn primary" data-act="save" title="Cmd/Ctrl + Enter">${sel.id ? "Save changes" : "Save label"}</button>
       <button class="btn" data-act="cancel">Cancel</button>
       ${sel.id ? `<button class="btn bad" data-act="delete">Delete label</button>` : ""}
-      <span class="lbstatus ${notice ? "bad" : ""}">${esc(notice)}</span>
+      <span class="lbstatus ${notice && !noticeOk ? "bad" : ""}">${esc(notice)}</span>
     </div>
   </div>`;
 }
@@ -201,19 +217,21 @@ function aiBar(r) {
   const sg = suggestions(r);
   return `<div class="aibar">
     <button class="btn ai" data-act="idle" title="Runs the built-in idle finder on this run. Your own agent can add suggestions with dataop-logger suggest-cut.">✦ Find idle frames</button>
-    ${sg.length ? `<button class="btn" data-act="cutall">Cut all ${sg.length} suggested</button><button class="btn" data-act="keepall">Keep all</button>` : ""}
-    ${!sel && notice ? `<span class="lbstatus bad">${esc(notice)}</span>` : ""}
+    ${sg.length ? `<button class="btn" data-act="cutall">Cut all ${sg.length} suggested</button><button class="btn" data-act="keepall" title="Keep all suggested frames. These spans won't be suggested again.">Keep all</button>` : ""}
+    ${!sel && notice ? `<span class="lbstatus ${noticeOk ? "" : "bad"}">${esc(notice)}</span>` : ""}
   </div>
   ${sg.length ? `<div class="card sugg"><h3>Suggested cuts</h3>${sg.map(x => `<div class="srow">
       <span class="time">${fmt(x.payload.start / r.fps)}–${fmt(x.payload.end / r.fps)}</span>
       <span class="sdesc">${esc(x.reason || "")}<span class="sub">by ${esc(x.by || "agent")}</span></span>
       <span class="sbtns"><button class="btn sm" data-show="${x.payload.start}">Show</button>
-      <button class="btn sm" data-cut="${esc(x.id)}">Cut</button><button class="btn sm" data-keep="${esc(x.id)}">Keep</button></span></div>`).join("")}</div>` : ""}`;
+      <button class="btn sm" data-cut="${esc(x.id)}">Cut</button><button class="btn sm" data-keep="${esc(x.id)}" title="Keep these frames for training. This span won't be suggested again.">Keep</button></span></div>`).join("")}</div>` : ""}`;
 }
 
 // ── one run ───────────────────────────────────────────────────────────────────
+const discard = r => { sel = null; delete drafts[r.run_id]; };
 function select(id) {
-  if (current && sel && !sel.id && !sel.cutId && (sel.text || "").trim()) drafts[current.run_id] = sel;
+  if (current && sel && sel.dirty) drafts[current.run_id] = sel;
+  else if (current) delete drafts[current.run_id];
   const r = runs.find(x => x.run_id === id);
   sel = drafts[id] || null; editing = !!sel; notice = "";
   render(r, sel ? sel.start / r.fps : 0);
@@ -262,11 +280,14 @@ function render(r, t0) {
       ${e.labels.length ? `<div class="card labels"><h3>Labels</h3>${e.labels.map(l => `<div class="ev" tabindex="0" data-frame="${l.start}" data-open="${esc(l.id)}">
         <span class="time">${fmt(l.start / r.fps)}</span><span>${l.segment ? `<span class="pill tag">${esc(l.segment)}</span> ` : ""}${l.driver ? `<span class="pill tag">${esc(l.driver)}</span> ` : ""}${esc(l.text)}
         ${l.interpretation ? `<span class="sub">agent: ${l.interpretation.train === "exclude" ? "leave out" : "keep"} · ${esc(l.interpretation.meaning)}</span>` : `<span class="sub">not read by an agent yet</span>`}</span></div>`).join("")}</div>` : ""}
-      ${cs.length || corrections(r).length ? `<div class="card"><h3>Left out of training</h3>
-        ${cs.map(c => `<div class="srow"><span class="time">${fmt(c.start / r.fps)}–${fmt(c.end / r.fps)}</span><span class="sdesc">cut${c.reason ? ` · ${esc(c.reason)}` : ""}</span>
-          ${canEdit(r) ? `<span class="sbtns"><button class="btn sm" data-uncut="${esc(c.id)}">Undo</button></span>` : ""}</div>`).join("")}
+      ${cs.length ? `<div class="card"><h3>Cut · ${(cutFrames(r) / r.fps).toFixed(1)} s left out of training</h3>
+        ${cs.map(c => `<div class="srow"><span class="time">${fmt(c.start / r.fps)}–${fmt(c.end / r.fps)}</span><span class="sdesc">${c.reason ? esc(c.reason) : "cut by you"}</span>
+          ${canEdit(r) ? `<span class="sbtns"><button class="btn sm" data-uncut="${esc(c.id)}">Undo</button></span>` : ""}</div>`).join("")}</div>` : ""}
+      ${corrections(r).length || otherProposals(r).length ? `<div class="card"><h3>Other corrections</h3>
         ${corrections(r).map(x => `<div class="srow"><span class="time">${KIND[x.kind]}</span><span class="sdesc">${esc(JSON.stringify(x.payload))}<span class="sub">${x.source === "agent" ? "agent" : "person"}</span></span>
-          ${canEdit(r) ? `<span class="sbtns"><button class="btn sm" data-uncut="${esc(x.id)}">Undo</button></span>` : ""}</div>`).join("")}</div>` : ""}
+          ${canEdit(r) ? `<span class="sbtns"><button class="btn sm" data-uncut="${esc(x.id)}">Undo</button></span>` : ""}</div>`).join("")}
+        ${otherProposals(r).map(x => `<div class="srow"><span class="time">${esc(KIND[x.kind] || x.kind)}?</span><span class="sdesc">${esc(JSON.stringify(x.payload))}${x.reason ? ` · ${esc(x.reason)}` : ""}<span class="sub">suggested by an agent</span></span>
+          ${canEdit(r) ? `<span class="sbtns"><button class="btn sm" data-cut="${esc(x.id)}">Accept</button><button class="btn sm" data-keep="${esc(x.id)}">Dismiss</button></span>` : ""}</div>`).join("")}</div>` : ""}
       <div class="card"><h3>Run</h3><dl>
         <dt>Episode</dt><dd>${r.episode} in the LeRobot dataset</dd>
         ${r.labels.length ? `<dt>Tags</dt><dd>${r.labels.map(human).join(", ")}</dd>` : ""}
@@ -287,8 +308,12 @@ function render(r, t0) {
   wire(r, t0);
 }
 
+function busy(r) {
+  if (sel && sel.dirty) { notice = "Save or cancel the open label first."; noticeOk = false; render(r, player.t); return true; }
+  return false;
+}
 function openLabel(r, id) {
-  const l = eff(r).labels.find(x => x.id === id); if (!l) return;
+  const l = eff(r).labels.find(x => x.id === id); if (!l || busy(r)) return;
   editing = true; notice = "";
   const known = segmentNames(r).includes(l.segment);
   sel = { id: l.id, start: l.start, end: l.end, text: l.text, driver: l.driver,
@@ -296,14 +321,14 @@ function openLabel(r, id) {
   render(r, l.start / r.fps);
 }
 function openCut(r, id) {
-  const c = cuts(r).find(x => x.id === id); if (!c) return;
+  const c = cuts(r).find(x => x.id === id); if (!c || busy(r)) return;
   editing = true; notice = "";
   sel = { cutId: c.id, start: c.start, end: c.end, text: "", driver: null, segment: null, newseg: "" };
   render(r, c.start / r.fps);
 }
 
 async function act(r, what) {
-  if (what === "cancel") { sel = null; notice = ""; delete drafts[r.run_id]; return render(r, player.t); }
+  if (what === "cancel") { discard(r); notice = ""; return render(r, player.t); }
   if (what === "save") return saveLabel(r);
   if (what === "delete" && sel && sel.id) { const id = sel.id; sel = null; return decide(r, id, false); }
   if (what === "uncut" && sel && sel.cutId) { const id = sel.cutId; sel = null; return decide(r, id, false); }
@@ -348,7 +373,7 @@ function wire(r, t0) {
   playBtn.onclick = p.toggle;
   speedBtn.onclick = () => { rate = rate === 1 ? 2 : rate === 2 ? 4 : 1; speedBtn.textContent = rate + "×"; vids.forEach(v => v.playbackRate = rate); };
   const editBtn = document.getElementById("edit");
-  if (editBtn) editBtn.onclick = () => { editing = !editing; if (!editing) sel = null; notice = ""; render(r, p.t); };
+  if (editBtn) editBtn.onclick = () => { editing = !editing; if (!editing) discard(r); notice = ""; render(r, p.t); };
 
   const toFrame = x => { const b = tl.getBoundingClientRect(); return Math.max(0, Math.min(r.length, Math.round((x - b.left) / b.width * r.length))); };
   tl.onpointerdown = ev => {
@@ -380,11 +405,12 @@ function wire(r, t0) {
       tl.onpointermove = tl.onpointerup = null;
       let lo = Math.min(a, b), hi = Math.max(a, b);
       if (hi - lo < 2) {                         // a click selects about one second around it
-        lo = Math.max(0, Math.min(r.length - r.fps, lo - Math.round(r.fps / 2)));
-        hi = Math.min(r.length, lo + r.fps);
+        const w = Math.max(1, Math.round(r.fps));
+        lo = Math.max(0, Math.min(r.length - w, lo - Math.round(w / 2)));
+        hi = Math.min(r.length, lo + w);
       }
       if (sel && sel.cutId) sel = null;          // a cut's span is fixed: undo it and cut again
-      sel = sel ? { ...sel, start: lo, end: hi } : { start: lo, end: hi, text: "", driver: null, segment: null, newseg: "" };
+      sel = sel ? { ...sel, start: lo, end: hi, dirty: true } : { start: lo, end: hi, text: "", driver: null, segment: null, newseg: "" };
       notice = "";
       render(r, lo / r.fps);
       const t = document.getElementById("lbtext"); if (t && !sel.id) t.focus();
@@ -395,12 +421,12 @@ function wire(r, t0) {
     el.onclick = go; el.onkeydown = ev => { if (ev.key === "Enter") { ev.stopPropagation(); go(); } };
   });
   const text = document.getElementById("lbtext"), newseg = document.getElementById("lbnewseg");
-  if (text) text.oninput = () => { sel.text = text.value; };
-  if (newseg) newseg.oninput = () => { sel.newseg = newseg.value; };
+  if (text) text.oninput = () => { sel.text = text.value; sel.dirty = true; };
+  if (newseg) newseg.oninput = () => { sel.newseg = newseg.value; sel.dirty = true; };
   document.getElementById("detail").onclick = ev => {
     const b = ev.target.closest("button"); if (!b || b.id) return;
-    if (b.dataset.driver) { sel.driver = sel.driver === b.dataset.driver ? null : b.dataset.driver; return render(r, p.t); }
-    if (b.dataset.seg !== undefined) { sel.segment = sel.segment === b.dataset.seg && !sel.newseg ? null : b.dataset.seg; sel.newseg = ""; return render(r, p.t); }
+    if (b.dataset.driver) { sel.driver = sel.driver === b.dataset.driver ? null : b.dataset.driver; sel.dirty = true; return render(r, p.t); }
+    if (b.dataset.seg !== undefined) { sel.segment = sel.segment === b.dataset.seg && !sel.newseg ? null : b.dataset.seg; sel.newseg = ""; sel.dirty = true; return render(r, p.t); }
     if (b.dataset.show !== undefined) return p.seek(Math.max(0, +b.dataset.show / r.fps - 0.5));
     if (b.dataset.cut) return decide(r, b.dataset.cut, true);
     if (b.dataset.keep) return decide(r, b.dataset.keep, false);
@@ -425,7 +451,7 @@ document.addEventListener("keydown", e => {
   else if (k === "ArrowLeft") { e.preventDefault(); player.seek(player.t - n / r.fps); }
   else if (k === "j" || k === "ArrowDown") { e.preventDefault(); step(1); }
   else if (k === "k" || k === "ArrowUp") { e.preventDefault(); step(-1); }
-  else if (k === "e" && canEdit(r)) { editing = !editing; if (!editing) sel = null; render(r, player.t); }
+  else if (k === "e" && canEdit(r)) { editing = !editing; if (!editing) discard(r); render(r, player.t); }
   else if (k === "Escape" && sel) act(r, "cancel");
 });
 

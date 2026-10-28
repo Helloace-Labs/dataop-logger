@@ -359,6 +359,7 @@ def inspect(root: Path) -> dict:
     failure_modes, failed_subgoals = defaultdict(int), defaultdict(int)
     from . import review as rv
     eff_outcomes, eff_modes, pending, rejected, labels, cut_frames = defaultdict(int), defaultdict(int), 0, 0, 0, 0
+    other_pending = 0
     for run_path, m in store.iter_manifests(root, "committed"):
         runs += 1
         outcomes[m["termination_reason"]] += 1
@@ -367,9 +368,13 @@ def inspect(root: Path) -> dict:
             failure_modes[m["failure_mode"]] += 1
         r = rv.load(run_path)
         eff = rv.effective(m, r)
-        pending += sum(e["status"] == "proposed" for e in r["edits"])
+        pending += sum(e["status"] == "proposed" and e["kind"] == "exclude" for e in r["edits"])
+        other_pending += sum(e["status"] == "proposed" and e["kind"] != "exclude" for e in r["edits"])
         labels += len(eff["labels"])
-        cut_frames += sum(x["end"] - x["start"] for x in eff["excludes"])
+        cut = np.zeros(m["length"], dtype=bool)          # union: overlapping cuts count once
+        for x in eff["excludes"]:
+            cut[x["start"]:x["end"]] = True
+        cut_frames += int(cut.sum())
         if eff["rejected"]:
             rejected += 1
         else:
@@ -386,7 +391,8 @@ def inspect(root: Path) -> dict:
     return {"runs": runs, "outcomes": dict(outcomes), "takeovers": takeovers,
             "failure_modes": dict(failure_modes), "failed_subgoals": dict(failed_subgoals),
             "after_review": {"outcomes": dict(eff_outcomes), "failure_modes": dict(eff_modes), "rejected_runs": rejected,
-                             "labels": labels, "cut_frames": cut_frames, "open_suggestions": pending},
+                             "labels": labels, "cut_frames": cut_frames, "open_cut_suggestions": pending,
+                             "other_open_proposals": other_pending},
             "minutes_by_control_mode": {k: round(v, 2) for k, v in minutes.items()}}
 
 

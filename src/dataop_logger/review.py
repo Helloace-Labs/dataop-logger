@@ -186,9 +186,9 @@ def add_edit(run_path: Path, manifest: dict, kind: str, payload: dict, source: s
     payload = check_payload(kind, payload, manifest)
     with transaction(run_path, expect_rev) as review:
         if source == "agent":
-            for e in review["edits"]:               # proposing the same thing twice is a no-op
-                if e["source"] == "agent" and e["kind"] == kind and e["payload"] == payload:
-                    return e
+            prior, _ = _prior_suggestion(review, kind, payload)
+            if prior is not None:
+                return prior
         edit = {"id": uuid.uuid4().hex[:12], "kind": kind, "payload": payload, "source": source, "reason": reason,
                 "status": "proposed", "created_at": _now(), "decided_at": None}
         if by is not None:
@@ -197,6 +197,47 @@ def add_edit(run_path: Path, manifest: dict, kind: str, payload: dict, source: s
         if source == "human":
             _accept(review, edit)
     return edit
+
+
+def _prior_suggestion(review: dict, kind: str, payload: dict) -> tuple[dict | None, str]:
+    """An agent suggestion for exactly this change that already exists, and what became of it.
+    A person's decision stands: a span someone kept is not suggested again, whichever agent asks."""
+    for e in review["edits"]:
+        if e["source"] == "agent" and e["kind"] == kind and e["payload"] == payload:
+            return e, {"proposed": "already_suggested", "accepted": "already_cut" if kind == "exclude" else "already_accepted",
+                       "rejected": "previously_kept" if kind == "exclude" else "previously_dismissed"}[e["status"]]
+    if kind == "exclude":                       # a person already cut exactly these frames
+        for e in active_edits(review):
+            if e["kind"] == "exclude" and e["payload"] == payload:
+                return e, "already_cut"
+    return None, "created"
+
+
+def add_suggestions(run_path: Path, manifest: dict, items: list[dict], by: str,
+                    expect_rev: int | None = None) -> list[dict]:
+    """Add a batch of agent cut suggestions in one locked, revision-checked transaction.
+    items: [{"start", "end", "reason"}]. Returns one {"status", "edit"} per item, status one of created,
+    already_suggested, already_cut or previously_kept."""
+    if not isinstance(by, str) or not by.strip() or len(by) > 100:
+        raise ReviewError("by must name the agent in 1 to 100 characters")
+    checked = []
+    for it in items:
+        reason = it.get("reason")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 300:
+            raise ReviewError("a suggestion needs a short description (1 to 300 characters)")
+        checked.append((check_payload("exclude", {"start": it.get("start"), "end": it.get("end")}, manifest),
+                        reason.strip()))
+    out = []
+    with transaction(run_path, expect_rev) as review:
+        for payload, reason in checked:
+            prior, status = _prior_suggestion(review, "exclude", payload)
+            if prior is None:
+                prior = {"id": uuid.uuid4().hex[:12], "kind": "exclude", "payload": payload, "source": "agent",
+                         "reason": reason, "by": by.strip(), "status": "proposed", "created_at": _now(),
+                         "decided_at": None}
+                review["edits"].append(prior)
+            out.append({"status": status, "edit": prior})
+    return out
 
 
 def decide(run_path: Path, manifest: dict, edit_id: str, accept: bool, payload: dict | None = None,
@@ -289,11 +330,20 @@ def check_review(manifest: dict, review: dict) -> None:
         if e["status"] == "accepted" and (isinstance(e.get("accepted_seq"), bool)
                                           or not isinstance(e.get("accepted_seq"), int)):
             raise ReviewError(f"edit {e['id']} is accepted without an accepted_seq")
-        it = e.get("interpretation")
-        if it is not None:
+        for k in ("reason", "by"):
+            if e.get(k) is not None and not isinstance(e[k], str):
+                raise ReviewError(f"edit {e['id']} has a non-text {k}")
+        hist = e.get("interpretation_history", [])
+        if not isinstance(hist, list):
+            raise ReviewError(f"edit {e['id']} has a malformed interpretation history")
+        for it in ([e["interpretation"]] if e.get("interpretation") is not None else []) + hist:
             if e["kind"] != "label" or not isinstance(it, dict) or it.get("train") not in TRAIN_USE \
-                    or not isinstance(it.get("meaning"), str) or not isinstance(it.get("by"), str):
+                    or not all(isinstance(it.get(k), str) for k in ("meaning", "by", "at")):
                 raise ReviewError(f"edit {e['id']} has a malformed interpretation")
+    seqs = [e["accepted_seq"] for e in review["edits"] if "accepted_seq" in e]
+    if any(isinstance(q, bool) or not isinstance(q, int) or not 1 <= q <= review["seq"] for q in seqs) \
+            or len(seqs) != len(set(seqs)):
+        raise ReviewError("accepted_seq values must be unique integers between 1 and the review seq")
 
 
 def effective(manifest: dict, review: dict) -> dict:
@@ -366,25 +416,27 @@ def _episode_state(root: Path, episode_index: int, n: int) -> np.ndarray | None:
 
 
 def idle_spans(motion: np.ndarray, rate: float, min_s: float = 1.0, still: float = 1.5) -> list[tuple[int, int]]:
-    """Frames where, over every one-second window they sit in, no joint moves more than `still` (max - min).
-    Returns merged [start, end) spans of at least min_s."""
+    """Stretches covered by consecutive one-second windows in which no joint moves more than `still`
+    (max - min). Returns [start, end) spans of at least min_s; spans on either side of a movement never merge."""
     n = len(motion)
     w = max(2, int(round(rate)))
     if n < w:
         return []
-    idle = np.zeros(n, dtype=bool)
-    for i in range(n - w + 1):
-        win = motion[i:i + w]
-        if float((win.max(axis=0) - win.min(axis=0)).max()) < still:
-            idle[i:i + w] = True
+    quiet = [float((motion[i:i + w].max(axis=0) - motion[i:i + w].min(axis=0)).max()) < still
+             for i in range(n - w + 1)]
+    # Each run of consecutive quiet windows is one stretch: windows that share frames belong together, and a
+    # movement between two still plateaus breaks the run, so the two plateaus stay separate stretches.
     spans, i, k = [], 0, max(1, int(round(min_s * rate)))
-    while i < n:
-        if idle[i]:
+    while i < len(quiet):
+        if quiet[i]:
             j = i
-            while j < n and idle[j]:
+            while j < len(quiet) and quiet[j]:
                 j += 1
-            if j - i >= k:
-                spans.append((i, j))
+            a, b = i, j - 1 + w
+            if spans and a < spans[-1][1]:          # cannot happen with a real movement between; be safe
+                a = spans[-1][1]
+            if b - a >= k:
+                spans.append((a, b))
             i = j
         else:
             i += 1
@@ -392,7 +444,7 @@ def idle_spans(motion: np.ndarray, rate: float, min_s: float = 1.0, still: float
 
 
 def find_idle(root: Path, run_path: Path, manifest: dict, by: str = "dataop idle finder",
-              min_s: float = 1.0, still: float = 1.5) -> list[dict]:
+              min_s: float = 1.0, still: float = 1.5, expect_rev: int | None = None) -> list[dict]:
     """Suggest cutting idle stretches of one run (our built-in model for the "find idle frames" AI feature).
     Uses measured joint positions when the dataset has them, otherwise the sent commands. Suggestions are agent
     proposals of kind "exclude" with a short description; a person cuts or keeps each one."""
@@ -404,26 +456,21 @@ def find_idle(root: Path, run_path: Path, manifest: dict, by: str = "dataop idle
         motion = np.asarray(t.column("sent_action").to_pylist(), dtype=np.float32).reshape(n, -1)
         source = "commands"
     modes = pq.read_table(run_path / "ticks.parquet", columns=["control_mode"]).column("control_mode").to_pylist()
-    out = []
+    items = []
     by = f"{by} ({source})"
     for a, b in idle_spans(motion, rate, min_s, still):
         where = "at the start" if a == 0 else "at the end" if b == n else "mid-run"
         span = modes[a:b]
         who = max(set(span), key=span.count)
         who = {"base": "policy driving", "expert": "rescue driving", "blend": "shared control", "none": "nobody driving"}[who]
-        reason = f"arm still for {(b - a) / rate:.1f} s {where}, {who}"
-        out.append(suggest_cut(run_path, manifest, a, b, reason, by=by))
-    return out
+        items.append({"start": a, "end": b, "reason": f"arm still for {(b - a) / rate:.1f} s {where}, {who}"})
+    return add_suggestions(run_path, manifest, items, by, expect_rev=expect_rev)
 
 
 def suggest_cut(run_path: Path, manifest: dict, start: int, end: int, reason: str, by: str = "agent") -> dict:
-    """Any agent's suggestion to cut frames [start, end): shown in the viewer for a person to cut or keep."""
-    if not isinstance(reason, str) or not reason.strip() or len(reason) > 300:
-        raise ReviewError("a suggestion needs a short description (1 to 300 characters)")
-    if not isinstance(by, str) or not by.strip() or len(by) > 100:
-        raise ReviewError("by must name the agent in 1 to 100 characters")
-    return add_edit(run_path, manifest, "exclude", {"start": start, "end": end}, source="agent",
-                    reason=reason.strip(), by=by.strip())
+    """Any agent's suggestion to cut frames [start, end): shown in the viewer for a person to cut or keep.
+    Returns {"status", "edit"} like add_suggestions."""
+    return add_suggestions(run_path, manifest, [{"start": start, "end": end, "reason": reason}], by)[0]
 
 
 def list_labels(root: Path, only_uninterpreted: bool = False) -> list[dict]:
