@@ -158,8 +158,8 @@ def check_payload(kind: str, payload: dict, manifest: dict) -> dict:
             raise ReviewError(f"driver must be one of {DRIVERS} or null")
         if segment is not None and (not isinstance(segment, str) or not segment.strip() or len(segment) > 100):
             raise ReviewError("segment must be a short name or null")
-        if not text.strip() and driver is None and segment is None:
-            raise ReviewError("a label needs text, a driver or a segment")
+        if not text.strip():
+            raise ReviewError("a label needs a description of what happens")
         return {"start": a, "end": b, "text": text.strip(), "driver": driver,
                 "segment": segment.strip() if segment else None}
     text = payload.get("text")
@@ -178,12 +178,8 @@ def _accept(review: dict, edit: dict) -> None:
     edit["status"], edit["decided_at"], edit["accepted_seq"] = "accepted", _now(), review["seq"]
 
 
-def _clear_reviewed(review: dict) -> None:
-    review["reviewed"], review["reviewed_at"] = False, None
-
-
 def add_edit(run_path: Path, manifest: dict, kind: str, payload: dict, source: str = "human",
-             reason: str | None = None, expect_rev: int | None = None) -> dict:
+             reason: str | None = None, expect_rev: int | None = None, by: str | None = None) -> dict:
     """Add an edit. Human edits are accepted at once; agent edits wait as proposals and reopen the run's review."""
     if source not in SOURCES:
         raise ReviewError(f"source must be one of {SOURCES}")
@@ -195,11 +191,11 @@ def add_edit(run_path: Path, manifest: dict, kind: str, payload: dict, source: s
                     return e
         edit = {"id": uuid.uuid4().hex[:12], "kind": kind, "payload": payload, "source": source, "reason": reason,
                 "status": "proposed", "created_at": _now(), "decided_at": None}
+        if by is not None:
+            edit["by"] = by
         review["edits"].append(edit)
         if source == "human":
             _accept(review, edit)
-        else:
-            _clear_reviewed(review)
     return edit
 
 
@@ -212,6 +208,10 @@ def decide(run_path: Path, manifest: dict, edit_id: str, accept: bool, payload: 
         edit = next((e for e in review["edits"] if e["id"] == edit_id), None)
         if edit is None:
             raise ReviewError(f"no edit {edit_id!r} on this run")
+        if accept and edit["status"] != "proposed":
+            raise ReviewError("only a proposal can be accepted; change an accepted edit by replacing it")
+        if not accept and edit["status"] == "rejected":
+            raise ReviewError("this edit is already rejected")
         if accept:
             if payload is not None:
                 edit["payload"] = check_payload(edit["kind"], payload, manifest)
@@ -239,8 +239,9 @@ def replace_edit(run_path: Path, manifest: dict, edit_id: str, payload: dict, ex
 
 
 def interpret(run_path: Path, edit_id: str, train: str, meaning: str, by: str = "agent",
-              expect_rev: int | None = None) -> dict:
-    """Record what a label means for training, as read by an agent: keep or exclude the span, and why."""
+              expect_rev: int | None = None, replace: bool = False) -> dict:
+    """Record what a label means for training, as read by an agent: keep or exclude the span, and why.
+    A label that already has an interpretation is refused unless replace=True; the old one goes to history."""
     if train not in TRAIN_USE:
         raise ReviewError(f"train must be one of {TRAIN_USE}")
     if not isinstance(meaning, str) or not meaning.strip() or len(meaning) > 500:
@@ -249,18 +250,15 @@ def interpret(run_path: Path, edit_id: str, train: str, meaning: str, by: str = 
         edit = next((e for e in review["edits"] if e["id"] == edit_id), None)
         if edit is None or edit["kind"] != "label" or edit["status"] != "accepted":
             raise ReviewError(f"no accepted label {edit_id!r} on this run")
-        edit["interpretation"] = {"train": train, "meaning": meaning.strip(), "by": by, "at": _now()}
+        if edit.get("interpretation"):
+            if not replace:
+                raise ReviewError(f"label {edit_id} was already interpreted as {edit['interpretation']['train']!r} "
+                                  f"by {edit['interpretation']['by']}; pass replace to change it")
+            edit.setdefault("interpretation_history", []).append(edit["interpretation"])
+        if not isinstance(by, str) or not by.strip() or len(by) > 100:
+            raise ReviewError("by must name the agent in 1 to 100 characters")
+        edit["interpretation"] = {"train": train, "meaning": meaning.strip(), "by": by.strip(), "at": _now()}
     return edit
-
-
-def set_reviewed(run_path: Path, reviewed: bool, expect_rev: int | None = None) -> dict:
-    if not isinstance(reviewed, bool):
-        raise ReviewError("reviewed must be true or false")
-    with transaction(run_path, expect_rev) as review:
-        if reviewed and any(e["status"] == "proposed" for e in review["edits"]):
-            raise ReviewError("accept or dismiss every proposal before marking the run reviewed")
-        review["reviewed"], review["reviewed_at"] = reviewed, _now() if reviewed else None
-    return review
 
 
 def active_edits(review: dict) -> list[dict]:
@@ -273,14 +271,34 @@ def active_edits(review: dict) -> list[dict]:
     return [e for e in acc if e["kind"] in MULTI or latest.get(_slot(e)) is e]
 
 
-def needs_review(manifest: dict, review: dict) -> bool:
-    if any(e["status"] == "proposed" for e in review["edits"]):
-        return True
-    return not review["reviewed"] and effective(manifest, review)["termination_reason"] != "success"
+def check_review(manifest: dict, review: dict) -> None:
+    """Reject a stored review that this code would never have written: fail closed before it shapes training."""
+    for k in ("rev", "seq"):
+        if isinstance(review.get(k), bool) or not isinstance(review.get(k), int) or review[k] < 0:
+            raise ReviewError(f"review {k} must be a non-negative integer")
+    ids = set()
+    for e in review["edits"]:
+        if e["id"] in ids:
+            raise ReviewError(f"edit id {e['id']} appears twice")
+        ids.add(e["id"])
+        try:
+            if check_payload(e["kind"], e["payload"], manifest) != e["payload"]:
+                raise ReviewError("payload is not in canonical form")
+        except ReviewError as err:
+            raise ReviewError(f"edit {e['id']} ({e['kind']}): {err}") from None
+        if e["status"] == "accepted" and (isinstance(e.get("accepted_seq"), bool)
+                                          or not isinstance(e.get("accepted_seq"), int)):
+            raise ReviewError(f"edit {e['id']} is accepted without an accepted_seq")
+        it = e.get("interpretation")
+        if it is not None:
+            if e["kind"] != "label" or not isinstance(it, dict) or it.get("train") not in TRAIN_USE \
+                    or not isinstance(it.get("meaning"), str) or not isinstance(it.get("by"), str):
+                raise ReviewError(f"edit {e['id']} has a malformed interpretation")
 
 
 def effective(manifest: dict, review: dict) -> dict:
     """The run as training should see it after the edits in effect."""
+    check_review(manifest, review)
     act = active_edits(review)
     single = {e["kind"]: e["payload"] for e in act if e["kind"] not in MULTI and e["kind"] != "step_boundary"}
     out = {
@@ -329,82 +347,83 @@ def train_mask(manifest: dict, review: dict, control_modes: list[str]) -> np.nda
     return mask
 
 
-# ── agent proposals ────────────────────────────────────────────────────────────
+# ── AI feature: find idle frames ───────────────────────────────────────────────
 
-def _step_budgets(runs: list[tuple[dict, dict]], q: float = 90) -> dict[str, int]:
-    """Per step, the q-th percentile of how many frames it took in effectively successful runs."""
-    durs: dict[str, list[int]] = {}
-    for m, eff in runs:
-        if eff["termination_reason"] != "success" or eff["rejected"]:
-            continue
-        for sg in eff["subgoals"][:-1]:             # the last step ends with the run, so its length is no budget
-            if sg["status"] == "completed":
-                durs.setdefault(sg["name"], []).append(sg["end_frame"] - sg["start_frame"])
-    return {k: int(np.ceil(np.percentile(v, q))) for k, v in durs.items() if len(v) >= 3}
+def _episode_state(root: Path, episode_index: int, n: int) -> np.ndarray | None:
+    """The measured joint positions (observation.state) for one episode, or None if the dataset has none."""
+    import pyarrow.dataset as pads
+    d = Path(root) / "data"
+    if not d.exists():
+        return None
+    ds = pads.dataset(str(d), format="parquet")
+    if "observation.state" not in ds.schema.names:
+        return None
+    t = ds.to_table(columns=["frame_index", "observation.state"],
+                    filter=pads.field("episode_index") == episode_index).sort_by("frame_index")
+    if t.num_rows != n:
+        return None
+    return np.asarray(t.column("observation.state").to_pylist(), dtype=np.float32).reshape(n, -1)
 
 
-def propose(root: Path, idle_s: float = 1.0, idle_eps: float = 0.05) -> list[str]:
-    """Add agent proposals to every committed run that has none yet, using the run as currently corrected.
+def idle_spans(motion: np.ndarray, rate: float, min_s: float = 1.0, still: float = 1.5) -> list[tuple[int, int]]:
+    """Frames where, over every one-second window they sit in, no joint moves more than `still` (max - min).
+    Returns merged [start, end) spans of at least min_s."""
+    n = len(motion)
+    w = max(2, int(round(rate)))
+    if n < w:
+        return []
+    idle = np.zeros(n, dtype=bool)
+    for i in range(n - w + 1):
+        win = motion[i:i + w]
+        if float((win.max(axis=0) - win.min(axis=0)).max()) < still:
+            idle[i:i + w] = True
+    spans, i, k = [], 0, max(1, int(round(min_s * rate)))
+    while i < n:
+        if idle[i]:
+            j = i
+            while j < n and idle[j]:
+                j += 1
+            if j - i >= k:
+                spans.append((i, j))
+            i = j
+        else:
+            i += 1
+    return spans
 
-    failure_start, on failed runs: the takeover is the first one at or after the failed step's start. When that
-    step had already run longer than it took in 90% of successful runs, propose the frame where it went over that
-    budget; otherwise the step's start; without step information, the frame before the first takeover.
-    exclude: idle stretches of at least idle_s (no joint command moving more than idle_eps per frame) at the very
-    start or end of a run. reject_run: a run in which nothing moves at all.
-    """
-    report = []
-    loaded = []
-    for run_path, m in store.iter_manifests(Path(root), "committed"):
-        r = load(run_path)
-        loaded.append((run_path, m, r, effective(m, r)))
-    budgets = _step_budgets([(m, eff) for _, m, _, eff in loaded])
-    for run_path, m, review, eff in loaded:
-        if any(e["source"] == "agent" for e in review["edits"]) or eff["rejected"]:
-            continue
-        n = m["length"]
-        rate = m["action_schema"]["rate_hz"]
+
+def find_idle(root: Path, run_path: Path, manifest: dict, by: str = "dataop idle finder",
+              min_s: float = 1.0, still: float = 1.5) -> list[dict]:
+    """Suggest cutting idle stretches of one run (our built-in model for the "find idle frames" AI feature).
+    Uses measured joint positions when the dataset has them, otherwise the sent commands. Suggestions are agent
+    proposals of kind "exclude" with a short description; a person cuts or keeps each one."""
+    n, rate = manifest["length"], manifest["action_schema"]["rate_hz"]
+    motion = _episode_state(root, manifest["episode_index"], n)
+    source = "measured joints"
+    if motion is None:
         t = pq.read_table(run_path / "ticks.parquet", columns=["sent_action"])
-        sent = np.asarray(t.column("sent_action").to_pylist(), dtype=np.float32).reshape(n, -1)
-        moving = np.abs(np.diff(sent, axis=0)).max(axis=1) >= idle_eps if n > 1 else np.zeros(0, bool)
-        if not moving.any():
-            add_edit(run_path, m, "reject_run", {}, source="agent", reason="no joint command moved during the run")
-            report.append(f"{m['run_id']}: reject_run (nothing moved)")
-            continue
+        motion = np.asarray(t.column("sent_action").to_pylist(), dtype=np.float32).reshape(n, -1)
+        source = "commands"
+    modes = pq.read_table(run_path / "ticks.parquet", columns=["control_mode"]).column("control_mode").to_pylist()
+    out = []
+    by = f"{by} ({source})"
+    for a, b in idle_spans(motion, rate, min_s, still):
+        where = "at the start" if a == 0 else "at the end" if b == n else "mid-run"
+        span = modes[a:b]
+        who = max(set(span), key=span.count)
+        who = {"base": "policy driving", "expert": "rescue driving", "blend": "shared control", "none": "nobody driving"}[who]
+        reason = f"arm still for {(b - a) / rate:.1f} s {where}, {who}"
+        out.append(suggest_cut(run_path, manifest, a, b, reason, by=by))
+    return out
 
-        tk = m.get("takeovers", [])
-        if eff["termination_reason"] != "success" and tk:
-            failed = next((s for s in eff["subgoals"] if s["status"] == "failed"), None)
-            take = None
-            if failed:
-                take = next((x["start_frame"] for x in tk if x["start_frame"] >= failed["start_frame"]), None)
-            if failed and take is not None and failed["start_frame"] < take:
-                b = budgets.get(failed["name"])
-                if b is not None and failed["start_frame"] + b < take:
-                    frame = failed["start_frame"] + b
-                    why = (f"'{failed['name']}' ran past {b / rate:.1f} s, longer than 90% of successful runs "
-                           f"took for that step")
-                else:
-                    frame, why = failed["start_frame"], f"start of the failed step '{failed['name']}'"
-            elif tk[0]["start_frame"] > 0:
-                frame, why = tk[0]["start_frame"] - 1, "no step information; frame before the first takeover"
-            else:
-                frame = None
-            if frame is not None:
-                add_edit(run_path, m, "failure_start", {"frame": int(frame)}, source="agent", reason=why)
-                report.append(f"{m['run_id']}: failure_start {frame} ({why})")
 
-        k = max(1, int(round(idle_s * rate)))
-        first = int(np.argmax(moving)) + 1                  # frames before the first move
-        last = n - int(np.argmax(moving[::-1]))             # frames after the last move
-        if first >= k:
-            add_edit(run_path, m, "exclude", {"start": 0, "end": first}, source="agent",
-                     reason=f"no movement for the first {first / rate:.1f} s")
-            report.append(f"{m['run_id']}: exclude 0-{first} (idle start)")
-        if n - last >= k:
-            add_edit(run_path, m, "exclude", {"start": last, "end": n}, source="agent",
-                     reason=f"no movement for the last {(n - last) / rate:.1f} s")
-            report.append(f"{m['run_id']}: exclude {last}-{n} (idle end)")
-    return report
+def suggest_cut(run_path: Path, manifest: dict, start: int, end: int, reason: str, by: str = "agent") -> dict:
+    """Any agent's suggestion to cut frames [start, end): shown in the viewer for a person to cut or keep."""
+    if not isinstance(reason, str) or not reason.strip() or len(reason) > 300:
+        raise ReviewError("a suggestion needs a short description (1 to 300 characters)")
+    if not isinstance(by, str) or not by.strip() or len(by) > 100:
+        raise ReviewError("by must name the agent in 1 to 100 characters")
+    return add_edit(run_path, manifest, "exclude", {"start": start, "end": end}, source="agent",
+                    reason=reason.strip(), by=by.strip())
 
 
 def list_labels(root: Path, only_uninterpreted: bool = False) -> list[dict]:

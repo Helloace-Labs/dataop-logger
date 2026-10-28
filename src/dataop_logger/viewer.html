@@ -133,6 +133,23 @@ textarea { width: 100%; resize: vertical; }
 .lbfoot { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .lbstatus { font-size: 12px; color: var(--ink-3); }
 .lbstatus.bad { color: var(--bad); }
+.banner { border: 1px dashed var(--ink-3); color: var(--ink-2); padding: 8px 12px; border-radius: 6px; }
+.banner.bad { border-color: var(--bad); color: var(--bad); }
+.aibar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.btn.ai { border-color: var(--lbl); color: var(--lbl); }
+.cut { position: absolute; top: 54px; height: 18px; border-radius: 3px; cursor: pointer;
+  background: repeating-linear-gradient(135deg, var(--ink-2) 0 2px, transparent 2px 6px), var(--bg); opacity: .85; }
+.cut.on { box-shadow: 0 0 0 2px var(--accent); }
+.sugg-span { position: absolute; top: 52px; height: 22px; border-radius: 3px; background: var(--ink-3); opacity: .35;
+  outline: 1px dashed var(--ink-2); pointer-events: none; }
+.hatch { background: repeating-linear-gradient(135deg, var(--ink-2) 0 2px, transparent 2px 5px) !important; }
+.sugsw { background: var(--ink-3) !important; opacity: .5; }
+.sugg { display: flex; flex-direction: column; gap: 6px; max-width: 860px; }
+.srow { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 5px 0; border-top: 1px solid var(--line); }
+.srow:first-of-type { border-top: 0; }
+.sdesc { flex: 1 1 260px; }
+.sdesc .sub { display: inline; margin-left: 6px; }
+.sbtns { display: flex; gap: 6px; }
 </style>
 </head>
 <body>

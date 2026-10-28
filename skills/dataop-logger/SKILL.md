@@ -118,7 +118,7 @@ Rewards are optional. Pass `reward=` on `add_frame`, or call `run.complete_trans
 1. Record two or three short episodes, or ask the user to, if the robot is not under your control.
 2. Run `dataop-logger validate <dataset_root>`. It must print `OK`. Fix any error it reports before going further.
 3. Run `dataop-logger inspect <dataset_root>` and check that the outcomes, takeovers and minutes per control mode match what happened.
-4. Optionally run `dataop-logger propose <dataset_root>` so the viewer's Review tab opens with suggested failure starts and trims for the user to accept.
+4. Optionally run `dataop-logger find-idle <dataset_root>` so the viewer opens with idle stretches suggested as cuts.
 5. Tell the user they can browse the runs with `dataop-logger view <dataset_root>`: it starts a local web server and opens a page with each run's outcome, who drove each frame, and the camera videos. Do not run it yourself unless the user asks; it keeps running until stopped.
 
 ## Reading people's labels
@@ -129,6 +129,10 @@ People label spans in the viewer in plain language. When the user asks you to re
 2. Decide for each label whether its frames should train the model. Read `exclude` into anything that says the frames are wrong, unsafe, blocked, a mistake or not to be used. Read `keep` into descriptions of normal or good behaviour, segment names and driver corrections.
 3. Record it: `dataop-logger interpret <dataset_root> <run_id> <label_id> --train keep|exclude --meaning "<one short sentence>"`.
 4. If a label is ambiguous, ask the user instead of guessing, and quote it.
+
+## Suggesting cuts (AI features)
+
+When the user asks you to find frames that should not be trained on (idle stretches, resets, camera problems), suggest them instead of cutting them: `dataop-logger suggest-cut <dataset_root> <run_id> <start> <end> --reason "<short description>" --by <your name>`. Frames are half-open `[start, end)`. Suggestions show in the viewer in light grey for the person to cut or keep. `dataop-logger find-idle` runs the built-in idle finder if you only need that.
 
 ## Report back
 

@@ -54,9 +54,11 @@ RUN_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 
 
 def _review_state(run_path: Path, m: dict) -> dict:
-    r = rv.load(run_path)
-    return {"edits": r["edits"], "reviewed": r["reviewed"], "rev": r["rev"], "effective": rv.effective(m, r),
-            "needs_review": rv.needs_review(m, r)}
+    try:
+        r = rv.load(run_path)
+        return {"edits": r["edits"], "rev": r["rev"], "effective": rv.effective(m, r), "error": None}
+    except rv.ReviewError as e:                        # shown on the run; editing it is disabled
+        return {"edits": [], "rev": -1, "effective": rv.effective(m, rv.empty()), "error": str(e)}
 
 
 def collect(root: Path) -> dict:
@@ -122,6 +124,9 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
 
     def end_headers(self):
         self.send_header("Cache-Control", "no-store")
+        # Never inside another site's frame (clickjacking); the page's own CSP is in a meta tag with a nonce.
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+        self.send_header("X-Frame-Options", "DENY")
         super().end_headers()
 
     def _json(self, code: int, obj) -> None:
@@ -165,16 +170,21 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
                 raise rv.ReviewError("rev (the review revision the page shows) is required")
             op = req.get("op")
             if op == "add":
+                if req.get("kind") not in ("label", "exclude"):
+                    raise rv.ReviewError("the viewer adds labels and cuts only")
                 payload = req.get("payload", {})
                 rv.add_edit(run_path, m, req.get("kind"), payload, source="human", expect_rev=rev)
             elif op == "decide":
                 rv.decide(run_path, m, req.get("edit_id"), req.get("accept"), req.get("payload"), expect_rev=rev)
+            elif op == "find_idle":                      # AI feature with the built-in model
+                cur = rv.load(run_path)["rev"]
+                if cur != rev:
+                    raise rv.ReviewConflict(f"the review changed (now at rev {cur}, you had {rev})")
+                rv.find_idle(self.dataset_root, run_path, m)
             elif op == "replace":
                 rv.replace_edit(run_path, m, req.get("edit_id"), req.get("payload"), expect_rev=rev)
-            elif op == "reviewed":
-                rv.set_reviewed(run_path, req.get("reviewed"), expect_rev=rev)
             else:
-                raise rv.ReviewError("op must be add, decide, replace or reviewed")
+                raise rv.ReviewError("op must be add, decide, replace or find_idle")
         except rv.ReviewConflict as e:
             return self._json(409, {"error": str(e), "state": _review_state(run_path, m)})
         except (rv.ReviewError, ValueError, KeyError, TypeError) as e:

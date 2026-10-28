@@ -148,26 +148,38 @@ dataop-logger remap <old_root> <new_root> --repo-id ID --revision REV   # after 
 dataop-logger view <dataset_root>      # opens http://127.0.0.1:8765/dataop/view/
 ```
 
-A local, read-only page: every run with its outcome and a strip showing who drove each frame, then the selected run's camera videos in sync with a control-mode timeline. Click the timeline or an event to jump to that moment. Nothing leaves your machine. `--build-only` writes `dataop/view/index.html` without starting a server.
+A local page: every run with its outcome and a strip showing who drove each frame, then the selected run's camera videos in sync with a control-mode timeline. Click the timeline or an event to jump to that moment. Nothing leaves your machine.
+
+The recorded data is never changed. Labels and cuts you make in the page are saved to a separate file next to each run (see below). Use `--read-only` for a page that cannot save anything, and `--build-only` to write `dataop/view/index.html` without starting a server.
 
 ![viewer](docs/viewer.png)
 
 When runs carry `failure_mode` and `subgoals`, the run list opens with failed runs grouped by failure mode. Click a group to filter the list.
 
-## Labelling runs
+## Labelling and cutting runs
 
-In the viewer, open a run and press **Edit**. Drag across the run bar to select the frames you mean, then say what happens there in plain words. You can also mark who drove (policy or rescue) and the task segment, such as grasp or lift, which helps on long tasks. Click a label to change or delete it.
+Open a run in the viewer and press **Edit** (or E). Drag across the run bar to select frames, then either:
 
-An agent reads the plain-language labels later and records what each one means for training:
+- **Cut** them. Cut frames stay in the recording but are left out of training. Click a cut to undo it.
+- **Label** them. Say what happens in plain words, and optionally note who drove (policy or rescue) and the task segment, such as grasp or lift, which helps on long tasks. Click a label to change or delete it, or drag again to change its span.
+
+**AI feature: find idle frames.** In Edit, **✦ Find idle frames** runs the built-in idle finder on the run. It marks stretches where the arm barely moves for over a second in light grey, each with a short description. You can cut them all, or cut or keep them one by one. Your own agent can make the same kind of suggestion:
+
+```bash
+dataop-logger find-idle <dataset_root> [--run RUN_ID]                     # built-in finder, every run
+dataop-logger suggest-cut <dataset_root> <run_id> <start> <end> --reason "..." --by my-agent
+```
+
+**Agents read the labels.** An agent records what each plain-language label means for training, and the viewer shows that reading under the label:
 
 ```bash
 dataop-logger labels <dataset_root> --uninterpreted      # JSON: each label with what was recorded in its span
-dataop-logger interpret <dataset_root> <run_id> <label_id> --train exclude --meaning "camera blocked by a hand"
+dataop-logger interpret <dataset_root> <run_id> <label_id> --train exclude --meaning "camera blocked by a hand" --by my-agent
 ```
 
-The viewer shows the agent's reading under each label. Labels never touch the recorded frames, manifest or checksums. They live in `dataop/runs/<run_id>/review.json`, which travels with the dataset. A label read as `exclude` sets `item["dataop.train_mask"]` to False for its frames, and every target mask is gated on it.
+An existing reading is never overwritten silently: pass `--replace`, and the old one is kept in history. Changing a label's text or span clears its reading until an agent reads it again.
 
-The same file holds structured corrections for agents and scripts (`dataop_logger.review`: outcome, failure start, exclude, step boundary, reject run). `dataop-logger propose` adds agent suggestions there, and `inspect` reports outcomes both as recorded and after corrections.
+**Where it is stored.** Labels, cuts and readings live in `dataop/runs/<run_id>/review.json`. That file travels with the dataset and never touches the recorded frames, manifest or checksums. The reader sets `item["dataop.train_mask"]` to False for cut frames and for labels read as `exclude`, and every target mask is gated on it. `inspect` reports labels, cut frames and open suggestions. Scripts can also record structured corrections in the same file through `dataop_logger.review` (outcome, failure start, step boundary, reject run); the viewer lists them with an Undo button.
 
 ## Training with the extra fields
 

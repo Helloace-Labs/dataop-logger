@@ -1,6 +1,7 @@
 const DATA = /*__DATA__*/null;
 const API = "/dataop/api/review";
 const MODE = { base: "Policy", expert: "Rescue", blend: "Blend", none: "Nobody" };
+const KIND = { outcome: "Outcome", failure_start: "Failure starts", step_boundary: "Step boundary", reject_run: "Run rejected" };
 const color = m => `var(--${m})`;
 const fmt = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`;
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -10,14 +11,32 @@ const editable = DATA.editable;
 let filter = "all", current = null;
 let player = null;              // {t, seek, toggle} for the open run
 let editing = false;            // edit mode for the open run
-let sel = null;                 // {start, end, id?, text, driver, segment} while labelling
+let sel = null;                 // {start, end, id?, cutId?, text, driver, segment, newseg} while editing a span
+let notice = "";                // last save problem, shown until the next action
+const drafts = {};              // run_id -> unsaved sel, kept when switching runs
 
 const eff = r => r.review.effective;
 const runNo = r => esc(r.env.run ?? r.episode + 1);
 const frameOf = r => Math.min(r.length - 1, Math.floor(player.t * r.fps + 1e-6));
+const canEdit = r => editable && !r.review.error;
 function frac(r, mode) { return r.segments.filter(s => s[2] === mode).reduce((a, s) => a + s[1] - s[0], 0) / r.length; }
-const segmentNames = () => [...new Set([...runs.flatMap(r => eff(r).subgoals.map(s => s.name)),
-                                        ...runs.flatMap(r => eff(r).labels.map(l => l.segment).filter(Boolean))])];
+
+function activeEdits(r) {
+  const acc = r.review.edits.filter(e => e.status === "accepted").sort((a, b) => (a.accepted_seq || 0) - (b.accepted_seq || 0));
+  const multi = k => k === "exclude" || k === "note" || k === "label";
+  const slot = e => e.kind === "step_boundary" ? "sb" + e.payload.index : e.kind;
+  const latest = {};
+  acc.forEach(e => { if (!multi(e.kind)) latest[slot(e)] = e; });
+  return acc.filter(e => multi(e.kind) || latest[slot(e)] === e);
+}
+const cuts = r => activeEdits(r).filter(e => e.kind === "exclude").map(e => ({ id: e.id, ...e.payload, by: e.by, reason: e.reason }));
+const suggestions = r => r.review.edits.filter(e => e.status === "proposed" && e.kind === "exclude");
+const corrections = r => activeEdits(r).filter(e => KIND[e.kind]);
+function segmentNames(r) {      // this run's steps first, then segments people used on the same task
+  const own = eff(r).subgoals.map(s => s.name);
+  const same = runs.filter(x => x.task === r.task).flatMap(x => eff(x).labels.map(l => l.segment).filter(Boolean));
+  return [...new Set([...own, ...same])];
+}
 
 function outcomePill(r) {
   const e = eff(r);
@@ -32,10 +51,12 @@ function drawStats() {
   const n = runs.length, ok = runs.filter(r => eff(r).termination_reason === "success").length;
   const take = runs.reduce((a, r) => a + r.takeovers.length, 0);
   const labels = runs.reduce((a, r) => a + eff(r).labels.length, 0);
+  const cutS = runs.reduce((a, r) => a + cuts(r).reduce((b, c) => b + c.end - c.start, 0) / r.fps, 0);
   const min = m => runs.reduce((a, r) => a + r.segments.filter(s => s[2] === m).reduce((b, s) => b + s[1] - s[0], 0) / r.fps, 0) / 60;
   document.getElementById("stats").innerHTML = [
     [n, "runs"], [n ? Math.round(100 * ok / n) + "%" : "–", "policy success"], [take, "takeovers"],
-    [min("base").toFixed(1), "min policy"], [min("expert").toFixed(1), "min rescue"], [labels, "labels"]
+    [min("base").toFixed(1), "min policy"], [min("expert").toFixed(1), "min rescue"], [labels, "labels"],
+    [cutS.toFixed(1), "s cut"]
   ].map(([v, l]) => `<span class="stat"><b>${v}</b>${l}</span>`).join("");
 }
 
@@ -64,7 +85,7 @@ document.getElementById("fails").onclick = e => {
   filter = filter === "fm:" + b.dataset.fm ? "all" : "fm:" + b.dataset.fm;
   redrawList();
 };
-const FILTERS = [["all", "All runs"], ["success", "Success"], ["failure", "Failed"], ["labelled", "Labelled"]];
+const FILTERS = [["all", "All runs"], ["success", "Success"], ["failure", "Failed"], ["labelled", "Labelled"], ["suggested", "Suggested cuts"]];
 function drawFilters() {
   document.getElementById("filters").innerHTML = FILTERS.map(([k, l]) =>
     `<button class="chip" data-f="${esc(k)}" aria-pressed="${k === filter}">${esc(l)}</button>`).join("");
@@ -76,6 +97,7 @@ document.getElementById("filters").onclick = e => {
 function visible() {
   return runs.filter(r => filter === "all" ? true : filter.startsWith("fm:") ? eff(r).failure_mode === filter.slice(3)
     : filter === "labelled" ? eff(r).labels.length > 0
+    : filter === "suggested" ? suggestions(r).length > 0
     : filter === "success" ? eff(r).termination_reason === "success" : eff(r).termination_reason !== "success");
 }
 function drawRows() {
@@ -100,65 +122,101 @@ function step(dir) {
 
 // ── saving ────────────────────────────────────────────────────────────────────
 async function send(r, body) {
+  notice = "";
   try {
     const res = await fetch(API, { method: "POST", headers: { "Content-Type": "application/json", "X-Dataop": "1" },
                                    body: JSON.stringify({ run_id: r.run_id, rev: r.review.rev, ...body }) });
     const out = await res.json();
     if (res.status === 409 && out.state) {
-      r.review = out.state; redrawList();
-      throw new Error("this run changed in another window; check its labels and save again");
+      r.review = out.state;
+      if (sel && sel.id && !eff(r).labels.some(l => l.id === sel.id)) sel.id = null;   // keep the draft as a new label
+      if (sel && sel.cutId && !cuts(r).some(c => c.id === sel.cutId)) sel = null;
+      throw new Error("this run changed in another window. The page now shows the latest version; your draft is kept, save again if it still applies");
     }
     if (!res.ok) throw new Error(out.error || res.statusText);
     r.review = out;
-    redrawList();
     return true;
   } catch (err) {
-    const st = document.getElementById("lbstatus");
-    if (st) { st.textContent = `Not saved: ${err.message}`; st.className = "lbstatus bad"; }
+    notice = `Not saved: ${err.message}`;
     return false;
+  } finally {
+    redrawList();
+    if (current === r) render(r, player ? player.t : 0);
   }
 }
 
 async function saveLabel(r) {
-  const text = document.getElementById("lbtext").value;
-  const payload = { start: sel.start, end: sel.end, text, driver: sel.driver, segment: sel.segment };
-  const ok = sel.id ? await send(r, { op: "replace", edit_id: sel.id, payload })
-                    : await send(r, { op: "add", kind: "label", payload });
-  if (ok) { sel = null; render(r, player.t); }
+  if (!sel.text.trim()) { notice = "Describe what happens in these frames first."; return render(r, player.t); }
+  const payload = { start: sel.start, end: sel.end, text: sel.text, driver: sel.driver, segment: sel.newseg.trim() || sel.segment };
+  const keep = sel;
+  sel = null;
+  const ok = keep.id ? await send(r, { op: "replace", edit_id: keep.id, payload }) : await send(r, { op: "add", kind: "label", payload });
+  if (!ok && !sel) {
+    if (keep.id && !eff(r).labels.some(l => l.id === keep.id)) keep.id = null;   // deleted elsewhere: keep as a new label
+    sel = keep; render(r, player.t);
+  }
+  if (ok) delete drafts[r.run_id];
 }
-async function deleteLabel(r) {
-  if (sel && sel.id && await send(r, { op: "decide", edit_id: sel.id, accept: false })) { sel = null; render(r, player.t); }
-}
+const decide = (r, id, accept) => send(r, { op: "decide", edit_id: id, accept });
 
-function labelPanel(r) {
-  if (!sel) return editing ? `<div class="hint">Drag across the run bar to select frames, or click a label to change it.</div>` : "";
+function selPanel(r) {
+  if (!editing) return "";
+  if (!sel) return `<div class="hint">Drag across the run bar to select frames, then cut them or say what happens there. Click a label or a cut to change it.</div>`;
   const a = sel.start, b = sel.end;
-  const names = segmentNames();
+  const span = `<div class="lbspan"><b>${fmt(a / r.fps)} to ${fmt(b / r.fps)}</b> <span class="sub">frames ${a}–${b - 1} · ${((b - a) / r.fps).toFixed(1)} s · drag again to change the span</span></div>`;
+  if (sel.cutId) {
+    const c = cuts(r).find(x => x.id === sel.cutId);
+    return `<div class="card lbpanel">${span}
+      <div class="task">These frames are cut: they stay in the recording but are left out of training.${c && c.reason ? ` <span class="sub">${esc(c.reason)}</span>` : ""}</div>
+      <div class="lbfoot"><button class="btn" data-act="uncut">Undo cut</button><button class="btn" data-act="cancel">Close</button>
+      <span class="lbstatus ${notice ? "bad" : ""}">${esc(notice)}</span></div></div>`;
+  }
+  const names = segmentNames(r);
   const lb = sel.id ? eff(r).labels.find(l => l.id === sel.id) : null;
   const it = lb && lb.interpretation;
-  return `<div class="card lbpanel">
-    <div class="lbspan"><b>${fmt(a / r.fps)} to ${fmt(b / r.fps)}</b> <span class="sub">frames ${a}–${b - 1} · ${((b - a) / r.fps).toFixed(1)} s</span></div>
+  return `<div class="card lbpanel">${span}
+    ${sel.id ? "" : `<div class="lbfoot"><button class="btn" data-act="cut">Cut these frames</button>
+      <span class="sub">Left out of training. The recording is not changed and you can undo it.</span></div>`}
     <label class="lbq" for="lbtext">What happens here?</label>
-    <textarea id="lbtext" rows="2" maxlength="2000" placeholder="Plain words, e.g. the gripper slips and the policy keeps squeezing; or: my hand blocks the camera, don't use this">${esc(sel.text || "")}</textarea>
+    <textarea id="lbtext" rows="2" maxlength="2000" placeholder="Plain words, e.g. the gripper slips and the policy keeps squeezing; or: my hand blocks the camera, don't use this">${esc(sel.text)}</textarea>
     <div class="lbrow"><span class="lbq">Who drove</span>
       ${["policy", "rescue"].map(d => `<button class="chip" data-driver="${d}" aria-pressed="${sel.driver === d}">${d}</button>`).join("")}</div>
     <div class="lbrow"><span class="lbq">Task segment</span>
-      ${names.map(n => `<button class="chip" data-seg="${esc(n)}" aria-pressed="${sel.segment === n}">${esc(n)}</button>`).join("")}
-      <input id="lbnewseg" class="segin" maxlength="100" placeholder="new segment" value="${sel.segment && !names.includes(sel.segment) ? esc(sel.segment) : ""}"></div>
-    ${it ? `<div class="interp">Agent read this as: <b>${it.train === "exclude" ? "leave out of training" : "keep for training"}</b> · ${esc(it.meaning)}</div>` : ""}
+      ${names.map(n => `<button class="chip" data-seg="${esc(n)}" aria-pressed="${!sel.newseg && sel.segment === n}">${esc(n)}</button>`).join("")}
+      <input id="lbnewseg" class="segin" maxlength="100" placeholder="new segment" value="${esc(sel.newseg)}"></div>
+    <div class="sub">Who drove and the segment are notes for the agent. Only the agent's reading of the label changes training.</div>
+    ${it ? `<div class="interp">Agent read this as: <b>${it.train === "exclude" ? "leave out of training" : "keep for training"}</b> · ${esc(it.meaning)}
+      <br><span class="sub">Saving a change clears this reading until the agent reads the label again.</span></div>` : ""}
     <div class="lbfoot">
-      <button class="btn primary" data-lb="save">${sel.id ? "Save changes" : "Save label"}</button>
-      <button class="btn" data-lb="cancel">Cancel</button>
-      ${sel.id ? `<button class="btn bad" data-lb="delete">Delete</button>` : ""}
-      <span class="lbstatus" id="lbstatus"></span>
+      <button class="btn primary" data-act="save" title="Cmd/Ctrl + Enter">${sel.id ? "Save changes" : "Save label"}</button>
+      <button class="btn" data-act="cancel">Cancel</button>
+      ${sel.id ? `<button class="btn bad" data-act="delete">Delete label</button>` : ""}
+      <span class="lbstatus ${notice ? "bad" : ""}">${esc(notice)}</span>
     </div>
   </div>`;
 }
 
+function aiBar(r) {
+  if (!editing) return "";
+  const sg = suggestions(r);
+  return `<div class="aibar">
+    <button class="btn ai" data-act="idle" title="Runs the built-in idle finder on this run. Your own agent can add suggestions with dataop-logger suggest-cut.">✦ Find idle frames</button>
+    ${sg.length ? `<button class="btn" data-act="cutall">Cut all ${sg.length} suggested</button><button class="btn" data-act="keepall">Keep all</button>` : ""}
+    ${!sel && notice ? `<span class="lbstatus bad">${esc(notice)}</span>` : ""}
+  </div>
+  ${sg.length ? `<div class="card sugg"><h3>Suggested cuts</h3>${sg.map(x => `<div class="srow">
+      <span class="time">${fmt(x.payload.start / r.fps)}–${fmt(x.payload.end / r.fps)}</span>
+      <span class="sdesc">${esc(x.reason || "")}<span class="sub">by ${esc(x.by || "agent")}</span></span>
+      <span class="sbtns"><button class="btn sm" data-show="${x.payload.start}">Show</button>
+      <button class="btn sm" data-cut="${esc(x.id)}">Cut</button><button class="btn sm" data-keep="${esc(x.id)}">Keep</button></span></div>`).join("")}</div>` : ""}`;
+}
+
 // ── one run ───────────────────────────────────────────────────────────────────
 function select(id) {
-  sel = null; editing = false;
-  render(runs.find(r => r.run_id === id), 0);
+  if (current && sel && !sel.id && !sel.cutId && (sel.text || "").trim()) drafts[current.run_id] = sel;
+  const r = runs.find(x => x.run_id === id);
+  sel = drafts[id] || null; editing = !!sel; notice = "";
+  render(r, sel ? sel.start / r.fps : 0);
   drawRows();
 }
 
@@ -167,10 +225,12 @@ function render(r, t0) {
   const dur = r.length / r.fps, take = r.takeovers[0], e = eff(r);
   const extras = Object.entries(r.env).filter(([k]) => k !== "run");
   const pct = f => 100 * f / r.length;
-  const sgs = e.subgoals;
+  const sgs = e.subgoals, cs = cuts(r), sug = editing ? suggestions(r) : [];
+  if (!canEdit(r)) editing = false;
   document.getElementById("detail").innerHTML = `
     <div class="title"><h2>Run ${runNo(r)}</h2>${outcomePill(r)}
       <span class="task">${esc(r.task)}</span></div>
+    ${r.review.error ? `<div class="banner bad">This run's review file could not be read, so editing is off: ${esc(r.review.error)}</div>` : ""}
     <div class="videos">${r.videos.map(v => `<figure><video muted playsinline preload="auto" data-t0="${v.t0}" src="../../${esc(v.src)}"></video>
       <figcaption>${esc(v.key)}</figcaption></figure>`).join("") || `<div class="empty">This episode has no video.</div>`}</div>
     <div class="controls">
@@ -178,26 +238,35 @@ function render(r, t0) {
       <button class="btn" id="speed" title="Playback speed">1×</button>
       <span class="time" id="time"></span>
       <div class="legend">${["base", "expert", "blend", "none"].filter(m => frac(r, m) > 0)
-        .map(m => `<span><i style="background:${color(m)}"></i>${MODE[m]} ${Math.round(100 * frac(r, m))}%</span>`).join("")}</div>
-      ${editable ? `<button class="btn ${editing ? "primary" : ""} editbtn" id="edit" title="E">${editing ? "Done" : "Edit"}</button>` : ""}
+        .map(m => `<span><i style="background:${color(m)}"></i>${MODE[m]} ${Math.round(100 * frac(r, m))}%</span>`).join("")}
+        ${cs.length ? `<span><i class="hatch"></i>cut</span>` : ""}${sug.length ? `<span><i class="sugsw"></i>suggested cut</span>` : ""}</div>
+      ${canEdit(r) ? `<button class="btn ${editing ? "primary" : ""} editbtn" id="edit" title="E">${editing ? "Done" : "Edit"}</button>` : ""}
     </div>
     <div class="timeline ${editing ? "editing" : ""}" id="tl" role="slider" aria-label="Episode position" tabindex="0">
       <div class="lblane">${e.labels.map(l => `<div class="lb ${l.interpretation && l.interpretation.train === "exclude" ? "out" : ""} ${sel && sel.id === l.id ? "on" : ""}"
         data-label="${esc(l.id)}" style="left:${pct(l.start)}%;width:${pct(l.end - l.start)}%"
-        title="${esc([l.text, l.driver, l.segment].filter(Boolean).join(" · "))}">${esc(l.segment || l.driver || l.text)}</div>`).join("")}</div>
+        title="${esc([l.text, l.driver, l.segment].filter(Boolean).join(" · "))}">${esc(l.segment || l.text)}</div>`).join("")}</div>
       <div class="lane">${sgs.map(s => `<div class="sg ${s.status}" style="left:${pct(s.start_frame)}%;width:${pct(s.end_frame - s.start_frame)}%"
         title="${esc(s.name)}: ${s.status}${s.reason ? " (" + esc(s.reason) + ")" : ""}, frames ${s.start_frame}–${s.end_frame}">${esc(s.name)}</div>`).join("")}</div>
       <div class="track">${r.segments.map(s => `<div style="width:${pct(s[1] - s[0])}%;background:${color(s[2])}"
         title="${MODE[s[2]]}${s[3] ? " (" + esc(s[3]) + ")" : ""}: frames ${s[0]}–${s[1]}"></div>`).join("")}</div>
+      ${sug.map(x => `<div class="sugg-span" style="left:${pct(x.payload.start)}%;width:${pct(x.payload.end - x.payload.start)}%" title="${esc(x.reason || "")}"></div>`).join("")}
+      ${cs.map(c => `<div class="cut ${sel && sel.cutId === c.id ? "on" : ""}" data-cut-id="${esc(c.id)}" style="left:${pct(c.start)}%;width:${pct(c.end - c.start)}%" title="Cut${c.reason ? ": " + esc(c.reason) : ""}"></div>`).join("")}
       ${r.events.map(ev => `<div class="mark" style="left:${pct(ev.frame)}%"></div>`).join("")}
       ${sel ? `<div class="selbox" id="selbox" style="left:${pct(sel.start)}%;width:${pct(sel.end - sel.start)}%"></div>` : ""}
       <div class="head" id="head" style="left:0"></div>
     </div>
-    ${labelPanel(r)}
+    ${aiBar(r)}
+    ${selPanel(r)}
     <div class="cols">
       ${e.labels.length ? `<div class="card labels"><h3>Labels</h3>${e.labels.map(l => `<div class="ev" tabindex="0" data-frame="${l.start}" data-open="${esc(l.id)}">
         <span class="time">${fmt(l.start / r.fps)}</span><span>${l.segment ? `<span class="pill tag">${esc(l.segment)}</span> ` : ""}${l.driver ? `<span class="pill tag">${esc(l.driver)}</span> ` : ""}${esc(l.text)}
         ${l.interpretation ? `<span class="sub">agent: ${l.interpretation.train === "exclude" ? "leave out" : "keep"} · ${esc(l.interpretation.meaning)}</span>` : `<span class="sub">not read by an agent yet</span>`}</span></div>`).join("")}</div>` : ""}
+      ${cs.length || corrections(r).length ? `<div class="card"><h3>Left out of training</h3>
+        ${cs.map(c => `<div class="srow"><span class="time">${fmt(c.start / r.fps)}–${fmt(c.end / r.fps)}</span><span class="sdesc">cut${c.reason ? ` · ${esc(c.reason)}` : ""}</span>
+          ${canEdit(r) ? `<span class="sbtns"><button class="btn sm" data-uncut="${esc(c.id)}">Undo</button></span>` : ""}</div>`).join("")}
+        ${corrections(r).map(x => `<div class="srow"><span class="time">${KIND[x.kind]}</span><span class="sdesc">${esc(JSON.stringify(x.payload))}<span class="sub">${x.source === "agent" ? "agent" : "person"}</span></span>
+          ${canEdit(r) ? `<span class="sbtns"><button class="btn sm" data-uncut="${esc(x.id)}">Undo</button></span>` : ""}</div>`).join("")}</div>` : ""}
       <div class="card"><h3>Run</h3><dl>
         <dt>Episode</dt><dd>${r.episode} in the LeRobot dataset</dd>
         ${r.labels.length ? `<dt>Tags</dt><dd>${r.labels.map(human).join(", ")}</dd>` : ""}
@@ -220,9 +289,29 @@ function render(r, t0) {
 
 function openLabel(r, id) {
   const l = eff(r).labels.find(x => x.id === id); if (!l) return;
-  editing = true;
-  sel = { id: l.id, start: l.start, end: l.end, text: l.text, driver: l.driver, segment: l.segment };
+  editing = true; notice = "";
+  const known = segmentNames(r).includes(l.segment);
+  sel = { id: l.id, start: l.start, end: l.end, text: l.text, driver: l.driver,
+          segment: known ? l.segment : null, newseg: known ? "" : (l.segment || "") };
   render(r, l.start / r.fps);
+}
+function openCut(r, id) {
+  const c = cuts(r).find(x => x.id === id); if (!c) return;
+  editing = true; notice = "";
+  sel = { cutId: c.id, start: c.start, end: c.end, text: "", driver: null, segment: null, newseg: "" };
+  render(r, c.start / r.fps);
+}
+
+async function act(r, what) {
+  if (what === "cancel") { sel = null; notice = ""; delete drafts[r.run_id]; return render(r, player.t); }
+  if (what === "save") return saveLabel(r);
+  if (what === "delete" && sel && sel.id) { const id = sel.id; sel = null; return decide(r, id, false); }
+  if (what === "uncut" && sel && sel.cutId) { const id = sel.cutId; sel = null; return decide(r, id, false); }
+  if (what === "cut" && sel) { const s = sel; sel = null; delete drafts[r.run_id]; return send(r, { op: "add", kind: "exclude", payload: { start: s.start, end: s.end } }); }
+  if (what === "idle") return send(r, { op: "find_idle" });
+  if (what === "cutall" || what === "keepall") {
+    for (const x of suggestions(r)) if (!(await decide(r, x.id, what === "cutall"))) return;
+  }
 }
 
 function wire(r, t0) {
@@ -259,12 +348,15 @@ function wire(r, t0) {
   playBtn.onclick = p.toggle;
   speedBtn.onclick = () => { rate = rate === 1 ? 2 : rate === 2 ? 4 : 1; speedBtn.textContent = rate + "×"; vids.forEach(v => v.playbackRate = rate); };
   const editBtn = document.getElementById("edit");
-  if (editBtn) editBtn.onclick = () => { editing = !editing; sel = null; render(r, p.t); };
+  if (editBtn) editBtn.onclick = () => { editing = !editing; if (!editing) sel = null; notice = ""; render(r, p.t); };
 
   const toFrame = x => { const b = tl.getBoundingClientRect(); return Math.max(0, Math.min(r.length, Math.round((x - b.left) / b.width * r.length))); };
   tl.onpointerdown = ev => {
-    const lbEl = ev.target.closest(".lb");
-    if (lbEl && editable) { ev.preventDefault(); return openLabel(r, lbEl.dataset.label); }
+    if (canEdit(r)) {
+      const lbEl = ev.target.closest(".lb"), cutEl = ev.target.closest(".cut");
+      if (lbEl) { ev.preventDefault(); return openLabel(r, lbEl.dataset.label); }
+      if (cutEl && editing) { ev.preventDefault(); return openCut(r, cutEl.dataset.cutId); }
+    }
     tl.setPointerCapture(ev.pointerId);
     if (!editing) {
       p.seek(toFrame(ev.clientX) / r.fps);
@@ -272,7 +364,7 @@ function wire(r, t0) {
       tl.onpointerup = () => { tl.onpointermove = tl.onpointerup = null; };
       return;
     }
-    // edit mode: dragging selects a span of frames
+    // edit mode: dragging selects a span; with a label or cut open it changes that one's span
     const a = toFrame(ev.clientX);
     let b = a;
     pause();
@@ -288,54 +380,53 @@ function wire(r, t0) {
       tl.onpointermove = tl.onpointerup = null;
       let lo = Math.min(a, b), hi = Math.max(a, b);
       if (hi - lo < 2) {                         // a click selects about one second around it
-        lo = Math.max(0, lo - Math.round(r.fps / 2));
+        lo = Math.max(0, Math.min(r.length - r.fps, lo - Math.round(r.fps / 2)));
         hi = Math.min(r.length, lo + r.fps);
       }
-      sel = { start: lo, end: hi, text: "", driver: null, segment: null };
+      if (sel && sel.cutId) sel = null;          // a cut's span is fixed: undo it and cut again
+      sel = sel ? { ...sel, start: lo, end: hi } : { start: lo, end: hi, text: "", driver: null, segment: null, newseg: "" };
+      notice = "";
       render(r, lo / r.fps);
-      const t = document.getElementById("lbtext"); if (t) t.focus();
+      const t = document.getElementById("lbtext"); if (t && !sel.id) t.focus();
     };
   };
   document.querySelectorAll(".ev").forEach(el => {
-    const go = () => el.dataset.open && editable ? openLabel(r, el.dataset.open) : p.seek(Math.max(0, +el.dataset.frame / r.fps - 1));
+    const go = () => el.dataset.open && canEdit(r) ? openLabel(r, el.dataset.open) : p.seek(Math.max(0, +el.dataset.frame / r.fps - 1));
     el.onclick = go; el.onkeydown = ev => { if (ev.key === "Enter") { ev.stopPropagation(); go(); } };
   });
-  const panel = document.querySelector(".lbpanel");
-  if (panel) {
-    const keepText = () => { const t = document.getElementById("lbtext"); if (t) sel.text = t.value; };
-    panel.onclick = ev => {
-      const b = ev.target.closest("button"); if (!b) return;
-      keepText();
-      if (b.dataset.driver) { sel.driver = sel.driver === b.dataset.driver ? null : b.dataset.driver; return render(r, p.t); }
-      if (b.dataset.seg !== undefined) { sel.segment = sel.segment === b.dataset.seg ? null : b.dataset.seg; return render(r, p.t); }
-      if (b.dataset.lb === "save") {
-        const ns = document.getElementById("lbnewseg").value.trim();
-        if (ns) sel.segment = ns;
-        return saveLabel(r);
-      }
-      if (b.dataset.lb === "cancel") { sel = null; return render(r, p.t); }
-      if (b.dataset.lb === "delete") return deleteLabel(r);
-    };
-  }
+  const text = document.getElementById("lbtext"), newseg = document.getElementById("lbnewseg");
+  if (text) text.oninput = () => { sel.text = text.value; };
+  if (newseg) newseg.oninput = () => { sel.newseg = newseg.value; };
+  document.getElementById("detail").onclick = ev => {
+    const b = ev.target.closest("button"); if (!b || b.id) return;
+    if (b.dataset.driver) { sel.driver = sel.driver === b.dataset.driver ? null : b.dataset.driver; return render(r, p.t); }
+    if (b.dataset.seg !== undefined) { sel.segment = sel.segment === b.dataset.seg && !sel.newseg ? null : b.dataset.seg; sel.newseg = ""; return render(r, p.t); }
+    if (b.dataset.show !== undefined) return p.seek(Math.max(0, +b.dataset.show / r.fps - 0.5));
+    if (b.dataset.cut) return decide(r, b.dataset.cut, true);
+    if (b.dataset.keep) return decide(r, b.dataset.keep, false);
+    if (b.dataset.uncut) return decide(r, b.dataset.uncut, false);
+    if (b.dataset.act) return act(r, b.dataset.act);
+  };
   vids.forEach(v => v.addEventListener("loadedmetadata", () => { v.currentTime = +v.dataset.t0 + p.t; }, { once: true }));
   paint();
 }
 
 document.addEventListener("keydown", e => {
-  if (!current || !player || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (!current || !player || e.altKey) return;
   if (e.target.closest("textarea, input")) {
-    if (e.key === "Enter" && e.target.id === "lbtext" && !e.shiftKey) { e.preventDefault(); document.querySelector('[data-lb="save"]').click(); }
-    if (e.key === "Escape") { sel = null; render(current, player.t); }
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); act(current, "save"); }
+    else if (e.key === "Escape") act(current, "cancel");
     return;
   }
+  if (e.metaKey || e.ctrlKey) return;
   const r = current, k = e.key, n = e.shiftKey ? 1 : 15;
   if (k === " ") { e.preventDefault(); player.toggle(); }
   else if (k === "ArrowRight") { e.preventDefault(); player.seek(player.t + n / r.fps); }
   else if (k === "ArrowLeft") { e.preventDefault(); player.seek(player.t - n / r.fps); }
   else if (k === "j" || k === "ArrowDown") { e.preventDefault(); step(1); }
   else if (k === "k" || k === "ArrowUp") { e.preventDefault(); step(-1); }
-  else if (k === "e" && editable) { editing = !editing; sel = null; render(r, player.t); }
-  else if (k === "Escape") { sel = null; render(r, player.t); }
+  else if (k === "e" && canEdit(r)) { editing = !editing; if (!editing) sel = null; render(r, player.t); }
+  else if (k === "Escape" && sel) act(r, "cancel");
 });
 
 redrawList();

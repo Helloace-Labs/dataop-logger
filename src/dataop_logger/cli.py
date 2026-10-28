@@ -1,4 +1,4 @@
-"""dataop-logger validate | repair | inspect | remap | view | labels | interpret | propose"""
+"""dataop-logger validate | repair | inspect | remap | view | labels | interpret | find-idle | suggest-cut"""
 from __future__ import annotations
 
 import argparse
@@ -9,6 +9,15 @@ from . import validate as V
 
 
 def main(argv=None) -> int:
+    from .review import ReviewError
+    try:
+        return _main(argv)
+    except ReviewError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+
+def _main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="dataop-logger")
     sub = p.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("validate", help="check the sidecar against the LeRobot data on disk")
@@ -38,8 +47,18 @@ def main(argv=None) -> int:
     it.add_argument("label_id")
     it.add_argument("--train", required=True, choices=["keep", "exclude"])
     it.add_argument("--meaning", required=True, help="one sentence: what the person meant")
-    q = sub.add_parser("propose", help="add agent review proposals (failure start, idle trims) to committed runs")
+    it.add_argument("--by", default="agent", help="name of the agent")
+    it.add_argument("--replace", action="store_true", help="change an existing interpretation (kept in history)")
+    q = sub.add_parser("find-idle", help="AI feature: suggest cutting idle stretches (built-in finder)")
     q.add_argument("root")
+    q.add_argument("--run", default=None, help="only this run id")
+    sc = sub.add_parser("suggest-cut", help="for your own agent: suggest cutting frames [start, end) of a run")
+    sc.add_argument("root")
+    sc.add_argument("run_id")
+    sc.add_argument("start", type=int)
+    sc.add_argument("end", type=int)
+    sc.add_argument("--reason", required=True, help="short description shown to the person")
+    sc.add_argument("--by", default="agent", help="name of the agent making the suggestion")
     a = p.parse_args(argv)
 
     if a.cmd == "validate":
@@ -78,15 +97,29 @@ def main(argv=None) -> int:
         from . import review, store
         for run_path, m in store.iter_manifests(Path(a.root), "committed"):
             if m["run_id"] == a.run_id:
-                review.interpret(run_path, a.label_id, a.train, a.meaning)
+                review.interpret(run_path, a.label_id, a.train, a.meaning, by=a.by, replace=a.replace)
                 print(f"{a.label_id}: {a.train} ({a.meaning})")
                 return 0
         print(f"no committed run {a.run_id}", file=sys.stderr)
         return 1
-    if a.cmd == "propose":
-        from . import review
-        for line in review.propose(a.root):
-            print(line)
+    if a.cmd in ("find-idle", "suggest-cut"):
+        from . import review, store
+        found = False
+        for run_path, m in store.iter_manifests(Path(a.root), "committed"):
+            want = a.run if a.cmd == "find-idle" else a.run_id
+            if want and m["run_id"] != want:
+                continue
+            found = True
+            if a.cmd == "find-idle":
+                for e in review.find_idle(a.root, run_path, m):
+                    p = e["payload"]
+                    print(f"{m['run_id']}: suggest cut {p['start']}-{p['end']} ({e['reason']})")
+            else:
+                e = review.suggest_cut(run_path, m, a.start, a.end, a.reason, by=a.by)
+                print(f"{m['run_id']}: suggested cut {a.start}-{a.end} ({e['id']})")
+        if not found:
+            print("no matching committed run", file=sys.stderr)
+            return 1
         return 0
     return 2
 

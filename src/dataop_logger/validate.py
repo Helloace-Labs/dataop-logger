@@ -185,7 +185,7 @@ def _check_run(run_path: Path, m: dict, episodes: dict, errors: list) -> bool:
         err("run_id is not a UUID matching its directory name")
     from . import review as rv
     try:
-        rv.load(run_path)
+        rv.effective(m, rv.load(run_path))
     except rv.ReviewError as e:
         err(f"review.json: {e}")
     for ev_ in m["events"]:
@@ -358,7 +358,7 @@ def inspect(root: Path) -> dict:
     outcomes, minutes, takeovers, runs = defaultdict(int), defaultdict(float), 0, 0
     failure_modes, failed_subgoals = defaultdict(int), defaultdict(int)
     from . import review as rv
-    eff_outcomes, eff_modes, reviewed, pending, rejected = defaultdict(int), defaultdict(int), 0, 0, 0
+    eff_outcomes, eff_modes, pending, rejected, labels, cut_frames = defaultdict(int), defaultdict(int), 0, 0, 0, 0
     for run_path, m in store.iter_manifests(root, "committed"):
         runs += 1
         outcomes[m["termination_reason"]] += 1
@@ -367,8 +367,9 @@ def inspect(root: Path) -> dict:
             failure_modes[m["failure_mode"]] += 1
         r = rv.load(run_path)
         eff = rv.effective(m, r)
-        reviewed += bool(r["reviewed"])
         pending += sum(e["status"] == "proposed" for e in r["edits"])
+        labels += len(eff["labels"])
+        cut_frames += sum(x["end"] - x["start"] for x in eff["excludes"])
         if eff["rejected"]:
             rejected += 1
         else:
@@ -385,7 +386,7 @@ def inspect(root: Path) -> dict:
     return {"runs": runs, "outcomes": dict(outcomes), "takeovers": takeovers,
             "failure_modes": dict(failure_modes), "failed_subgoals": dict(failed_subgoals),
             "after_review": {"outcomes": dict(eff_outcomes), "failure_modes": dict(eff_modes), "rejected_runs": rejected,
-                             "reviewed_runs": reviewed, "open_proposals": pending},
+                             "labels": labels, "cut_frames": cut_frames, "open_suggestions": pending},
             "minutes_by_control_mode": {k: round(v, 2) for k, v in minutes.items()}}
 
 

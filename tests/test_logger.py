@@ -690,16 +690,11 @@ def test_review_undo_chain_and_reviewed_rules(tmp_path):
     rv.add_edit(run.run_path, m, "failure_start", {"frame": 5})
     rv.add_edit(run.run_path, m, "outcome", {"termination_reason": "success", "failure_mode": None})
     assert rv.effective(m, rv.load(run.run_path))["failure_start"] is None
-    # pending proposals block "reviewed"; a new proposal reopens a reviewed run
+    # only proposals can be accepted; accepted edits can only be undone
     p = rv.add_edit(run.run_path, m, "exclude", {"start": 0, "end": 2}, source="agent")
+    rv.decide(run.run_path, m, p["id"], True)
     with pytest.raises(rv.ReviewError):
-        rv.set_reviewed(run.run_path, True)
-    rv.decide(run.run_path, m, p["id"], False)
-    rv.set_reviewed(run.run_path, True)
-    assert not rv.needs_review(m, rv.load(run.run_path))
-    rv.add_edit(run.run_path, m, "exclude", {"start": 3, "end": 4}, source="agent")
-    r = rv.load(run.run_path)
-    assert r["reviewed"] is False and rv.needs_review(m, r)
+        rv.decide(run.run_path, m, p["id"], True, {"start": 5, "end": 9})
     with pytest.raises(rv.ReviewError):
         rv.decide(run.run_path, m, p["id"], "false")
     with pytest.raises(rv.ReviewConflict):
@@ -727,30 +722,66 @@ def test_review_concurrent_writers_lose_nothing(tmp_path):
     assert len(r["edits"]) == 60 and r["rev"] == 60
 
 
-def test_propose_uses_corrections_and_handles_edge_cases(tmp_path):
+def test_find_idle_and_suggest_cut(tmp_path):
     from dataop_logger import review as rv
+    from dataop_logger.cli import main
     ds = make_ds(tmp_path)
     with RunLogger(ds, SCHEMA) as log:
-        for _ in range(3):
-            record(log, 20)
-        failed = _failed_run_with_steps(log)
-        with log.run(task=TASK) as still:                          # nothing moves
-            for i in range(10):
-                run_frame = np.zeros(6, np.float32)
-                still.add_frame(frame(i), sent_action=run_frame, base_action=run_frame, control_mode="base",
-                                inference_id=i, chunk_offset=0, **ts())
-            still.end(termination_reason="failure")
-        corrected = _failed_run_with_steps(log)
+        with log.run(task=TASK) as run:                 # moves, sits still for 2 s, moves again
+            for i in range(120):
+                q = np.full(6, 50.0 if 30 <= i < 90 else float(i), np.float32)
+                run.add_frame({"observation.state": q, "task": TASK}, sent_action=q, base_action=q,
+                              control_mode="base", inference_id=i, chunk_offset=0, **ts())
+            run.end(termination_reason="success")
     ds.finalize()
-    mc = store.read_manifest(corrected.run_path)
-    rv.add_edit(corrected.run_path, mc, "outcome", {"termination_reason": "success", "failure_mode": None})
-    lines = rv.propose(ds.root)
-    assert any(failed.run_id in x and "failure_start 10" in x for x in lines)
-    assert any(still.run_id in x and "reject_run" in x for x in lines)
-    assert not any(corrected.run_id in x and "failure_start" in x for x in lines)
-    assert rv.propose(ds.root) == []
-    info = V.inspect(ds.root)
-    assert info["after_review"]["open_proposals"] >= 2 and info["after_review"]["outcomes"]["success"] == 4
+    m = store.read_manifest(run.run_path)
+    sugg = rv.find_idle(ds.root, run.run_path, m)
+    assert [(e["payload"]["start"], e["payload"]["end"]) for e in sugg] == [(30, 90)]
+    assert "still for 2.0 s mid-run, policy driving" in sugg[0]["reason"] and sugg[0]["by"] == "dataop idle finder (measured joints)"
+    assert rv.find_idle(ds.root, run.run_path, m)[0]["id"] == sugg[0]["id"]          # asking twice adds nothing
+    assert rv.train_mask(m, rv.load(run.run_path), ["base"] * 120).all()             # a suggestion cuts nothing
+    rv.decide(run.run_path, m, sugg[0]["id"], True)
+    assert not rv.train_mask(m, rv.load(run.run_path), ["base"] * 120)[30:90].any()
+    assert main(["suggest-cut", str(ds.root), run.run_id, "0", "10", "--reason", "warm-up", "--by", "my-agent"]) == 0
+    mine = [e for e in rv.load(run.run_path)["edits"] if e.get("by") == "my-agent"]
+    assert len(mine) == 1 and mine[0]["status"] == "proposed"
+    assert main(["suggest-cut", str(ds.root), run.run_id, "5", "5", "--reason", "x"]) == 2
+    assert V.inspect(ds.root)["after_review"]["cut_frames"] == 60
+
+
+def test_interpretation_is_not_silently_replaced(tmp_path):
+    from dataop_logger import review as rv
+    ds, run, m = _review_fixture(tmp_path)
+    lb = rv.add_edit(run.run_path, m, "label", {"start": 1, "end": 3, "text": "blocked camera"})
+    rv.interpret(run.run_path, lb["id"], "exclude", "camera blocked", by="agent-a")
+    with pytest.raises(rv.ReviewError):
+        rv.interpret(run.run_path, lb["id"], "keep", "looks fine", by="agent-b")
+    e = rv.interpret(run.run_path, lb["id"], "keep", "looks fine", by="agent-b", replace=True)
+    assert e["interpretation"]["train"] == "keep" and e["interpretation_history"][0]["by"] == "agent-a"
+    with pytest.raises(rv.ReviewError):                          # an interpreted label cannot be re-aimed in place
+        rv.decide(run.run_path, m, lb["id"], True, {"start": 6, "end": 9, "text": "other"})
+
+
+def test_malformed_stored_review_fails_closed(tmp_path):
+    from dataop_logger import review as rv, viewer
+    ds, run, m = _review_fixture(tmp_path)
+    lb = rv.add_edit(run.run_path, m, "label", {"start": 1, "end": 3, "text": "x"})
+    rv.interpret(run.run_path, lb["id"], "exclude", "drop")
+    r = json.loads((run.run_path / "review.json").read_text())
+    r["edits"][0]["interpretation"]["train"] = "exlcude"
+    (run.run_path / "review.json").write_text(json.dumps(r))
+    with pytest.raises(rv.ReviewError):
+        rv.effective(m, rv.load(run.run_path))
+    assert not V.validate(ds.root)["ok"]
+    with pytest.raises(ValueError):
+        DataopDataset(lerobot_dataset.LeRobotDataset("test/ds", root=ds.root), check=False)
+    state = viewer.collect(ds.root)["runs"][0]["review"]
+    assert state["error"] and state["rev"] == -1
+    r["edits"][0]["interpretation"]["train"] = "exclude"
+    r["edits"][0]["payload"]["start"] = -4
+    (run.run_path / "review.json").write_text(json.dumps(r))
+    with pytest.raises(rv.ReviewError):
+        rv.effective(m, rv.load(run.run_path))
 
 
 def test_logger_rejects_bad_step_order_and_success_failure_mode(tmp_path):
@@ -794,19 +825,13 @@ def test_range_parsing():
         assert _parse_range(bad, 1000) is None
 
 
-def test_propose_and_review_api(tmp_path):
+def test_review_api(tmp_path):
     import functools
     import http.client
     import http.server
     import threading
     from dataop_logger import review as rv, viewer
-    ds = make_ds(tmp_path)
-    with RunLogger(ds, SCHEMA) as log:
-        for _ in range(3):
-            record(log, 20)
-        run = _failed_run_with_steps(log)
-    ds.finalize()
-    assert any("failure_start" in line for line in rv.propose(ds.root))
+    ds, run, m = _review_fixture(tmp_path)
 
     def start(editable):
         h = type("H", (viewer._RangeHandler,), {"dataset_root": Path(ds.root), "editable": editable})
@@ -827,34 +852,39 @@ def test_propose_and_review_api(tmp_path):
         return r.status, json.loads(r.read())
 
     rid = run.run_id
+    lbl = {"op": "add", "kind": "label", "payload": {"start": 1, "end": 4, "text": "x"}}
     try:
-        rev = rv.load(run.run_path)["rev"]
-        base = {"run_id": rid, "rev": rev}
-        assert post({**base, "op": "add", "kind": "note", "payload": {"frame": 1, "text": "x"}}, **{"X-Dataop": "0"})[0] == 403
+        base = {"run_id": rid, "rev": 0}
+        assert post({**base, **lbl}, **{"X-Dataop": "0"})[0] == 403
         for origin in ("http://evil.example", "null"):
-            assert post({**base, "op": "add", "kind": "note", "payload": {"frame": 1, "text": "x"}}, Origin=origin)[0] == 403
-        assert post({**base, "op": "add", "kind": "note", "payload": {"frame": 1, "text": "x"}},
-                    Host=f"evil.example:{port}")[0] == 403
-        assert post({**base, "op": "add", "kind": "note", "payload": {"frame": 1, "text": "x"}},
-                    port=ro.server_address[1])[0] == 403
-        assert post({"run_id": "nope", "rev": 0, "op": "reviewed", "reviewed": True})[0] == 400
-        assert post({"run_id": rid, "op": "reviewed", "reviewed": True})[0] == 400           # rev missing
-        code, state = post({**base, "op": "add", "kind": "exclude", "payload": {"start": 1, "end": 4}})
-        assert code == 200 and state["effective"]["excludes"] == [{"start": 1, "end": 4}] and state["rev"] == rev + 1
-        code, out = post({**base, "op": "add", "kind": "exclude", "payload": {"start": 5, "end": 6}})      # stale rev
-        assert code == 409 and out["state"]["rev"] == rev + 1
-        prop = next(e for e in state["edits"] if e["status"] == "proposed")
+            assert post({**base, **lbl}, Origin=origin)[0] == 403
+        assert post({**base, **lbl}, Host=f"evil.example:{port}")[0] == 403
+        assert post({**base, **lbl}, port=ro.server_address[1])[0] == 403
+        assert post({"run_id": "nope", "rev": 0, **lbl})[0] == 400
+        assert post({"run_id": rid, **lbl})[0] == 400                                      # rev missing
+        assert post({**base, "op": "add", "kind": "reject_run", "payload": {}})[0] == 400  # viewer adds labels and cuts only
+        assert post({**base, "op": "add", "kind": "label", "payload": {"start": 1, "end": 4, "driver": "policy"}})[0] == 400
+        code, state = post({**base, **lbl})
+        assert code == 200 and state["rev"] == 1 and state["effective"]["labels"][0]["text"] == "x"
+        assert post({**base, **lbl})[0] == 409                                             # stale rev
+        lid = state["effective"]["labels"][0]["id"]
+        code, state = post({"run_id": rid, "rev": 1, "op": "replace", "edit_id": lid,
+                            "payload": {"start": 2, "end": 5, "text": "y", "segment": "regrasp"}})
+        assert code == 200 and state["effective"]["labels"][0]["segment"] == "regrasp"
+        code, state = post({"run_id": rid, "rev": state["rev"], "op": "find_idle"})
+        assert code == 200
+        code, state = post({"run_id": rid, "rev": state["rev"], "op": "add", "kind": "exclude", "payload": {"start": 0, "end": 3}})
+        cut = next(e for e in state["edits"] if e["kind"] == "exclude" and e["status"] == "accepted")
         for bad in ("false", 0, None):
-            assert post({"run_id": rid, "rev": rev + 1, "op": "decide", "edit_id": prop["id"], "accept": bad})[0] == 400
-        assert post({"run_id": rid, "rev": rev + 1, "op": "reviewed", "reviewed": True})[0] == 400        # pending
-        code, state = post({"run_id": rid, "rev": rev + 1, "op": "decide", "edit_id": prop["id"], "accept": True})
-        code, state = post({"run_id": rid, "rev": state["rev"], "op": "reviewed", "reviewed": True})
-        assert code == 200 and state["reviewed"] is True and state["needs_review"] is False
+            assert post({"run_id": rid, "rev": state["rev"], "op": "decide", "edit_id": cut["id"], "accept": bad})[0] == 400
+        code, state = post({"run_id": rid, "rev": state["rev"], "op": "decide", "edit_id": cut["id"], "accept": False})
+        assert code == 200 and state["effective"]["excludes"] == []
         c = http.client.HTTPConnection("127.0.0.1", port)
         c.request("GET", "/dataop/view/")
-        page = c.getresponse().read().decode()
+        resp = c.getresponse()
+        page = resp.read().decode()
+        assert resp.getheader("X-Frame-Options") == "DENY" and "frame-ancestors 'none'" in resp.getheader("Content-Security-Policy")
         assert '"editable": true' in page and "/*__DATA__*/null" not in page and "__NONCE__" not in page
-        assert "Content-Security-Policy" in page and '"reviewed": true' in page
     finally:
         srv.shutdown()
         ro.shutdown()
