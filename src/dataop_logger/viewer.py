@@ -169,21 +169,14 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
             if isinstance(rev, bool) or not isinstance(rev, int):
                 raise rv.ReviewError("rev (the review revision the page shows) is required")
             op, summary = req.get("op"), None
-            if op == "add":
-                if req.get("kind") not in ("label", "exclude"):
-                    raise rv.ReviewError("the viewer adds labels and cuts only")
-                payload = req.get("payload", {})
-                rv.add_edit(run_path, m, req.get("kind"), payload, source="human", expect_rev=rev)
-            elif op == "decide":
-                rv.decide(run_path, m, req.get("edit_id"), req.get("accept"), req.get("payload"), expect_rev=rev)
-            elif op == "find_idle":                      # AI feature with the built-in model
-                found = rv.find_idle(self.dataset_root, run_path, m, expect_rev=rev)
-                summary = {k: sum(f["status"] == k for f in found)
-                           for k in ("created", "already_suggested", "already_cut", "previously_kept")}
-            elif op == "replace":
-                rv.replace_edit(run_path, m, req.get("edit_id"), req.get("payload"), expect_rev=rev)
-            else:
-                raise rv.ReviewError("op must be add, decide, replace or find_idle")
+            what = req.get("what") if isinstance(req.get("what"), str) and 0 < len(req.get("what")) <= 120 else op
+            if op == "undo":
+                entry = rv.undo(run_path, req.get("entry_id"), expect_rev=rev)
+                state = _review_state(run_path, m)
+                state["undone"] = {"entry": entry["id"], "what": entry["what"]}
+                return self._json(200, state)
+            with rv.recording(what) as rec:             # one undoable step (Cmd/Ctrl+Z in the page)
+                summary = self._apply(op, req, run_path, m, rev)
         except rv.ReviewConflict as e:
             return self._json(409, {"error": str(e), "state": _review_state(run_path, m)})
         except (rv.ReviewError, ValueError, KeyError, TypeError) as e:
@@ -191,7 +184,30 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
         state = _review_state(run_path, m)
         if op == "find_idle":
             state["found"] = summary
+        if rec["entry"]:
+            state["step"] = {"entry": rec["entry"], "what": rec["what"]}
         return self._json(200, state)
+
+    def _apply(self, op, req, run_path, m, rev):
+        summary = None
+        if op == "add":
+            if req.get("kind") not in ("label", "exclude"):
+                raise rv.ReviewError("the viewer adds labels and cuts only")
+            payload = req.get("payload", {})
+            rv.add_edit(run_path, m, req.get("kind"), payload, source="human", expect_rev=rev)
+        elif op == "decide":
+            rv.decide(run_path, m, req.get("edit_id"), req.get("accept"), req.get("payload"), expect_rev=rev)
+        elif op == "decide_many":
+            rv.decide_many(run_path, m, req.get("edit_ids"), req.get("accept"), expect_rev=rev)
+        elif op == "find_idle":                      # AI feature with the built-in model
+            found = rv.find_idle(self.dataset_root, run_path, m, expect_rev=rev)
+            summary = {k: sum(f["status"] == k for f in found)
+                       for k in ("created", "already_suggested", "already_cut", "previously_kept")}
+        elif op == "replace":
+            rv.replace_edit(run_path, m, req.get("edit_id"), req.get("payload"), expect_rev=rev)
+        else:
+            raise rv.ReviewError("op must be add, decide, decide_many, replace, find_idle or undo")
+        return summary
 
     def send_head(self):
         rng = self.headers.get("Range")

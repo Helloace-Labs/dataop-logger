@@ -14,6 +14,7 @@ let editing = false;            // edit mode for the open run
 let sel = null;                 // {start, end, id?, cutId?, text, driver, segment, newseg} while editing a span
 let notice = "";                // last save problem, shown until the next action
 const drafts = {};              // run_id -> unsaved sel, kept when switching runs
+const undoStack = [];           // [{run_id, entry, what}] newest last: Cmd/Ctrl+Z reverts them in order
 
 const eff = r => r.review.effective;
 const runNo = r => esc(r.env.run ?? r.episode + 1);
@@ -142,6 +143,7 @@ async function send(r, body) {
     }
     if (!res.ok) throw new Error(out.error || res.statusText);
     r.review = out;
+    if (out.step) { undoStack.push({ run_id: r.run_id, ...out.step }); if (undoStack.length > 100) undoStack.shift(); }
     if (out.found) {
       const f = out.found, n = f.created + f.already_suggested + f.already_cut + f.previously_kept;
       notice = n === 0 ? "No idle stretches found in this run."
@@ -166,14 +168,29 @@ async function saveLabel(r) {
   const payload = { start: sel.start, end: sel.end, text: sel.text, driver: sel.driver, segment: sel.newseg.trim() || sel.segment };
   const keep = sel;
   sel = null;
-  const ok = keep.id ? await send(r, { op: "replace", edit_id: keep.id, payload }) : await send(r, { op: "add", kind: "label", payload });
+  const what = (keep.id ? "change label: " : "label: ") + keep.text.trim().slice(0, 60);
+  const ok = keep.id ? await send(r, { op: "replace", edit_id: keep.id, payload, what }) : await send(r, { op: "add", kind: "label", payload, what });
   if (!ok && !sel) {
     if (keep.id && !eff(r).labels.some(l => l.id === keep.id)) keep.id = null;   // deleted elsewhere: keep as a new label
     sel = keep; render(r, player.t);
   }
   if (ok) discard(r);
 }
-const decide = (r, id, accept) => send(r, { op: "decide", edit_id: id, accept });
+const decide = (r, id, accept, what) => send(r, { op: "decide", edit_id: id, accept, what });
+const span = (r, p) => `${fmt(p.start / r.fps)}–${fmt(p.end / r.fps)}`;
+function editSpan(r, id) { const e = r.review.edits.find(x => x.id === id); return e && e.payload.start !== undefined ? " " + span(r, e.payload) : ""; }
+
+async function undoLast() {
+  const top = undoStack[undoStack.length - 1];
+  if (!top) { notice = "Nothing to undo."; noticeOk = true; return current && render(current, player.t); }
+  if (current && busy(current)) return;
+  const r = runs.find(x => x.run_id === top.run_id);
+  if (current !== r) { sel = null; editing = true; render(r, 0); drawRows(); }
+  undoStack.pop();
+  if (await send(r, { op: "undo", entry_id: top.entry })) {
+    sel = null; notice = `Undid ${top.what}.`; noticeOk = true; render(r, player.t);
+  }
+}
 
 function selPanel(r) {
   if (!editing) return "";
@@ -258,6 +275,7 @@ function render(r, t0) {
       <div class="legend">${["base", "expert", "blend", "none"].filter(m => frac(r, m) > 0)
         .map(m => `<span><i style="background:${color(m)}"></i>${MODE[m]} ${Math.round(100 * frac(r, m))}%</span>`).join("")}
         ${cs.length ? `<span><i class="hatch"></i>cut</span>` : ""}${sug.length ? `<span><i class="sugsw"></i>suggested cut</span>` : ""}</div>
+      ${editable && undoStack.length ? `<button class="btn undobtn" data-act="undo" title="Undo ${esc(undoStack[undoStack.length - 1].what)} (Cmd/Ctrl+Z)">↶ Undo</button>` : ""}
       ${canEdit(r) ? `<button class="btn ${editing ? "primary" : ""} editbtn" id="edit" title="E">${editing ? "Done" : "Edit"}</button>` : ""}
     </div>
     <div class="timeline ${editing ? "editing" : ""}" id="tl" role="slider" aria-label="Episode position" tabindex="0">
@@ -330,17 +348,20 @@ function openCut(r, id) {
 async function act(r, what) {
   if (what === "cancel") { discard(r); notice = ""; return render(r, player.t); }
   if (what === "save") return saveLabel(r);
-  if (what === "delete" && sel && sel.id) { const id = sel.id; sel = null; return decide(r, id, false); }
-  if (what === "uncut" && sel && sel.cutId) { const id = sel.cutId; sel = null; return decide(r, id, false); }
+  if (what === "delete" && sel && sel.id) { const id = sel.id; sel = null; return decide(r, id, false, "delete label"); }
+  if (what === "uncut" && sel && sel.cutId) { const id = sel.cutId; sel = null; return decide(r, id, false, "undo cut" + editSpan(r, id)); }
   if (what === "cut" && sel) {
     const keep = sel; sel = null;
-    if (await send(r, { op: "add", kind: "exclude", payload: { start: keep.start, end: keep.end } })) delete drafts[r.run_id];
+    if (await send(r, { op: "add", kind: "exclude", payload: { start: keep.start, end: keep.end }, what: "cut " + span(r, keep) }))
+      delete drafts[r.run_id];
     else if (!sel) { sel = keep; render(r, player.t); }      // keep the selection so the person can try again
     return;
   }
-  if (what === "idle") return send(r, { op: "find_idle" });
+  if (what === "idle") return send(r, { op: "find_idle", what: "find idle frames" });
   if (what === "cutall" || what === "keepall") {
-    for (const x of suggestions(r)) if (!(await decide(r, x.id, what === "cutall"))) return;
+    const ids = suggestions(r).map(x => x.id);
+    return send(r, { op: "decide_many", edit_ids: ids, accept: what === "cutall",
+                     what: `${what === "cutall" ? "cut" : "keep"} ${ids.length} suggested` });
   }
 }
 
@@ -433,9 +454,10 @@ function wire(r, t0) {
     if (b.dataset.driver) { sel.driver = sel.driver === b.dataset.driver ? null : b.dataset.driver; sel.dirty = true; return render(r, p.t); }
     if (b.dataset.seg !== undefined) { sel.segment = sel.segment === b.dataset.seg && !sel.newseg ? null : b.dataset.seg; sel.newseg = ""; sel.dirty = true; return render(r, p.t); }
     if (b.dataset.show !== undefined) return p.seek(Math.max(0, +b.dataset.show / r.fps - 0.5));
-    if (b.dataset.cut) return decide(r, b.dataset.cut, true);
-    if (b.dataset.keep) return decide(r, b.dataset.keep, false);
-    if (b.dataset.uncut) return decide(r, b.dataset.uncut, false);
+    if (b.dataset.cut) return decide(r, b.dataset.cut, true, "accept" + editSpan(r, b.dataset.cut));
+    if (b.dataset.keep) return decide(r, b.dataset.keep, false, "keep" + editSpan(r, b.dataset.keep));
+    if (b.dataset.uncut) return decide(r, b.dataset.uncut, false, "undo" + editSpan(r, b.dataset.uncut));
+    if (b.dataset.act === "undo") return undoLast();
     if (b.dataset.act) return act(r, b.dataset.act);
   };
   vids.forEach(v => v.addEventListener("loadedmetadata", () => { v.currentTime = +v.dataset.t0 + p.t; }, { once: true }));
@@ -449,6 +471,7 @@ document.addEventListener("keydown", e => {
     else if (e.key === "Escape") act(current, "cancel");
     return;
   }
+  if ((e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === "z" && editable) { e.preventDefault(); return undoLast(); }
   if (e.metaKey || e.ctrlKey) return;
   const r = current, k = e.key, n = e.shiftKey ? 1 : 15;
   if (k === " ") { e.preventDefault(); player.toggle(); }

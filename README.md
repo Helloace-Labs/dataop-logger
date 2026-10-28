@@ -163,6 +163,8 @@ Open a run in the viewer and press **Edit** (or E). Drag across the run bar to s
 - **Cut** them. Cut frames stay in the recording but are left out of training. Click a cut to undo it.
 - **Label** them. Say what happens in plain words, and optionally note who drove (policy or rescue) and the task segment, such as grasp or lift, which helps on long tasks. Click a label to change or delete it, or drag again to change its span.
 
+**Undo.** Cmd+Z (Ctrl+Z on Windows and Linux) or the Undo button reverts your last change in the page, one step at a time: a cut, a label, a deleted label, "Cut all", or a run of the idle finder. Each step is recorded in the run's `review.json`, and a step can only be undone if nothing changed those edits since. Inside the text box, Cmd+Z undoes typing as usual.
+
 **AI feature: find idle frames.** In Edit, **✦ Find idle frames** runs the built-in idle finder on the run. It marks stretches where the arm barely moves for over a second in light grey, each with a short description. You can cut them all, or cut or keep them one by one. Your own agent can make the same kind of suggestion:
 
 ```bash

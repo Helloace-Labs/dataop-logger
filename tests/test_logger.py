@@ -937,6 +937,10 @@ def test_review_api(tmp_path):
             assert post({"run_id": rid, "rev": state["rev"], "op": "decide", "edit_id": cut["id"], "accept": bad})[0] == 400
         code, state = post({"run_id": rid, "rev": state["rev"], "op": "decide", "edit_id": cut["id"], "accept": False})
         assert code == 200 and state["effective"]["excludes"] == []
+        step = state["step"]["entry"]
+        code, state = post({"run_id": rid, "rev": state["rev"], "op": "undo", "entry_id": step})
+        assert code == 200 and state["undone"]["entry"] == step and len(state["effective"]["excludes"]) == 1
+        assert post({"run_id": rid, "rev": state["rev"], "op": "undo", "entry_id": step})[0] == 400
         c = http.client.HTTPConnection("127.0.0.1", port)
         c.request("GET", "/dataop/view/")
         resp = c.getresponse()
@@ -987,3 +991,40 @@ def test_labels_replace_interpret_and_mask(tmp_path):
     with pytest.raises(rv.ReviewError):
         rv.interpret(run.run_path, new["id"], "exclude", "gone")
     assert V.validate(ds.root)["ok"]
+
+
+def test_undo_steps(tmp_path):
+    from dataop_logger import review as rv
+    ds, run, m = _review_fixture(tmp_path)
+    with rv.recording("cut") as rec:
+        rv.add_edit(run.run_path, m, "exclude", {"start": 0, "end": 5})
+    cut_step = rec["entry"]
+    lb = rv.add_edit(run.run_path, m, "label", {"start": 1, "end": 3, "text": "first"})
+    rv.interpret(run.run_path, lb["id"], "exclude", "drop it")
+    with rv.recording("change label") as rec:
+        rv.replace_edit(run.run_path, m, lb["id"], {"start": 1, "end": 4, "text": "second"})
+    rv.undo(run.run_path, rec["entry"])                 # the old label and its reading come back
+    eff = rv.effective(m, rv.load(run.run_path))
+    assert [(x["text"], x["interpretation"]["train"]) for x in eff["labels"]] == [("first", "exclude")]
+    with pytest.raises(rv.ReviewError):
+        rv.undo(run.run_path, rec["entry"])             # once only
+    rv.undo(run.run_path, cut_step)
+    assert rv.effective(m, rv.load(run.run_path))["excludes"] == []
+    # one step for a batch; a later change to the same edit blocks undo of the earlier step
+    a = rv.add_edit(run.run_path, m, "exclude", {"start": 10, "end": 12}, source="agent", reason="idle")
+    b = rv.add_edit(run.run_path, m, "exclude", {"start": 20, "end": 22}, source="agent", reason="idle")
+    with rv.recording("cut all") as rec:
+        rv.decide_many(run.run_path, m, [a["id"], b["id"]], True)
+    assert len(rv.effective(m, rv.load(run.run_path))["excludes"]) == 2
+    with rv.recording("undo one") as rec2:
+        rv.decide(run.run_path, m, a["id"], False)
+    with pytest.raises(rv.ReviewError):
+        rv.undo(run.run_path, rec["entry"])
+    rv.undo(run.run_path, rec2["entry"])
+    rv.undo(run.run_path, rec["entry"])
+    r = rv.load(run.run_path)
+    assert {e["id"]: e["status"] for e in r["edits"] if e["id"] in (a["id"], b["id"])} == {a["id"]: "proposed", b["id"]: "proposed"}
+    assert V.validate(ds.root)["ok"]
+    with rv.recording("nothing") as rec:                # a step that changes nothing is not recorded
+        pass
+    assert rec["entry"] is None

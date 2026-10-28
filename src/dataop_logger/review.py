@@ -23,6 +23,8 @@ cross-process lock and bumps `rev`.
 """
 from __future__ import annotations
 
+import contextvars
+import copy
 import fcntl
 import json
 import re
@@ -86,6 +88,22 @@ def load(run_path: Path) -> dict:
     return r
 
 
+_RECORDING = contextvars.ContextVar("dataop_review_recording", default=None)
+HISTORY_LIMIT = 200
+
+
+@contextmanager
+def recording(what: str):
+    """Record the edits made inside this block as one undoable step in review["history"].
+    Yields a dict whose "entry" is the history id once the step is saved (None if nothing changed)."""
+    box = {"what": what, "entry": None}
+    token = _RECORDING.set(box)
+    try:
+        yield box
+    finally:
+        _RECORDING.reset(token)
+
+
 @contextmanager
 def transaction(run_path: Path, expect_rev: int | None = None):
     """Load, change and save one run's review under an exclusive cross-process lock."""
@@ -95,11 +113,48 @@ def transaction(run_path: Path, expect_rev: int | None = None):
             review = load(run_path)
             if expect_rev is not None and review["rev"] != expect_rev:
                 raise ReviewConflict(f"the review changed (now at rev {review['rev']}, you had {expect_rev})")
+            box = _RECORDING.get()
+            before = {e["id"]: copy.deepcopy(e) for e in review["edits"]} if box is not None else None
             yield review
+            if box is not None:
+                after = {e["id"]: e for e in review["edits"]}
+                changes = [{"id": i, "before": before.get(i), "after": copy.deepcopy(after.get(i))}
+                           for i in list(before) + [i for i in after if i not in before]
+                           if before.get(i) != after.get(i)]
+                if changes:
+                    entry = {"id": uuid.uuid4().hex[:12], "at": _now(), "what": box["what"], "changes": changes,
+                             "undone": False}
+                    hist = review.setdefault("history", [])
+                    hist.append(entry)
+                    del hist[:-HISTORY_LIMIT]
+                    box["entry"] = entry["id"]
             review["rev"] += 1
             store.atomic_write_json(_path(run_path), review)
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def undo(run_path: Path, entry_id: str, expect_rev: int | None = None) -> dict:
+    """Revert one recorded step: every edit it touched goes back to how it was, if nothing changed it since."""
+    with transaction(run_path, expect_rev) as review:
+        entry = next((h for h in review.get("history", []) if h.get("id") == entry_id), None)
+        if entry is None:
+            raise ReviewError("nothing to undo with that id")
+        if entry.get("undone"):
+            raise ReviewError("that step was already undone")
+        current = {e["id"]: e for e in review["edits"]}
+        for c in entry["changes"]:
+            if current.get(c["id"]) != c["after"]:
+                raise ReviewError("can't undo: those frames were changed again since; undo the later change first")
+        for c in entry["changes"]:
+            if c["before"] is None:
+                review["edits"] = [e for e in review["edits"] if e["id"] != c["id"]]
+            elif c["id"] in current:
+                review["edits"][review["edits"].index(current[c["id"]])] = copy.deepcopy(c["before"])
+            else:
+                review["edits"].append(copy.deepcopy(c["before"]))
+        entry["undone"], entry["undone_at"] = True, _now()
+        return entry
 
 
 def check_payload(kind: str, payload: dict, manifest: dict) -> dict:
@@ -261,6 +316,25 @@ def decide(run_path: Path, manifest: dict, edit_id: str, accept: bool, payload: 
         else:
             edit["status"], edit["decided_at"] = "rejected", _now()
     return edit
+
+
+def decide_many(run_path: Path, manifest: dict, edit_ids: list, accept: bool, expect_rev: int | None = None) -> int:
+    """Accept or dismiss several proposals in one step (for "Cut all" and "Keep all")."""
+    if not isinstance(accept, bool):
+        raise ReviewError("accept must be true or false")
+    if not isinstance(edit_ids, list) or not edit_ids or len(edit_ids) > 1000:
+        raise ReviewError("edit_ids must be a non-empty list")
+    with transaction(run_path, expect_rev) as review:
+        by_id = {e["id"]: e for e in review["edits"]}
+        todo = [by_id.get(i) for i in edit_ids]
+        if any(e is None or e["status"] != "proposed" for e in todo):
+            raise ReviewError("every id must be an open proposal on this run")
+        for e in todo:
+            if accept:
+                _accept(review, e)
+            else:
+                e["status"], e["decided_at"] = "rejected", _now()
+    return len(todo)
 
 
 def replace_edit(run_path: Path, manifest: dict, edit_id: str, payload: dict, expect_rev: int | None = None) -> dict:
