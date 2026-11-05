@@ -29,7 +29,16 @@ as unknown, never invented. Per-run `origin.fields` says where each field came f
    "policy":       {"family": "smolvla", "source": "...", "revision": null}
                    | null                                            no policy ran (teleop demos); left out = unknown
    "planner":      {"name": "Rules", "id": "rules-v3"} | null         null = no planner ran; left out = unknown
-   "action_space": "joint_position", "action_units": "deg"}
+   "action_space": "joint_position",
+   "action_units": "deg"                                             one unit for every action dimension
+                   | ["deg", "deg", "deg", "deg", "deg", "percent"]  one unit per dimension, in action order
+                   | {"gripper.pos": "percent", "wrist_roll.pos": "deg"}   by action name; others stay unknown
+                   | "lerobot:so_follower:degrees"}                  a named unit set (UNIT_SETS below)
+
+Action units are never guessed: a dataset's metadata does not say how LeRobot normalized its motors, so a unit set is
+used only when the mapping names it. `lerobot:so_follower:degrees` is LeRobot's SO-100 and SO-101 follower recorded
+with `use_degrees` on: degrees for the five body joints, percent (0 to 100) for the gripper. A recording made with
+`use_degrees` off reads its body joints in LeRobot's -100 to 100 range; give it a per dimension list instead.
 
 Path patterns: {root} is the dataset folder path, {name} its folder name, {episode} the episode index.
 """
@@ -69,6 +78,12 @@ PRESETS = {
                 "failure_mode": {"file": "{root}_results_*.json", "key": "episode", "field": "outcome",
                                  "skip": ["success"]},
                 "time": {"file_mtime": "{root}_raw/ep{episode:03d}.npy"}},
+}
+# Named unit sets an import may record, by action name. Every action name of the dataset must be in the set.
+UNIT_SETS = {
+    "lerobot:so_follower:degrees": {**{f"{j}.pos": "deg" for j in ("shoulder_pan", "shoulder_lift", "elbow_flex",
+                                                                  "wrist_flex", "wrist_roll")},
+                                    "gripper.pos": "percent"},
 }
 KEYS = {"time", "control", "expert_source", "base_action", "expert_action", "outcome", "failure_mode", "reward", "segments",
         "policy", "planner", "action_space", "action_units"}
@@ -146,7 +161,43 @@ def _mapping(preset: str | None, mapping: dict | None) -> dict:
             planner_value(m["planner"])
         except ValueError as e:
             raise ImportError_(str(e)) from None
+    u = m.get("action_units")
+    if "action_units" in m and not (_unit_ok(u) or (isinstance(u, list) and all(_unit_ok(x) for x in u)) or
+                                    (isinstance(u, dict) and all(isinstance(k, str) and _unit_ok(x)
+                                                                 for k, x in u.items()))):
+        raise ImportError_("action_units is one unit, a list of units in action order, a map from action name to "
+                           "unit, or a named unit set; every unit is a non-empty string")
     return m
+
+
+def _unit_ok(u) -> bool:
+    return isinstance(u, str) and bool(u.strip())
+
+
+def action_units(spec, names: list[str]) -> tuple[str, ...]:
+    """The unit of each action dimension from the mapping's `action_units`; `unknown` where it gives none."""
+    dim = len(names)
+    if spec is None:
+        return (UNKNOWN,) * dim
+    if isinstance(spec, str):
+        if spec in UNIT_SETS:
+            table = UNIT_SETS[spec]
+            missing = [n for n in names if n not in table]
+            if missing:
+                raise ImportError_(f"action_units {spec!r} has no unit for actions {missing}; give the units per "
+                                   "dimension instead")
+            return tuple(table[n] for n in names)
+        if spec.startswith("lerobot:"):
+            raise ImportError_(f"unknown unit set {spec!r}; one of {sorted(UNIT_SETS)}")
+        return (spec,) * dim
+    if isinstance(spec, list):
+        if len(spec) != dim:
+            raise ImportError_(f"action_units lists {len(spec)} units, the action has {dim} dimensions")
+        return tuple(spec)
+    extra = sorted(set(spec) - set(names))
+    if extra:
+        raise ImportError_(f"action_units names actions the dataset does not have: {extra}")
+    return tuple(spec.get(n, UNKNOWN) for n in names)
 
 
 def _pattern(pat: str, root: Path, episode: int | None = None) -> str:
@@ -222,7 +273,10 @@ def plan(root: Path, preset: str | None = "plain", mapping: dict | None = None, 
     space = mp.get("action_space", "custom:imported")
     if space not in KNOWN_SPACES and not str(space).startswith("custom:"):
         raise ImportError_(f"action_space {space!r} is not one of {sorted(KNOWN_SPACES)} or custom:<name>")
-    schema = ActionSchema(names=tuple(str(x) for x in names), units=tuple([mp.get("action_units", "unknown")] * dim),
+    names = [str(x) for x in names]
+    if len(names) != dim:
+        raise ImportError_(f"the {action_key!r} feature names {len(names)} actions but has {dim} dimensions")
+    schema = ActionSchema(names=tuple(names), units=action_units(mp.get("action_units"), names),
                           space=space, rate_hz=float(info["fps"]))
     cols_wanted = [s["column"] for s in (mp.get(k) for k in ("control", "base_action", "expert_action", "outcome",
                                                              "reward", "segments"))
