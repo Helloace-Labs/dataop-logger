@@ -330,15 +330,20 @@ def test_memory_stays_bounded_under_a_stalled_writer(tmp_path, monkeypatch):
     ds = make_ds(tmp_path)
     gate = threading.Event()
     slow_writer(monkeypatch, ds, 0, gate)
-    with RunLogger(ds, SCHEMA) as log:
-        with pytest.raises(ControlledStop):
-            with log.run(task=TASK, policy=POLICY) as run:
-                q = run.queue(max_seconds=0.5)                   # 15 frames at 30 Hz
-                assert q.capacity == 15
-                for i in range(1000):
-                    q.put(frame(i), **kw(i))
-                    assert q.depth() <= q.capacity + 1
-        assert i in (q.capacity, q.capacity + 1)                   # stopped once capacity frames were waiting
+    try:
+        with RunLogger(ds, SCHEMA) as log:
+            with pytest.raises(ControlledStop):
+                with log.run(task=TASK, policy=POLICY) as run:
+                    q = run.queue(max_seconds=0.5, stop_timeout=0.2)    # 15 frames at 30 Hz
+                    assert q.capacity == 15
+                    for i in range(1000):
+                        q.put(frame(i), **kw(i))
+                        assert q.depth() <= q.capacity + 1
+            assert i in (q.capacity, q.capacity + 1)               # stopped once capacity frames were waiting
+            gate.set()
+            q._thread.join(5)                                      # the writer leaves LeRobot before the close
+            assert not q._thread.is_alive()
+    finally:
         gate.set()
 
 
@@ -686,10 +691,22 @@ def test_hidden_files_in_quarantine_are_not_errors(tmp_path):
     assert res["ok"], res["errors"]
 
 
+def capture_partial_writes(monkeypatch):
+    """Record the rows, observations and info of every write_partial call."""
+    real, calls = FQ.write_partial, []
+
+    def capture(run, rows, observations, info, qdir=None):
+        calls.append((list(rows), list(observations), info))
+        return real(run, rows, observations, info, qdir=qdir)
+    monkeypatch.setattr(FQ, "write_partial", capture)
+    return calls
+
+
 def test_write_partial_returns_this_runs_record_and_refuses_another(tmp_path, monkeypatch):
     """Review confirmation round, L8 (round 1 L1): a record already in place from an earlier try is reused."""
     ds = make_ds(tmp_path)
     slow_writer(monkeypatch, ds, 0.05)
+    calls = capture_partial_writes(monkeypatch)
     with RunLogger(ds, SCHEMA) as log:
         with pytest.raises(ControlledStop):
             with log.run(task=TASK, policy=POLICY) as run:
@@ -697,10 +714,10 @@ def test_write_partial_returns_this_runs_record_and_refuses_another(tmp_path, mo
                 for i in range(10):
                     q.put(frame(i), **kw(i))
     path, m = quarantined(ds, run)
-    rows = pq.read_table(path / "ticks.parquet").to_pylist()
-    assert FQ.write_partial(run, [None] * m["length"], [], m["quarantine"]) == path   # same run, same length
-    with pytest.raises(RunError, match="not this run's record"):
-        FQ.write_partial(run, [None] * (m["length"] + 1), [], m["quarantine"])
+    rows, observations, info = calls[0]
+    assert FQ.write_partial(run, rows, observations, info) == path              # the same run's same frames
+    with pytest.raises(RunError, match="not a complete record"):
+        FQ.write_partial(run, rows + rows[-1:], observations, info)
     assert len(rows) == m["length"]
 
 
@@ -748,3 +765,202 @@ def test_close_does_not_misreport_an_idle_writer(tmp_path):
                 time.sleep(0.005)
             run.discard()
         assert run.state == "discarded" and not log.broken and not ds.has_pending_frames()
+
+
+# ── post-merge review of the bounded queue: findings 1 to 4 ──────────────────────────────────────────────────────
+
+
+def _queue_example(text: str) -> list[str]:
+    section = text.split("## Recording from a control loop: the bounded queue", 1)[1]
+    block = section.split("```python", 1)[1].split("```", 1)[0]
+    return [line for line in block.splitlines() if line.strip()]
+
+
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
+def test_readme_example_holds_the_robot_before_leaving_the_run_block():
+    """Finding 1: leaving the run block waits for the writer and writes the quarantine, so the documented handler
+    must hold the robot inside the block and then re-raise."""
+    lines = _queue_example((Path(__file__).resolve().parents[1] / "README.md").read_text())
+    with_at = next(i for i, line in enumerate(lines) if "with log.run(" in line)
+    hold_at = next(i for i, line in enumerate(lines) if "hold_the_robot()" in line)
+    inner = [i for i, line in enumerate(lines[:hold_at]) if line.strip().startswith("except ControlledStop")]
+    assert hold_at > with_at and inner and inner[-1] > with_at
+    assert _indent(lines[inner[-1]]) > _indent(lines[with_at])          # the handler is inside the run block
+    assert lines[hold_at + 1].strip().startswith("raise")                # and lets the stop leave the block after
+    outer = [line for line in lines[hold_at:] if line.strip().startswith("except ControlledStop as stop")]
+    assert outer and _indent(outer[0]) < _indent(lines[with_at]) + 4     # the report is read outside the block
+
+
+def test_holding_inside_the_run_block_comes_before_the_quarantine_work(tmp_path, monkeypatch):
+    """Finding 1: the documented pattern holds the robot before the logger waits for the writer or writes."""
+    ds = make_ds(tmp_path)
+    slow_writer(monkeypatch, ds, 0.05)
+    order = []
+    real_close, real_write = FQ.FrameQueue.close, FQ.write_partial
+    monkeypatch.setattr(FQ.FrameQueue, "close", lambda self: order.append("wait for writer") or real_close(self))
+    monkeypatch.setattr(FQ, "write_partial", lambda *a, **k: order.append("write quarantine") or real_write(*a, **k))
+    with RunLogger(ds, SCHEMA) as log:
+        try:
+            with log.run(task=TASK, policy=POLICY) as run:
+                q = run.queue(max_frames=2)
+                try:
+                    for i in range(10):
+                        q.put(frame(i), **kw(i))
+                    run.end("success")
+                except ControlledStop:
+                    order.append("hold")
+                    raise
+        except ControlledStop as stop:
+            order.append("report")
+            assert stop.quarantine_path is not None
+    assert order == ["hold", "wait for writer", "write quarantine", "report"]
+
+
+def _hang_second_frame(monkeypatch, ds, release):
+    real, calls = ds.add_frame, [0]
+
+    def add(f):
+        calls[0] += 1
+        if calls[0] == 2:
+            release.wait(20)                                      # LeRobot hangs on the second frame
+        real(f)
+    monkeypatch.setattr(ds, "add_frame", add)
+
+
+def _reopen_when_free(ds, limit=5.0):
+    deadline = time.monotonic() + limit
+    while True:
+        try:
+            return RunLogger(ds, SCHEMA)
+        except RuntimeError:
+            if time.monotonic() > deadline:
+                raise
+            time.sleep(0.01)
+
+
+@pytest.mark.parametrize("how", ["stop", "discard"])
+def test_a_writer_stuck_in_lerobot_keeps_the_dataset_locked(tmp_path, monkeypatch, how):
+    """Finding 2: closing the logger while a timed-out writer is still inside add_frame must not let a second
+    writer open the dataset; the lock goes once that thread returns."""
+    ds = make_ds(tmp_path)
+    release = threading.Event()
+    _hang_second_frame(monkeypatch, ds, release)
+    log = RunLogger(ds, SCHEMA)
+    try:
+        with pytest.raises((ControlledStop, RunError)):
+            with log.run(task=TASK, policy=POLICY) as run:
+                q = run.queue(max_frames=2 if how == "stop" else 50, stop_timeout=0.2)
+                for i in range(10 if how == "stop" else 3):
+                    q.put(frame(i), **kw(i))
+                    time.sleep(0.01)
+                if how == "discard":
+                    time.sleep(0.1)
+                    run.discard()
+        assert "did not finish" in log.broken
+        with pytest.raises(RunError, match="stays locked"):
+            log.close()
+        with pytest.raises(RuntimeError, match="another dataop-logger writer"):
+            RunLogger(ds, SCHEMA)                                 # the old writer can still change the files
+        with pytest.raises(RunError, match="stays locked"):
+            log.close()                                           # a second close keeps the lock too
+        with pytest.raises(RuntimeError, match="another dataop-logger writer"):
+            RunLogger(ds, SCHEMA)
+    finally:
+        release.set()
+    log2 = _reopen_when_free(ds)                                  # the thread returned: the lock is free
+    log2.close()
+
+
+def test_close_releases_the_lock_at_once_when_no_writer_is_stuck(tmp_path):
+    ds = make_ds(tmp_path)
+    log = RunLogger(ds, SCHEMA)
+    with log.run(task=TASK, policy=POLICY) as run:
+        q = run.queue()
+        q.put(frame(0), **kw(0))
+        run.end("success")
+    log.close()
+    RunLogger(ds, SCHEMA).close()
+
+
+def _full_quarantine_disk(monkeypatch):
+    real_write, full = store.atomic_write_bytes, [True]
+
+    def write(path, data):
+        if full[0] and "quarantine" in str(path):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        real_write(path, data)
+    monkeypatch.setattr(store, "atomic_write_bytes", write)
+    return full
+
+
+@pytest.mark.parametrize("damage", ["manifest_only", "missing_frames", "other_frames"])
+def test_retry_refuses_an_incomplete_record_and_keeps_the_frames(tmp_path, monkeypatch, damage):
+    """Finding 3: a record already at the destination counts only if it is complete and holds this run's frames;
+    otherwise the retry fails, the frames stay in memory and closing the logger spills them."""
+    ds = make_ds(tmp_path)
+    slow_writer(monkeypatch, ds, 0.05)
+    full = _full_quarantine_disk(monkeypatch)
+    calls = capture_partial_writes(monkeypatch)
+    spill = tmp_path / "spill"
+    log = RunLogger(ds, SCHEMA, spill_dir=spill)
+    with pytest.raises(ControlledStop) as ei:
+        with log.run(task=TASK, policy=POLICY) as run:
+            q = run.queue(max_frames=2)
+            for i in range(10):
+                q.put(frame(i), **kw(i))
+    stop = ei.value
+    assert stop.quarantine_error and run._unsaved_quarantine is not None
+    full[0] = False
+    rows, observations, info = calls[0]
+    dest = store.quarantine_dir(ds.root) / run.run_id
+    if damage == "other_frames":                                  # a complete record of different frames
+        other = [dict(o, **{"observation.state": [99.0] * 6}) for o in observations]
+        FQ.write_partial(run, rows, other, info)
+    else:
+        FQ.write_partial(run, rows, observations, info)
+        if damage == "manifest_only":
+            for f in dest.iterdir():
+                if f.name != "manifest.json":
+                    f.unlink()
+        else:
+            (dest / "frames.parquet").unlink()
+    run._unsaved_quarantine = (rows, observations, info)          # the run still holds its frames
+    with pytest.raises(RunError, match="not a complete record"):
+        run.retry_quarantine()
+    assert run._unsaved_quarantine is not None and run in log._unsaved_runs
+    assert "retry_quarantine" in log.broken and stop.quarantine_path is None
+    with pytest.raises(RunError, match="spilled to"):
+        log.close()
+    spilled = spill / run.run_id
+    assert stop.spilled and stop.quarantine_path == spilled
+    m = json.loads((spilled / "manifest.json").read_text())
+    assert m["length"] == stop.frames and not V.partial_problems(spilled, m)
+
+
+@pytest.mark.parametrize("damage", ["missing", "invalid_json", "not_an_object"])
+def test_unreadable_quarantine_manifest_is_an_error_and_left_untouched(tmp_path, monkeypatch, damage):
+    """Finding 4: a quarantined partial run whose manifest is gone or broken fails validate and is reported by
+    repair as left untouched, never dropped from either report."""
+    ds = make_ds(tmp_path)
+    slow_writer(monkeypatch, ds, 0.05)
+    with RunLogger(ds, SCHEMA) as log:
+        with pytest.raises(ControlledStop):
+            with log.run(task=TASK, policy=POLICY) as run:
+                q = run.queue(max_frames=2)
+                for i in range(10):
+                    q.put(frame(i), **kw(i))
+    ds.finalize()
+    path, _ = quarantined(ds, run)
+    if damage == "missing":
+        (path / "manifest.json").unlink()
+    else:
+        (path / "manifest.json").write_text("{truncated" if damage == "invalid_json" else "[1, 2]")
+    res = V.validate(ds.root)
+    assert not res["ok"]
+    assert any(e.startswith(f"quarantine/{run.run_id}: manifest.json") for e in res["errors"]), res["errors"]
+    report = V.repair(ds.root)
+    assert any(line.startswith(f"left untouched quarantine/{run.run_id}: manifest.json") for line in report), report
+    assert path.exists() and not V.validate(ds.root)["ok"]       # repair kept it, and it still fails validate

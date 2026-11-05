@@ -324,7 +324,7 @@ def validate(root: Path, action_key: str = "action") -> dict:
     quarantined = sorted(p.name for p in q.iterdir() if not p.name.startswith(".")) if q.exists() else []
     run_ids = {p.name for p, _, _ in store.iter_run_dirs(root)}
     for entry in quarantine_entries(root):
-        if entry["kind"] == "unfinished":
+        if entry["kind"] in ("unfinished", "unreadable"):
             errors.append(f"quarantine/{entry['name']}: {entry['problems'][0]}")
         elif entry["kind"] == "partial":
             for p in entry["problems"]:
@@ -413,7 +413,8 @@ def partial_problems(path: Path, m: dict) -> list[str]:
 
 def quarantine_entries(root: Path) -> list[dict]:
     """Every entry under dataop/quarantine: kind "partial" (a run the frame queue stopped), "run" (a staged run
-    repair could not match) or "unfinished" (a quarantine write that did not complete), with its problems."""
+    repair could not match), "unfinished" (a quarantine write that did not complete) or "unreadable" (its
+    manifest.json is missing or is not valid JSON), with its problems."""
     q = store.quarantine_dir(Path(root))
     if not q.exists():
         return []
@@ -430,11 +431,18 @@ def quarantine_entries(root: Path) -> list[dict]:
             continue
         try:
             m = store.read_manifest(p)
+            if not isinstance(m, dict):
+                raise ValueError("not a JSON object")
         except Exception as e:
-            note = p / "QUARANTINED.txt"
-            reason = note.read_text().strip() if note.exists() else None
-            out.append({"name": p.name, "kind": "run", "frames": None, "reason": reason,
-                        "problems": [f"manifest.json unreadable ({type(e).__name__})"]})
+            try:
+                note = p / "QUARANTINED.txt"
+                reason = note.read_text().strip() if note.exists() else None
+            except OSError:
+                reason = None
+            what = "missing" if isinstance(e, FileNotFoundError) else f"unreadable ({type(e).__name__})"
+            out.append({"name": p.name, "kind": "unreadable", "frames": None, "reason": reason,
+                        "problems": [f"manifest.json {what}; the record cannot be checked, so it is kept for "
+                                     "inspection"]})
             continue
         if m.get("status") == "quarantined":
             info = m.get("quarantine") if isinstance(m.get("quarantine"), dict) else {}
@@ -488,7 +496,7 @@ def repair(root: Path, delete_unmatched: bool = False, action_key: str = "action
             store.quarantine(root, run_path, why)
             report.append(f"quarantined {m['run_id']}: {why}")
     for entry in quarantine_entries(root):
-        if entry["kind"] == "unfinished":
+        if entry["kind"] in ("unfinished", "unreadable"):
             report.append(f"left untouched quarantine/{entry['name']}: {entry['problems'][0]}")
         elif entry["kind"] == "partial":
             if entry["problems"]:

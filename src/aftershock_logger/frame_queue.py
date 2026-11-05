@@ -199,7 +199,7 @@ class FrameQueue:
     def close(self) -> bool:
         """Stop the writer after the frame it is writing. Returns False if it did not finish within stop_timeout (no
         wait at all once drain() found it hung); it then never appends another row, so a snapshot taken now stays
-        complete."""
+        complete, and the RunLogger keeps the dataset locked until that thread leaves LeRobot."""
         with self._cv:
             self._closing = True
             if self._stop is None:
@@ -209,6 +209,7 @@ class FrameQueue:
         with self._cv:
             if self._thread.is_alive() and self._busy:
                 self._abandoned = True
+                self.run.logger._stuck_writers.append(self._thread)   # it keeps the dataset locked until it exits
                 return False
         self._thread.join()                                         # it has finished its frame and is exiting
         return True
@@ -271,30 +272,22 @@ def write_partial(run, rows: list[dict], observations: list[dict], info: dict, q
     folder first, which is renamed into place only when complete, so a quarantine folder is never half written."""
     qdir = store.quarantine_dir(run.logger.root) if qdir is None else Path(qdir)
     dest = qdir / run.run_id
-    if dest.exists():
-        try:                                                        # an earlier try renamed it into place
-            m = json.loads((dest / "manifest.json").read_text())
-        except Exception:
-            m = {}
-        if m.get("run_id") == run.run_id and m.get("length") == len(rows) and m.get("status") == "quarantined":
+    files = _record_files(run, rows, observations)
+    integrity = {"ticks_sha256": None, "events_sha256": store.json_sha256(run._events),
+                 "predictions_sha256": None, "frames_sha256": None}
+    for name, (key, data) in files.items():
+        integrity[key] = store.sha256(data)
+    if dest.exists():                                               # an earlier try may have renamed it into place
+        problems = _existing_record_problems(dest, run, len(rows), integrity)
+        if not problems:
             return dest
-        raise RunError(f"{dest} already exists and is not this run's record")
+        raise RunError(f"{dest} already exists and is not a complete record of this run's {len(rows)} frames "
+                       f"({'; '.join(problems)}); the frames stay in memory: move that folder aside and retry")
     qdir.mkdir(parents=True, exist_ok=True)
     tmp = Path(tempfile.mkdtemp(dir=qdir, prefix=f".{run.run_id}.", suffix=".tmp"))
     try:
-        integrity = {"ticks_sha256": None, "events_sha256": store.json_sha256(run._events),
-                     "predictions_sha256": None, "frames_sha256": None}
-        if rows:
-            ticks = store.table_bytes(run._ticks_table(rows))
-            store.atomic_write_bytes(tmp / "ticks.parquet", ticks)
-            integrity["ticks_sha256"] = store.sha256(ticks)
-        frames = store.table_bytes(_observations_table(observations))
-        store.atomic_write_bytes(tmp / "frames.parquet", frames)
-        integrity["frames_sha256"] = store.sha256(frames)
-        if run._predictions is not None:
-            preds = store.table_bytes(pa.Table.from_pylist(run._predictions, schema=PRED_SCHEMA))
-            store.atomic_write_bytes(tmp / "predictions.parquet", preds)
-            integrity["predictions_sha256"] = store.sha256(preds)
+        for name, (key, data) in files.items():
+            store.atomic_write_bytes(tmp / name, data)
         run._integrity = integrity
         manifest = (run._manifest("quarantined", rows, quarantine=info) if rows else
                     {"schema_version": None, "run_id": run.run_id, "status": "quarantined", "length": 0,
@@ -313,6 +306,39 @@ def write_partial(run, rows: list[dict], observations: list[dict], info: dict, q
         import warnings
         warnings.warn(f"quarantine record {dest} is written but its folder could not be synced ({e})")
     return dest
+
+
+def _record_files(run, rows: list[dict], observations: list[dict]) -> dict[str, tuple[str, bytes]]:
+    """The data files of a quarantine record, as {file name: (integrity key, bytes)}."""
+    out = {}
+    if rows:
+        out["ticks.parquet"] = ("ticks_sha256", store.table_bytes(run._ticks_table(rows)))
+    out["frames.parquet"] = ("frames_sha256", store.table_bytes(_observations_table(observations)))
+    if run._predictions is not None:
+        out["predictions.parquet"] = ("predictions_sha256",
+                                      store.table_bytes(pa.Table.from_pylist(run._predictions, schema=PRED_SCHEMA)))
+    return out
+
+
+def _existing_record_problems(dest: Path, run, length: int, integrity: dict) -> list[str]:
+    """Why the record already at dest is not this run's complete record: it must pass validate's checks of a
+    quarantined partial run (every file present and matching its recorded digest), and its digests must equal
+    those of the frames this run still holds."""
+    from .validate import partial_problems
+    try:
+        m = json.loads((dest / "manifest.json").read_text())
+    except Exception as e:
+        return [f"manifest.json unreadable ({type(e).__name__})"]
+    if not isinstance(m, dict):
+        return ["manifest.json is not an object"]
+    if m.get("run_id") != run.run_id or m.get("status") != "quarantined" or m.get("length") != length:
+        return [f"its manifest is for run {m.get('run_id')!r}, status {m.get('status')!r}, {m.get('length')!r} frames"]
+    problems = partial_problems(dest, m)
+    recorded = m.get("integrity") if isinstance(m.get("integrity"), dict) else {}
+    for key, want in integrity.items():
+        if recorded.get(key) != want:
+            problems.append(f"its {key} differs from the frames this run holds")
+    return problems
 
 
 def _observations_table(observations: list[dict]) -> pa.Table:
