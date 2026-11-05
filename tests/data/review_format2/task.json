@@ -1,0 +1,21 @@
+{
+ "subtasks": [
+  {
+   "name": "lift",
+   "subtask_id": "s-lift"
+  },
+  {
+   "name": "reach",
+   "subtask_id": "s-reach"
+  },
+  {
+   "name": "grasp",
+   "subtask_id": "s-grasp"
+  },
+  {
+   "name": "place",
+   "subtask_id": "s-place"
+  }
+ ],
+ "task_id": "demo-task"
+}

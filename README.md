@@ -240,7 +240,7 @@ aftershock-logger lists <dataset_root> add failure_types collision --description
 aftershock-logger lists <dataset_root> rename task_segments lift raise
 ```
 
-**Agents fill in the same schema.** `aftershock-logger runs <dataset_root>` returns each run's segments, drive mode, failure moment and type, and video files as JSON. An agent that watched the video writes its reading back with `aftershock-logger annotate <dataset_root> <run_id> --segments ... --failure-at ... --failure-type ... --takeover-at ... --by my-agent`. Names must come from the lists. Each change shows who set it and is one undoable step in the viewer.
+**Agents fill in the same schema.** `aftershock-logger runs <dataset_root>` returns each run's segments, drive mode, failure moment and type, and video files as JSON. An agent that watched the video writes its reading back with `aftershock-logger annotate <dataset_root> <run_id> --segments ... --failure-at ... --failure-type ... --takeover-at ... --by my-agent`. Names must come from the lists. Each value is a proposal that shows who set it; a person accepts, changes or rejects it in the viewer.
 
 **AI feature: find idle frames.** In Edit, **✦ Find idle frames** runs the built-in idle finder on the run. It marks stretches where the arm barely moves for over a second in light grey, each with a short description. You can cut them all, or cut or keep them one by one. Your own agent can make the same kind of suggestion:
 
@@ -256,16 +256,16 @@ aftershock-logger suggest-cut <dataset_root> <run_id> <start> <end> --reason "..
 
 The two seconds before the failure are shaded, since those frames matter most for training data. Agents can list a run's drive-mode changes, segment starts and failure moment with `aftershock-logger events`, and add a detail to any of them with `aftershock-logger note`.
 
-**Agents read the labels.** An agent records what each plain-language label means for training, and the viewer shows that reading under the label:
+**Agents read the labels.** An agent proposes what each plain-language label means for training; once a person accepts it, the viewer shows that reading under the label:
 
 ```bash
 aftershock-logger labels <dataset_root> --uninterpreted      # JSON: each label with what was recorded in its span
 aftershock-logger interpret <dataset_root> <run_id> <label_id> --train exclude --meaning "camera blocked by a hand" --by my-agent
 ```
 
-An existing reading is never overwritten silently: pass `--replace`, and the old one is kept in history. Changing a label's text or span clears its reading until an agent reads it again.
+A label that already has a reading (in effect or proposed) is refused unless you pass `--replace`, which adds another proposal next to it. Changing a label's text or span clears its reading until it is read again.
 
-**Where it is stored.** Labels, cuts and readings live in `dataop/runs/<run_id>/review.json`. That file travels with the dataset and never touches the recorded frames, manifest or checksums. The reader sets `item["dataop.train_mask"]` to False for cut frames and for labels read as `exclude`, and every target mask is gated on it. `inspect` reports labels, cut frames and open suggestions. Scripts can also record structured corrections in the same file through `aftershock_logger.review` (outcome, failure start, step boundary, reject run); the viewer lists them with an Undo button.
+**Where it is stored.** Labels, cuts and readings live in `dataop/runs/<run_id>/review.json`, in review format 2, the format the Aftershock cloud uses too (see SPEC.md). Files written by earlier versions are read as they are and rewritten in format 2 on their next change, or all at once with `aftershock-logger migrate-reviews <dataset_root>`. That file travels with the dataset and never touches the recorded frames, manifest or checksums. The reader sets `item["dataop.train_mask"]` to False for cut frames and for labels read as `exclude`, and every target mask is gated on it. `inspect` reports labels, cut frames and open suggestions. Scripts can also record structured corrections in the same file through `aftershock_logger.review` (outcome, failure start, step boundary, reject run); the viewer lists them with an Undo button.
 
 ## Batches: one round of collection
 

@@ -1,0 +1,115 @@
+{
+ "format1_all_kinds.json": {
+  "drive_edits": [
+   {
+    "frame": 90,
+    "index": 0
+   }
+  ],
+  "event_notes": {
+   "takeover:90": {
+    "by": "notes-agent",
+    "id": "00000000000d",
+    "text": "operator saw a slip"
+   }
+  },
+  "excludes": [
+   {
+    "end": 26,
+    "start": 20
+   }
+  ],
+  "failure_mode": "dropped after lift",
+  "failure_start": 80,
+  "labels": [
+   {
+    "driver": null,
+    "end": 55,
+    "id": "00000000000c",
+    "interpretation": {
+     "at": "2026-10-20T09:15:00Z",
+     "by": "reader-agent",
+     "meaning": "hesitation",
+     "train": "exclude"
+    },
+    "segment": null,
+    "start": 40,
+    "text": "hesitates over the cap"
+   }
+  ],
+  "notes": [
+   {
+    "frame": 10,
+    "text": "slips at the rim"
+   }
+  ],
+  "rejected": false,
+  "reviewed": true,
+  "set_by": {
+   "drive_boundary": "person",
+   "failure_start": "person",
+   "outcome": "person",
+   "segment_plan": "segmenter"
+  },
+  "subgoals": [
+   {
+    "end_frame": 28,
+    "name": "reach",
+    "reason": null,
+    "start_frame": 0,
+    "status": "completed"
+   },
+   {
+    "end_frame": 72,
+    "name": "Grasp",
+    "reason": null,
+    "start_frame": 28,
+    "status": "completed"
+   },
+   {
+    "end_frame": 110,
+    "name": "wiggle",
+    "reason": null,
+    "start_frame": 72,
+    "status": "completed"
+   }
+  ],
+  "termination_reason": "timeout"
+ },
+ "format1_minimal.json": {
+  "drive_edits": [],
+  "event_notes": {},
+  "excludes": [],
+  "failure_mode": null,
+  "failure_start": null,
+  "labels": [],
+  "notes": [],
+  "rejected": false,
+  "reviewed": false,
+  "set_by": {},
+  "subgoals": [
+   {
+    "end_frame": 30,
+    "name": "reach",
+    "reason": null,
+    "start_frame": 0,
+    "status": "completed"
+   },
+   {
+    "end_frame": 70,
+    "name": " Grasp ",
+    "reason": null,
+    "start_frame": 30,
+    "status": "completed"
+   },
+   {
+    "end_frame": 110,
+    "name": "lift",
+    "reason": "slipped",
+    "start_frame": 70,
+    "status": "failed"
+   }
+  ],
+  "termination_reason": "failure"
+ }
+}

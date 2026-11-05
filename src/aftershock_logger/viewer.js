@@ -41,12 +41,14 @@ function frac(r, mode) { return drv(r).filter(s => s[2] === mode).reduce((a, s) 
 function activeEdits(r) {
   const acc = r.review.edits.filter(e => e.status === "accepted").sort((a, b) => (a.accepted_seq || 0) - (b.accepted_seq || 0));
   const multi = k => k === "exclude" || k === "note" || k === "label";
-  const slot = e => e.kind === "step_boundary" ? "sb" + e.payload.index : e.kind === "event_note" ? "en" + e.payload.key : e.kind;
+  const slot = e => e.kind === "step_boundary" || e.kind === "drive_boundary" ? e.kind + e.payload.index
+    : e.kind === "segment_edge" ? "se" + e.payload.index + e.payload.edge : e.kind === "event_note" ? "en" + e.payload.key
+    : e.kind === "reading" ? "rd" + e.payload.label_id : e.kind;
   const latest = {};
   acc.forEach(e => { if (!multi(e.kind)) latest[slot(e)] = e; });
   return acc.filter(e => multi(e.kind) || latest[slot(e)] === e);
 }
-const cuts = r => activeEdits(r).filter(e => e.kind === "exclude").map(e => ({ id: e.id, ...e.payload, by: e.by, reason: e.reason }));
+const cuts = r => activeEdits(r).filter(e => e.kind === "exclude").map(e => ({ id: e.edit_id, ...e.payload, by: e.by, reason: e.reason }));
 function cutFrames(r) {        // union of cut spans: overlaps count once
   const m = new Uint8Array(r.length);
   cuts(r).forEach(c => m.fill(1, c.start, c.end));
@@ -62,7 +64,11 @@ function driveModes(r) {        // policy and rescue, then any other drive modes
 const SEG_SHADES = 4;
 // The dataset's agreed lists (its schema): failure types and task segments. Renames keep old names as aliases.
 let LISTS = DATA.lists || { rev: 0, failure_types: [], task_segments: [] };
-const listEntry = (kind, name) => (LISTS[kind] || []).find(e => e.name === name || (e.aliases || []).includes(name));
+// review format 2 stores a task segment by subtask id; without an Aftershock task the logger makes the id from the
+// name (review.subtask_id_for), so an id finds its list entry the same way
+const subtaskId = n => n.trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^[-._]+|[-._]+$/g, "").slice(0, 64).replace(/[-._]+$/, "");
+const listEntry = (kind, name) => (LISTS[kind] || []).find(e => e.name === name || (e.aliases || []).includes(name))
+  || (kind === "task_segments" ? (LISTS[kind] || []).find(e => [e.name, ...(e.aliases || [])].some(n => subtaskId(n) === name)) : undefined);
 const canon = (kind, name) => { const e = name && listEntry(kind, name); return e ? e.name : name; };
 function segShade(name) {       // one color family for task segments; each list entry keeps its own shade
   const i = (LISTS.task_segments || []).findIndex(e => e.name === canon("task_segments", name));
@@ -229,7 +235,7 @@ async function setFailureType(r, name) {          // new names join the dataset'
 
 // ── task segments as a plan: every segment edit sends the run's full, ordered list ─────────────────
 const planOf = r => (r.review.segments || []).map(x => ({ name: canon("task_segments", x.name), start: x.start, end: x.end }));
-const sendPlan = (r, segments, what) => send(r, { op: "add", kind: "segment_plan", payload: { segments }, what });
+const sendPlan = (r, segments, what) => send(r, { op: "add", kind: "segments", payload: { segments }, what });
 let segMenu = null;              // index of the segment being edited (table row actions)
 let segRow = null;               // the segment row highlighted after clicking it on the bar
 function segMenuHtml(r) {
@@ -329,7 +335,7 @@ async function saveLabel(r) {
 }
 const decide = (r, id, accept, what) => send(r, { op: "decide", edit_id: id, accept, what });
 const span = (r, p) => `${fmt(p.start / r.fps)}–${fmt(p.end / r.fps)}`;
-function editSpan(r, id) { const e = r.review.edits.find(x => x.id === id); return e && e.payload.start !== undefined ? " " + span(r, e.payload) : ""; }
+function editSpan(r, id) { const e = r.review.edits.find(x => x.edit_id === id); return e && e.payload.start !== undefined ? " " + span(r, e.payload) : ""; }
 
 async function undoLast() {
   const list = undoList(), top = list[list.length - 1];
@@ -458,9 +464,19 @@ function defaultsFor(r, lo, hi) {       // who drove and the step that cover mos
   return { driver, segment };
 }
 
+function proposalText(r, x) {    // one line for an agent's proposal of any kind other than a cut
+  const p = x.payload, at = f => fmt(f / r.fps);
+  const what = x.kind === "segments" ? p.segments.map(s => `${s.legacy_name || s.subtask_id} ${at(s.start)}–${at(s.end)}`).join(", ")
+    : x.kind === "outcome" ? `${p.termination_reason || p.outcome}${p.failure_mode ? ": " + p.failure_mode : ""}`
+    : x.kind === "reading" ? `${p.train}: ${p.meaning}`
+    : p.frame !== undefined ? at(p.frame) + (p.text ? ": " + p.text : "")
+    : p.text || p.failure_type_id || "";
+  return `${x.by || "agent"}: ${what}${x.reason ? " (" + x.reason + ")" : ""}`;
+}
+
 function aiBar(r) {
   if (!editing) return "";
-  const sg = suggestions(r);
+  const sg = suggestions(r), op = otherProposals(r);
   return `<div class="aibar">
     <button class="btn ai" data-act="idle" title="Built-in idle finder. Your own agent can add suggestions with aftershock-logger suggest-cut.">✦ Find idle frames</button>
     ${sg.length ? `<button class="btn" data-act="cutall">Cut all ${sg.length}</button><button class="btn" data-act="keepall" title="Keep all suggested frames. These spans won't be suggested again.">Keep all</button>` : ""}
@@ -470,7 +486,11 @@ function aiBar(r) {
       <span class="time">${fmt(x.payload.start / r.fps)}–${fmt(x.payload.end / r.fps)}</span>
       <span class="sdesc" title="by ${esc(x.by || "agent")}">${esc(x.reason || "")}</span>
       <span class="sbtns"><button class="btn sm" data-show="${x.payload.start}">Show</button>
-      <button class="btn sm" data-cut="${esc(x.id)}">Cut</button><button class="btn sm" data-keep="${esc(x.id)}" title="Keep these frames for training. This span won't be suggested again.">Keep</button></span></div>`).join("")}</div>` : ""}`;
+      <button class="btn sm" data-cut="${esc(x.edit_id)}">Cut</button><button class="btn sm" data-keep="${esc(x.edit_id)}" title="Keep these frames for training. This span won't be suggested again.">Keep</button></span></div>`).join("")}</div>` : ""}
+  ${op.length ? `<div class="card sugg"><h3>Proposed by agents</h3>${op.map(x => `<div class="srow">
+      <span class="time">${esc(x.kind.replace(/_/g, " "))}</span>
+      <span class="sdesc" title="by ${esc(x.by || "agent")}">${esc(proposalText(r, x))}</span>
+      <span class="sbtns"><button class="btn sm" data-acc="${esc(x.edit_id)}">Accept</button><button class="btn sm" data-rej="${esc(x.edit_id)}">Reject</button></span></div>`).join("")}</div>` : ""}`;
 }
 
 // ── one run ───────────────────────────────────────────────────────────────────
@@ -674,7 +694,7 @@ async function act(r, what) {
     return send(r, { op: "add", kind: "failure_start", payload: { frame: f }, what: "policy fails at " + fmt(f / r.fps) });
   }
   if (what === "cutall" || what === "keepall") {
-    const ids = suggestions(r).map(x => x.id);
+    const ids = suggestions(r).map(x => x.edit_id);
     return send(r, { op: "decide_many", edit_ids: ids, accept: what === "cutall",
                      what: `${what === "cutall" ? "cut" : "keep"} ${ids.length} suggested` });
   }
@@ -831,6 +851,8 @@ function wire(r, t0) {
     if (b.dataset.cut) return decide(r, b.dataset.cut, true, "accept" + editSpan(r, b.dataset.cut));
     if (b.dataset.keep) return decide(r, b.dataset.keep, false, "keep" + editSpan(r, b.dataset.keep));
     if (b.dataset.uncut) return decide(r, b.dataset.uncut, false, "undo" + editSpan(r, b.dataset.uncut));
+    if (b.dataset.acc) return decide(r, b.dataset.acc, true, "accept proposal");
+    if (b.dataset.rej) return decide(r, b.dataset.rej, false, "reject proposal");
     if (b.dataset.segrowact) { segMenu = +b.dataset.i; return segAction(r, b.dataset.segrowact); }
     if (b.dataset.segtype) return segAction(r, "type", b.dataset.segtype);
     if (b.dataset.segact) return segAction(r, b.dataset.segact);

@@ -1,4 +1,4 @@
-"""aftershock-logger (or the old name dataop-logger) validate | repair | inspect | remap | view | labels | interpret | events | note | find-idle | suggest-cut |
+"""aftershock-logger (or the old name dataop-logger) validate | repair | inspect | remap | view | labels | interpret | migrate-reviews | events | note | find-idle | suggest-cut |
 batches"""
 from __future__ import annotations
 
@@ -54,14 +54,15 @@ def _main(argv=None) -> int:
     lb = sub.add_parser("labels", help="list people's span labels as JSON, with context, for an agent to interpret")
     lb.add_argument("root")
     lb.add_argument("--uninterpreted", action="store_true", help="only labels no agent has interpreted yet")
-    it = sub.add_parser("interpret", help="record what a label means for training (an agent's reading of it)")
+    it = sub.add_parser("interpret", help="propose what a label means for training (an agent's reading; a person accepts it)")
     it.add_argument("root")
     it.add_argument("run_id")
     it.add_argument("label_id")
     it.add_argument("--train", required=True, choices=["keep", "exclude"])
     it.add_argument("--meaning", required=True, help="one sentence: what the person meant")
     it.add_argument("--by", default="agent", help="name of the agent")
-    it.add_argument("--replace", action="store_true", help="change an existing interpretation (kept in history)")
+    it.add_argument("--replace", action="store_true", help="propose a reading although the label already has one")
+
     rp = sub.add_parser("runs", help="each run's task segments, drive mode, failure moment and type, and video files (JSON)")
     rp.add_argument("root")
     rp.add_argument("--run", default=None, help="only this run id")
@@ -74,6 +75,9 @@ def _main(argv=None) -> int:
     an.add_argument("--failure-type", default=None, help="a name from the dataset's failure types")
     an.add_argument("--takeover-at", type=float, default=None, help="seconds where control really switched from the policy")
     an.add_argument("--by", required=True, help="name of the agent")
+    mg = sub.add_parser("migrate-reviews", help="rewrite format 1 review files as review format 2 now (lossless)")
+    mg.add_argument("root")
+    mg.add_argument("--dry-run", action="store_true", help="only check that every format 1 file migrates")
     lp = sub.add_parser("lists", help="the dataset's agreed failure types and task segments; add, rename, describe, delete")
     lp.add_argument("root")
     lp.add_argument("action", nargs="?", choices=["show", "add", "rename", "describe", "delete"], default="show")
@@ -262,10 +266,26 @@ def _main(argv=None) -> int:
         for run_path, m in store.iter_manifests(Path(a.root), "committed"):
             if m["run_id"] == a.run_id:
                 review.interpret(run_path, a.label_id, a.train, a.meaning, by=a.by, replace=a.replace)
-                print(f"{a.label_id}: {a.train} ({a.meaning})")
+                print(f"{a.label_id}: proposed {a.train} ({a.meaning})")
                 return 0
         print(f"no committed run {a.run_id}", file=sys.stderr)
         return 1
+    if a.cmd == "migrate-reviews":
+        from . import review, store
+        done, bad = 0, 0
+        for run_path, m in store.iter_manifests(Path(a.root), "committed"):
+            if review.file_format(run_path) != 1:
+                continue
+            try:
+                review.load(run_path, m)
+                if not a.dry_run:
+                    review.migrate_file(run_path, m)
+                done += 1
+            except review.ReviewError as e:
+                bad += 1
+                print(f"{m['run_id']}: {e}", file=sys.stderr)
+        print(f"{done} review file(s) {'would migrate' if a.dry_run else 'migrated'}, {bad} refused")
+        return 1 if bad else 0
     if a.cmd == "runs":
         from . import annotate
         print(V.to_json(annotate.runs_json(a.root, a.run)))
@@ -334,7 +354,7 @@ def _main(argv=None) -> int:
                     print(f"{m['run_id']}: {f['status'].replace('_', ' ')}: {p['start']}-{p['end']} ({f['edit']['reason']})")
             else:
                 f = review.suggest_cut(run_path, m, a.start, a.end, a.reason, by=a.by)
-                print(f"{m['run_id']}: {f['status'].replace('_', ' ')}: {a.start}-{a.end} ({f['edit']['id']})")
+                print(f"{m['run_id']}: {f['status'].replace('_', ' ')}: {a.start}-{a.end} ({f['edit']['edit_id']})")
         if not found:
             print("no matching committed run", file=sys.stderr)
             return 1

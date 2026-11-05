@@ -1,8 +1,9 @@
 """Read and write a run's schema data: what agents (and scripts) use to fill in the same fields people edit.
 
   runs_json(root)    every run's task segments, drive mode spans, failure moment and type, and video files
-  annotate(...)      set task segments, the failure moment and type, or the takeover time, by name from the
-                     dataset's lists; applied at once, marked with who set it, undoable in the viewer
+  annotate(...)      propose task segments, the failure moment and type, or the takeover time, by name from the
+                     dataset's lists; each is a proposal marked with who set it, which a person accepts, changes or
+                     rejects in the viewer
 """
 from __future__ import annotations
 
@@ -85,7 +86,7 @@ def annotate(root: Path, run_id: str, by: str, segments: list | None = None, fai
     if segments is not None:
         plan = [{"name": _known(lists, "task_segments", x["name"]), "start": frame(x["start_s"]),
                  "end": frame(x["end_s"])} for x in segments]
-        todo.append(("segment_plan", {"segments": plan}, f"{by}: task segments",
+        todo.append(("segments", {"segments": plan}, f"{by}: task segments",
                      f"segments: {', '.join(p['name'] for p in plan)}"))
     if takeover_at is not None:
         _, _, _, drive = _state(run_path, m)
@@ -108,6 +109,6 @@ def annotate(root: Path, run_id: str, by: str, segments: list | None = None, fai
     done = []
     for kind, payload, what, said in todo:
         with rv.recording(what):
-            rv.apply_agent_edit(run_path, m, kind, payload, by)
+            rv.apply_agent_edit(run_path, m, kind, payload, by, reason=what)
         done.append(said)
     return done

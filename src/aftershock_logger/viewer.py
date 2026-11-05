@@ -70,13 +70,14 @@ def _modes(run_path: Path) -> tuple[list, list]:
 def _review_state(run_path: Path, m: dict) -> dict:
     modes, sources = _modes(run_path)
     try:
-        r = rv.load(run_path)
+        r = rv.load(run_path, m)
         return {"edits": r["edits"], "rev": r["rev"], "effective": rv.effective(m, r), "undoable": rv.undoable(r),
                 **dict(zip(("major", "segments", "drive"), ev.major_events(m, r, modes, sources, with_segments=True))),
                 "error": None}
     except rv.ReviewError as e:                        # shown on the run; editing it is disabled
-        return {"edits": [], "rev": -1, "effective": rv.effective(m, rv.empty()), "undoable": [],
-                **dict(zip(("major", "segments", "drive"), ev.major_events(m, rv.empty(), modes, sources, with_segments=True))),
+        blank = rv.empty(m["run_id"])
+        return {"edits": [], "rev": -1, "effective": rv.effective(m, blank), "undoable": [],
+                **dict(zip(("major", "segments", "drive"), ev.major_events(m, blank, modes, sources, with_segments=True))),
                 "error": str(e)}
 
 
@@ -296,7 +297,7 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
             if op == "undo":
                 entry = rv.undo(run_path, m, req.get("entry_id"), expect_rev=rev)
                 state = _review_state(run_path, m)
-                state["undone"] = {"entry": entry["id"], "what": entry["what"]}
+                state["undone"] = {"entry": entry["step_id"], "what": entry["what"]}
                 return self._json(200, state)
             with rv.recording(what) as rec:             # one undoable step (Cmd/Ctrl+Z in the page)
                 summary = self._apply(op, req, run_path, m, rev)
@@ -473,7 +474,7 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
         summary = None
         if op == "add":
             if req.get("kind") not in ("label", "exclude", "failure_start", "step_boundary", "segment_edge", "drive_boundary", "outcome",
-                                   "segment_plan"):
+                                   "segments", "segment_plan"):
                 raise rv.ReviewError("the viewer adds labels, cuts and the policy-failure moment only")
             payload = req.get("payload", {})
             rv.add_edit(run_path, m, req.get("kind"), payload, source="human", expect_rev=rev)

@@ -1,0 +1,358 @@
+{
+ "edits": [
+  {
+   "accepted_seq": 1,
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "000000000001",
+   "kind": "outcome",
+   "payload": {
+    "failure_mode": "dropped after lift",
+    "termination_reason": "timeout"
+   },
+   "reason": null,
+   "source": "human",
+   "status": "accepted"
+  },
+  {
+   "accepted_seq": 2,
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "000000000002",
+   "kind": "failure_start",
+   "payload": {
+    "frame": 80
+   },
+   "reason": null,
+   "source": "human",
+   "status": "accepted"
+  },
+  {
+   "by": "idle finder (commands)",
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "000000000003",
+   "kind": "exclude",
+   "payload": {
+    "end": 12,
+    "start": 0
+   },
+   "reason": "no movement for 0.4 s at the start, policy driving",
+   "source": "agent",
+   "status": "rejected"
+  },
+  {
+   "by": "idle finder (commands)",
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": null,
+   "id": "000000000004",
+   "kind": "exclude",
+   "payload": {
+    "end": 120,
+    "start": 112
+   },
+   "reason": "idle",
+   "source": "agent",
+   "status": "proposed"
+  },
+  {
+   "accepted_seq": 3,
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "000000000005",
+   "kind": "step_boundary",
+   "payload": {
+    "after": " Grasp ",
+    "before": "reach",
+    "frame": 32,
+    "index": 0
+   },
+   "reason": null,
+   "source": "human",
+   "status": "accepted"
+  },
+  {
+   "accepted_seq": 4,
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "000000000006",
+   "kind": "segment_edge",
+   "payload": {
+    "edge": "end",
+    "frame": 112,
+    "index": 2
+   },
+   "reason": null,
+   "source": "human",
+   "status": "accepted"
+  },
+  {
+   "accepted_seq": 5,
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "000000000007",
+   "kind": "drive_boundary",
+   "payload": {
+    "frame": 90,
+    "index": 0
+   },
+   "reason": null,
+   "source": "human",
+   "status": "accepted"
+  },
+  {
+   "accepted_seq": 6,
+   "by": "segmenter",
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "000000000008",
+   "kind": "segment_plan",
+   "payload": {
+    "segments": [
+     {
+      "end": 28,
+      "name": "reach",
+      "start": 0
+     },
+     {
+      "end": 72,
+      "name": "Grasp",
+      "start": 28
+     },
+     {
+      "end": 110,
+      "name": "wiggle",
+      "start": 72
+     }
+    ]
+   },
+   "reason": null,
+   "source": "agent",
+   "status": "accepted"
+  },
+  {
+   "accepted_seq": 7,
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "000000000009",
+   "kind": "reject_run",
+   "payload": {},
+   "reason": null,
+   "source": "human",
+   "status": "rejected"
+  },
+  {
+   "accepted_seq": 8,
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "00000000000a",
+   "kind": "note",
+   "payload": {
+    "frame": 10,
+    "text": "slips at the rim"
+   },
+   "reason": null,
+   "source": "human",
+   "status": "accepted"
+  },
+  {
+   "accepted_seq": 9,
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "00000000000b",
+   "kind": "label",
+   "payload": {
+    "driver": "policy",
+    "end": 50,
+    "segment": "lift",
+    "start": 40,
+    "text": "hesitates"
+   },
+   "reason": null,
+   "replaced_by": "00000000000c",
+   "source": "human",
+   "status": "rejected"
+  },
+  {
+   "accepted_seq": 10,
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "00000000000c",
+   "interpretation": {
+    "at": "2026-10-20T09:15:00Z",
+    "by": "reader-agent",
+    "meaning": "hesitation",
+    "train": "exclude"
+   },
+   "interpretation_history": [
+    {
+     "at": "2026-10-20T09:15:00Z",
+     "by": "reader-agent",
+     "meaning": "fine",
+     "train": "keep"
+    }
+   ],
+   "kind": "label",
+   "payload": {
+    "driver": null,
+    "end": 55,
+    "segment": null,
+    "start": 40,
+    "text": "hesitates over the cap"
+   },
+   "reason": null,
+   "replaces": "00000000000b",
+   "source": "human",
+   "status": "accepted"
+  },
+  {
+   "accepted_seq": 11,
+   "by": "notes-agent",
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "00000000000d",
+   "kind": "event_note",
+   "payload": {
+    "key": "takeover:90",
+    "text": "operator saw a slip"
+   },
+   "reason": null,
+   "source": "agent",
+   "status": "accepted"
+  },
+  {
+   "accepted_seq": 12,
+   "adjusted": true,
+   "by": "idle",
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "00000000000e",
+   "kind": "exclude",
+   "payload": {
+    "end": 26,
+    "start": 20
+   },
+   "reason": "idle",
+   "source": "agent",
+   "status": "accepted"
+  },
+  {
+   "accepted_seq": 13,
+   "created_at": "2026-10-20T09:15:00Z",
+   "decided_at": "2026-10-20T09:15:00Z",
+   "id": "00000000000f",
+   "kind": "outcome",
+   "payload": {
+    "failure_mode": null,
+    "termination_reason": "failure"
+   },
+   "reason": null,
+   "source": "human",
+   "status": "rejected"
+  }
+ ],
+ "history": [
+  {
+   "at": "2026-10-20T09:15:00Z",
+   "changes": [
+    {
+     "after": {
+      "accepted_seq": 2,
+      "created_at": "2026-10-20T09:15:00Z",
+      "decided_at": "2026-10-20T09:15:00Z",
+      "id": "000000000002",
+      "kind": "failure_start",
+      "payload": {
+       "frame": 80
+      },
+      "reason": null,
+      "source": "human",
+      "status": "accepted"
+     },
+     "before": null,
+     "id": "000000000002"
+    }
+   ],
+   "id": "aaaaaaaaaaaa",
+   "t": 1792400100000000000,
+   "undone": false,
+   "what": "fail start"
+  },
+  {
+   "at": "2026-10-20T09:15:00Z",
+   "changes": [
+    {
+     "after": {
+      "accepted_seq": 14,
+      "created_at": "2026-10-20T09:15:00Z",
+      "decided_at": "2026-10-20T09:15:00Z",
+      "id": "cccccccccccc",
+      "kind": "note",
+      "payload": {
+       "frame": 1,
+       "text": "x"
+      },
+      "reason": null,
+      "source": "human",
+      "status": "accepted"
+     },
+     "before": null,
+     "id": "cccccccccccc"
+    }
+   ],
+   "id": "bbbbbbbbbbbb",
+   "t": 1792400100000001000,
+   "undone": true,
+   "undone_at": "2026-10-20T09:15:00Z",
+   "what": "add note"
+  },
+  {
+   "at": "2026-10-20T09:15:00Z",
+   "changes": [
+    {
+     "after": {
+      "accepted_seq": 6,
+      "by": "segmenter",
+      "created_at": "2026-10-20T09:15:00Z",
+      "decided_at": "2026-10-20T09:15:00Z",
+      "id": "000000000008",
+      "kind": "segment_plan",
+      "payload": {
+       "segments": [
+        {
+         "end": 28,
+         "name": "reach",
+         "start": 0
+        },
+        {
+         "end": 72,
+         "name": "Grasp",
+         "start": 28
+        },
+        {
+         "end": 110,
+         "name": "wiggle",
+         "start": 72
+        }
+       ]
+      },
+      "reason": null,
+      "source": "agent",
+      "status": "accepted"
+     },
+     "before": null,
+     "id": "000000000008"
+    }
+   ],
+   "id": "dddddddddddd",
+   "undone": false,
+   "what": "older logger step, no t"
+  }
+ ],
+ "rev": 23,
+ "reviewed": true,
+ "reviewed_at": "2026-10-20T09:15:00Z",
+ "reviewed_by": "reviewer-1",
+ "seq": 14,
+ "version": 1
+}
