@@ -7,10 +7,27 @@ import numpy as np
 import pyarrow.parquet as pq
 
 from . import adapter, events as ev, review as rv, store
+from .schema import PLANNED_TICK_COLUMNS, UNKNOWN, UNKNOWN_INT, manifest_fields
 from .validate import TICK_COLUMNS, validate
 
 ACTION_COLS = ("base_action", "expert_action", "sent_action")
-STRING_COLS = ("control_mode", "expert_source")
+STRING_COLS = ("control_mode", "expert_source", "prompt", "subtask_cmd")
+# What a tick reads as when its run was written before these fields existed: not recorded.
+PLANNED_UNKNOWN = {"prompt": UNKNOWN, "prompt_rev": UNKNOWN_INT, "subtask_cmd": UNKNOWN, "control_gen": UNKNOWN_INT}
+
+
+def planned_columns(table, n: int | None = None) -> dict:
+    """prompt, prompt_rev, subtask_cmd and control_gen of one ticks table. A table from an older logger has none of
+    them, and every tick reads as unknown ("unknown" for the strings, -1 for the two counters)."""
+    n = table.num_rows if n is None else n
+    out = {}
+    for c in PLANNED_TICK_COLUMNS:
+        if c in table.column_names:
+            vals = table.column(c).to_pylist()
+            out[c] = vals if c in STRING_COLS else np.asarray(vals, dtype=np.int64)
+        else:
+            out[c] = [PLANNED_UNKNOWN[c]] * n if c in STRING_COLS else np.full(n, UNKNOWN_INT, np.int64)
+    return out
 
 
 class DataopDataset:
@@ -42,10 +59,12 @@ class DataopDataset:
                     cols[c] = t.column(c).to_pylist()
                 else:
                     cols[c] = t.column(c).to_numpy(zero_copy_only=False)
+            cols.update(planned_columns(t))
             review = rv.load(run_path)
             # moved drive-mode switch points count, so training sees the same run the reviewer saw
             mask = rv.train_mask(m, review, ev.effective_modes(m, review, cols["control_mode"], cols["expert_source"]))
-            self.runs[m["episode_index"]] = {"run_id": m["run_id"], "dim": dim, "cols": cols, "train_mask": mask}
+            self.runs[m["episode_index"]] = {"run_id": m["run_id"], "dim": dim, "cols": cols, "train_mask": mask,
+                                             "fields": manifest_fields(m)}
         feat = lerobot_dataset.meta.features.get("action", {})
         self.fallback_dim = int(np.prod(feat.get("shape", (0,)))) if feat else 0
 
@@ -95,10 +114,10 @@ class DataopDataset:
                                             "terminated", "truncated")})
             side.update(control_mode="none", expert_source=None, blend_weight=0.0, inference_id=-1, chunk_offset=-1,
                         obs_ns=-1, obs_skew_ns=-1, sent_ns=-1, reward=0.0, run_bound=False, run_id=None,
-                        train_mask=False)
+                        train_mask=False, **PLANNED_UNKNOWN)
         else:
             c = run["cols"]
-            side = {k: c[k][fi] for k in TICK_COLUMNS if k != "frame_index"}
+            side = {k: c[k][fi] for k in TICK_COLUMNS + PLANNED_TICK_COLUMNS if k != "frame_index"}
             side.update(run_bound=True, run_id=run["run_id"], train_mask=bool(run["train_mask"][fi]))
         bv, ev, keep = bool(side["base_valid"]), bool(side["expert_valid"]), bool(side["train_mask"])
         targets = {   # review edits (excluded spans, rejected runs) switch every target off via train_mask

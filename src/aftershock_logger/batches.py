@@ -44,14 +44,14 @@ def _now() -> str:
     return now()
 
 
-def _policy_key(policy: dict | None) -> dict | None:
-    if not policy:
+def _policy_key(policy: dict | str | None) -> dict | None:
+    if not isinstance(policy, dict) or not policy:      # null (no policy) and "unknown" (not recorded)
         return None
     return {"family": policy.get("family"), "source": policy.get("source"), "revision": policy.get("revision")}
 
 
-def _policy_name(policy: dict | None) -> str:
-    if not policy:
+def _policy_name(policy: dict | str | None) -> str:
+    if not isinstance(policy, dict) or not policy:
         return "unknown policy"
     rev = policy.get("revision")
     return f"{policy.get('source') or policy.get('family') or 'policy'}" + (f" @ {rev[:12]}" if rev else "")
@@ -388,7 +388,7 @@ def edit(root: Path, ref: str, by: str = "human", name: str | None = None, purpo
             _log(b, by, f"model trained from it: {b['model']}")
             src, _, rev = b["model"].partition("@")
             for c in d["batches"]:
-                p = c.get("policy") or {}
+                p = c.get("policy") if isinstance(c.get("policy"), dict) else {}
                 if c is not b and c["parent"] is None and p.get("source") == src and (not rev or p.get("revision") == rev):
                     newest = b["exports"][-1]["export_id"] if b["exports"] else None
                     c["parent"] = {"batch_id": b["batch_id"], "export_id": newest}

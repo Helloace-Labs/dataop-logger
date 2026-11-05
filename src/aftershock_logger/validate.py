@@ -16,7 +16,8 @@ import pyarrow.parquet as pq
 
 from . import adapter, store
 from .fingerprint import fingerprint
-from .schema import CONTROL_MODES, OBS_TIMESTAMP_KINDS, TERMINAL_FLAG, TERMINATION_REASONS, ActionSchema
+from .schema import (CONTROL_MODES, OBS_TIMESTAMP_KINDS, PLANNED_TICK_COLUMNS, TERMINAL_FLAG, TERMINATION_REASONS,
+                     UNKNOWN, ActionSchema, manifest_problems, tick_sequence_problems)
 
 TICK_COLUMNS = ("frame_index", "control_mode", "expert_source", "blend_weight", "base_action", "base_valid",
                 "expert_action", "expert_valid", "sent_action", "safety_modified", "inference_id", "chunk_offset",
@@ -98,6 +99,8 @@ def _check_run(run_path: Path, m: dict, episodes: dict, errors: list) -> bool:
         err("clock.obs_timestamp_kind is missing or unknown")
     if m["termination_reason"] not in TERMINATION_REASONS:
         err(f"unknown termination_reason {m['termination_reason']!r}")
+    for p in manifest_problems(m):
+        err(p)
     try:
         t = pq.read_table(run_path / "ticks.parquet")
     except Exception as e:
@@ -111,6 +114,7 @@ def _check_run(run_path: Path, m: dict, episodes: dict, errors: list) -> bool:
     if n == 0:
         err("run has no ticks")
         return False
+    _check_planned_ticks(t, m, err)
     if n != m["length"]:
         err(f"ticks has {n} rows, manifest says {m['length']}")
     col = {c: t.column(c).to_pylist() for c in TICK_COLUMNS if not c.endswith("_action")}
@@ -247,6 +251,38 @@ def _check_run(run_path: Path, m: dict, episodes: dict, errors: list) -> bool:
     if disk.tobytes() != sent.tobytes():
         err(f"sent_action differs from LeRobot action (max abs diff {float(np.max(np.abs(disk - sent)))})")
     return True
+
+
+def _check_planned_ticks(t, m: dict, err) -> None:
+    """prompt, prompt_rev, subtask_cmd and control_gen: all four columns or none (a run from an older logger)."""
+    have = [c for c in PLANNED_TICK_COLUMNS if c in t.column_names]
+    if not have:
+        return
+    if len(have) != len(PLANNED_TICK_COLUMNS):
+        err(f"ticks.parquet has only some of the columns {list(PLANNED_TICK_COLUMNS)}: {have}")
+        return
+    for c in ("prompt", "subtask_cmd"):
+        if not (pa_types.is_string(t.schema.field(c).type) or pa_types.is_large_string(t.schema.field(c).type)
+                or pa_types.is_null(t.schema.field(c).type)):
+            err(f"{c} is not a string column")
+            return
+    for c in ("prompt_rev", "control_gen"):
+        if not pa_types.is_integer(t.schema.field(c).type):
+            err(f"{c} is not an integer column")
+            return
+    rows = t.select(list(PLANNED_TICK_COLUMNS)).to_pylist()
+    for i, r in enumerate(rows):
+        if not isinstance(r["prompt"], str) or not r["prompt"]:
+            err(f"tick {i}: prompt is empty or null (write 'unknown' when it was not recorded)")
+        if r["subtask_cmd"] == "":
+            err(f"tick {i}: subtask_cmd is an empty string")
+        for c in ("prompt_rev", "control_gen"):
+            if r[c] is None or r[c] < -1:
+                err(f"tick {i}: {c} must be >= 0, or -1 when not recorded")
+    if any(r["prompt_rev"] is None or r["control_gen"] is None for r in rows):
+        return
+    for p in tick_sequence_problems(rows, m.get("planner", UNKNOWN)):
+        err(p)
 
 
 def validate(root: Path, action_key: str = "action") -> dict:

@@ -18,7 +18,8 @@ import pyarrow as pa
 from . import adapter, batches, store
 from .fingerprint import fingerprint
 from .schema import (LIVE_CONTROL_MODES as CONTROL_MODES, SCHEMA_VERSION, SUBGOAL_STATUSES, TERMINAL_FLAG, LIVE_TERMINATION_REASONS as TERMINATION_REASONS,
-                     ActionSchema, EnvInfo, PolicyInfo)
+                     UNKNOWN, ActionSchema, EnvInfo, PlannerInfo, PolicyInfo, planner_value, task_id_value,
+                     task_rev_value, TickSequence, tick_values)
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version  # noqa: E402  (also used by _lerobot_version)
 
@@ -36,6 +37,9 @@ def _own_version() -> str:
 
 
 _DATAOP_VERSION = _own_version()
+
+_FROM_LOGGER = object()            # run(planner=...) not given: use the RunLogger's planner
+_AUTO = object()                   # add_frame(subtask_cmd=...) not given: None without a planner, else unknown
 
 PRED_SCHEMA = pa.schema([("inference_id", pa.int64()), ("obs_frame_index", pa.int64()),
                          ("infer_start_ns", pa.int64()), ("infer_end_ns", pa.int64()), ("horizon", pa.int64()),
@@ -61,9 +65,13 @@ class RunLogger:
     """One per dataset root. Holds the single-writer lock until close()."""
 
     def __init__(self, dataset, action_schema: ActionSchema, obs_timestamp_kind: str = "bundle_completion",
-                 action_key: str = "action", batch: str | None = None):
+                 action_key: str = "action", batch: str | None = None,
+                 planner: PlannerInfo | dict | None | str = UNKNOWN):
         """batch: the batch new runs join (opened if it does not exist). Without it, runs join the batch that is
-        collecting, or a new batch named after the policy."""
+        collecting, or a new batch named after the policy.
+
+        planner: the planner that picks subtasks in every run of this writer: PlannerInfo(name, id), None when no
+        planner runs, or "unknown" (the default) when the caller does not say. A run can override it."""
         if obs_timestamp_kind not in ("capture", "bundle_completion"):
             raise ValueError("obs_timestamp_kind must be 'capture' or 'bundle_completion'")
         self.dataset = dataset
@@ -72,6 +80,7 @@ class RunLogger:
         self.action_key = action_key
         self.obs_timestamp_kind = obs_timestamp_kind
         self.batch = batch
+        self.planner = planner_value(planner)
         self.broken: str | None = None                   # set after a mid-save failure; no more runs
         self._lock = store.WriterLock(self.root)
         self._active: Run | None = None
@@ -89,8 +98,12 @@ class RunLogger:
 
     @contextmanager
     def run(self, task: str, policy: PolicyInfo | None = None, env: EnvInfo | None = None,
-            log_predictions: bool = False):
-        """Record one episode. Call run.end(...) inside the block; saving and commit happen on exit."""
+            log_predictions: bool = False, task_id: str = UNKNOWN, task_rev: int | str = UNKNOWN,
+            planner=_FROM_LOGGER):
+        """Record one episode. Call run.end(...) inside the block; saving and commit happen on exit.
+
+        task_id and task_rev name the Aftershock task and its revision (its subtask list); "unknown" when not given.
+        planner overrides the RunLogger's planner for this run."""
         if self.broken:
             raise RunError(f"this logger stopped after a failed save ({self.broken}); "
                            "run `aftershock-logger validate --repair` and open a new dataset writer")
@@ -98,13 +111,15 @@ class RunLogger:
             raise RunError("a run is already in progress on this dataset")
         if not isinstance(task, str) or not task:
             raise ValueError("task must be a non-empty string")
+        planned = {"task_id": task_id_value(task_id), "task_rev": task_rev_value(task_rev),
+                   "planner": self.planner if planner is _FROM_LOGGER else planner_value(planner)}
         try:
             batches.target_for(self.root, self.batch)        # refuse before recording into a closed batch
         except batches.BatchError as e:
             raise RunError(str(e)) from None
         if adapter.has_pending_frames(self.dataset):
             raise RunError("the dataset has unsaved frames; save or clear the episode buffer before starting a run")
-        r = Run(self, task, policy, env, log_predictions)
+        r = Run(self, task, policy, env, log_predictions, planned)
         self._active = r
         try:
             yield r
@@ -124,8 +139,11 @@ class RunLogger:
 
 class Run:
     def __init__(self, logger: RunLogger, task: str, policy: PolicyInfo | None, env: EnvInfo | None,
-                 log_predictions: bool):
+                 log_predictions: bool, planned: dict | None = None):
         self.logger = logger
+        planned = planned or {"task_id": UNKNOWN, "task_rev": UNKNOWN, "planner": logger.planner}
+        self.task_id, self.task_rev, self.planner = planned["task_id"], planned["task_rev"], planned["planner"]
+        self._seq = TickSequence(self.planner)
         self.dataset = logger.dataset
         self.schema = logger.schema
         self.task = task
@@ -154,12 +172,22 @@ class Run:
                   base_action=None, expert_action=None, expert_source: str | None = None,
                   blend_weight: float | None = None, safety_modified: bool = False, obs_skew_ns: int = -1,
                   inference_id: int = -1, chunk_offset: int = -1, reward: float | None = None,
-                  terminated: bool = False, truncated: bool = False) -> int:
+                  terminated: bool = False, truncated: bool = False, prompt: str = UNKNOWN,
+                  prompt_rev: int | str = UNKNOWN, subtask_cmd=_AUTO, control_gen: int | str = UNKNOWN) -> int:
         """Add one frame to LeRobot first, then the sidecar row. Returns the frame index.
 
         obs_ns and sent_ns are required monotonic-clock readings (time.monotonic_ns()) taken by the caller.
+        Optional, "unknown" when not given: prompt (the text the policy received on this frame), prompt_rev (counts
+        prompt changes), control_gen (the command generation counter) and subtask_cmd (the subtask id the planner
+        commanded; None when no planner commanded one, the default when the run has planner None).
         """
         self._require("active")
+        if subtask_cmd is _AUTO:
+            subtask_cmd = None if self.planner is None else UNKNOWN
+        planned = tick_values(prompt, prompt_rev, subtask_cmd, control_gen)
+        bad = self._seq.problem(planned)
+        if bad:
+            raise ValueError(bad)
         if control_mode not in CONTROL_MODES:
             raise ValueError(f"control_mode must be one of {CONTROL_MODES}")
         if control_mode in ("expert", "blend") and not expert_source:
@@ -242,7 +270,9 @@ class Run:
             "reward_valid": reward is not None,
             "terminated": bool(terminated),
             "truncated": bool(truncated),
+            **planned,
         })
+        self._seq.accept(planned)
         return expected
 
     def complete_transition(self, reward: float, terminated: bool = False, truncated: bool = False) -> None:
@@ -401,8 +431,10 @@ class Run:
             if k.endswith("_action"):
                 flat = np.concatenate(vals).astype(np.float32)
                 cols[k] = pa.FixedSizeListArray.from_arrays(pa.array(flat, pa.float32()), n)
-            elif k == "expert_source":
+            elif k in ("expert_source", "prompt", "subtask_cmd"):
                 cols[k] = pa.array(vals, pa.string())
+            elif k in ("prompt_rev", "control_gen"):
+                cols[k] = pa.array(vals, pa.int64())
             else:
                 cols[k] = pa.array(vals)
         return pa.table(cols)
@@ -412,6 +444,7 @@ class Run:
         return {
             "schema_version": SCHEMA_VERSION, "run_id": self.run_id, "status": status,
             "episode_index": self.episode_index, "length": len(self._rows), "task": self.task,
+            "task_id": self.task_id, "task_rev": self.task_rev, "planner": self.planner,
             "started_at": self.started_at, "ended_at": self.ended_at,
             **self._end,
             "fingerprint": fingerprint(self.schema.id, self.task, sent),

@@ -58,6 +58,10 @@ Values are always logged denormalized, in robot command space. `id` is the SHA-2
 | `safety_modified` | bool | True when a clip, rate limit or guard changed the command |
 | `inference_id` | int64 or -1 | Prediction that produced `base_action` |
 | `chunk_offset` | int32 or -1 | Step within that prediction's chunk |
+| `prompt` | string | The text the policy received on this frame, or `unknown`. A prompt that changes during a run means a planner is present; the distinct prompts are its subtasks and the changes are its boundaries |
+| `prompt_rev` | int64, -1 when unknown | Counts prompt changes. Never goes down within a run; ticks with the same known `prompt_rev` carry the same known prompt |
+| `subtask_cmd` | string or null | The subtask id the planner commanded on this frame; null when no planner commanded one (always null when the manifest's `planner` is null); `unknown` when not recorded |
+| `control_gen` | int64, -1 when unknown | The command generation counter of the control loop (it increments at a takeover, a stop or a fault). Never goes down within a run |
 | `obs_ns` | int64 | Required. Monotonic time the complete observation bundle used for this action became available. `clock.obs_timestamp_kind` says whether it is a capture time or a bundle-completion time. Per-camera alignment is out of scope in v0 |
 | `sent_ns` | int64 | Required. Monotonic time the command was sent |
 | `obs_skew_ns` | int64 or -1 | Optional: max minus min camera time in the bundle, when known |
@@ -67,6 +71,8 @@ Values are always logged denormalized, in robot command space. `id` is the SHA-2
 | `truncated` | bool | True only on the last tick of a run cut off (timeout, abort) |
 
 Arrays are fixed-size with explicit validity flags, never null lists. NaN is not used as "missing".
+
+`prompt`, `prompt_rev`, `subtask_cmd` and `control_gen` (logger task L2) are written by every run from this version on, and are all present or all absent. A ticks file from an older logger has none of them, and every tick reads as unknown (`"unknown"` for the strings, -1 for the counters); `validate` accepts both.
 
 **Transition convention.** Row `t` is `(observation_t, sent_action_t, reward_t, terminated_t, truncated_t)`, where `reward_t` results from applying `sent_action_t`. When an integration only learns the reward on the next loop, it calls `run.complete_transition(reward, terminated, truncated)`, which fills the previous row; the logger keeps one pending row for this. Validation: only the last row may have `terminated` or `truncated`; not both; they must agree with `termination_reason`; an RL-ready run has every `reward_valid` true. Zero-frame runs are discarded, never committed.
 
@@ -91,7 +97,9 @@ v0 cannot separate the arbitration output from a safety-filter correction, and d
 - `subgoals`: derived summary of the task's steps from `subgoal` events, `{name, start_frame, end_frame, status, reason}` with `end_frame` exclusive and status `completed`, `failed` or `unfinished`
 - `failure_mode`: free-text name for how the run failed (`dropped_after_lift`, `no_grasp`), or null; groups failures across runs
 - `takeovers`: derived summary of half-open ranges `[start_frame, end_frame)` per `control_mode` and `expert_source`
-- `policy`: family, hub repo and revision or artifact sha256, code revision, config digest, chunk size, temporal ensembling, device and precision
+- `policy`: family, hub repo and revision or artifact sha256, code revision, config digest, chunk size, temporal ensembling, device and precision; null when no policy ran (a teleop demo); `unknown` when an import did not record it. Before L2 the importer wrote null for an unrecorded policy, so a null `policy` in a manifest without a `task_rev` key reads as `unknown` (`schema.manifest_fields`)
+- `task_id` (non-empty string) and `task_rev` (int >= 0): the Aftershock task and its revision, or `unknown`
+- `planner`: `{name, id}` of the planner that picked subtasks, null when no planner ran, or `unknown` when not recorded. A changed planner gets a new id
 - `env`: typed `robot_id`, `calibration_digest`, `operator` (pseudonym), `software` (lerobot and aftershock-logger versions), plus free-form `extras` (lighting, etc.)
 - `action_schema` as above, `clock`: monotonic source description
 
@@ -150,17 +158,13 @@ Import binds runs to an existing LeRobot v3.0 dataset; control mode and outcome 
 LeRobot dataset from locked batches with the `filtered`, `dagger` or `residual` recipe and records its provenance in
 `dataop_export.json`.
 
-## Planned fields from the Nov 2026 prototype
+## Task, planner and prompt fields (logger task L2)
 
-The prototype added subtasks and a planner (a layer above the VLA that picks the next subtask during a run). The logger needs three fields for them. None is implemented yet.
+The prototype added subtasks and a planner (a layer above the VLA that picks the next subtask during a run). The manifest records `task_id`, `task_rev` and `planner`, and every tick records `prompt`, `prompt_rev`, `subtask_cmd` and `control_gen` (tables above). With these, a planner's commands become first-pass subtask labels in Review, failure analysis can tell a planner mistake from a VLA mistake, and training gets subtask prompts.
 
-| Where | Field | Meaning |
-| --- | --- | --- |
-| Per tick | `prompt` | The text the VLA received on this frame. A prompt that changes during a run means a planner is present; the distinct prompts are its subtasks and the changes are its boundaries |
-| Per tick | `subtask_cmd` | The subtask the planner commanded on this frame, or null without a planner |
-| Manifest | `planner` | `{name, id}`, or `unknown` when a planner is detected but not named. Set once with `RunLogger(..., planner="...")` |
+Three cases stay apart in every one of these fields: a value; null, known to be none (no planner ran); and `unknown`, the value existed but was not recorded. A field the caller does not pass is `unknown`, never guessed, and a field an older logger never wrote reads as `unknown`. Import writes `unknown` for all of them, and for control mode and outcome when the mapping has no source. It writes a null policy, planner and `subtask_cmd` only for teleop demos (the mapping says a person drove every frame); otherwise an unmapped policy is `unknown`.
 
-With these, a planner's commands become first-pass subtask labels in Review, failure analysis can tell a planner mistake from a VLA mistake, and training gets subtask prompts. The full record set is in the Aftershock Data Schema page.
+API: `RunLogger(..., planner=PlannerInfo(name, id) | None | "unknown")` sets the planner for every run, `log.run(..., task_id=, task_rev=, planner=)` sets the task and may override the planner, and `run.add_frame(..., prompt=, prompt_rev=, subtask_cmd=, control_gen=)` records the per-tick fields. `add_frame` refuses a bad value, a counter that goes down, a changed prompt with the same `prompt_rev`, or a `subtask_cmd` in a run whose planner is null, before the frame reaches LeRobot. The reader exposes the tick fields as `dataop.prompt`, `dataop.prompt_rev`, `dataop.subtask_cmd` and `dataop.control_gen`.
 
 ## Non-goals for v0
 

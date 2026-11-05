@@ -46,7 +46,7 @@ import pyarrow.dataset as pads
 from . import batches as B
 from . import store
 from .fingerprint import fingerprint
-from .schema import KNOWN_SPACES, SCHEMA_VERSION, TERMINAL_FLAG, TERMINATION_REASONS, ActionSchema
+from .schema import KNOWN_SPACES, SCHEMA_VERSION, TERMINAL_FLAG, TERMINATION_REASONS, UNKNOWN, UNKNOWN_INT, ActionSchema
 
 PRESETS = {
     "plain": {},
@@ -377,6 +377,9 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
         term[-1] = True
     elif flag == "truncated":
         trunc[-1] = True
+    # null policy and planner mean none ran, which an import knows only for teleop demos (every frame a person's,
+    # by mapping); otherwise an unmapped policy or planner was not recorded
+    no_policy = isinstance(ctl, dict) and ctl.get("constant") == "expert"
     fixed = lambda a: pa.FixedSizeListArray.from_arrays(pa.array(a.reshape(-1), pa.float32()), dim)
     table = pa.table({
         "frame_index": pa.array(np.arange(n, dtype=np.int64)),
@@ -392,6 +395,11 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
         "obs_ns": pa.array(ns), "obs_skew_ns": pa.array(np.full(n, -1, np.int64)), "sent_ns": pa.array(ns),
         "reward": pa.array(reward), "reward_valid": pa.array(rvalid),
         "terminated": pa.array(term), "truncated": pa.array(trunc),
+        # a LeRobot dataset does not say what prompt the policy received, which subtask was commanded or the
+        # command generation: not recorded
+        "prompt": pa.array([UNKNOWN] * n, pa.string()), "prompt_rev": pa.array(np.full(n, UNKNOWN_INT, np.int64)),
+        "subtask_cmd": pa.array([None if no_policy else UNKNOWN] * n, pa.string()),
+        "control_gen": pa.array(np.full(n, UNKNOWN_INT, np.int64)),
     })
     from .logger import derive_subgoals, derive_takeovers
     tick_rows = [{"control_mode": str(mode[i]), "expert_source": expert_source[i]} for i in range(n)]
@@ -399,13 +407,14 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
     manifest = {
         "schema_version": SCHEMA_VERSION, "run_id": str(uuid.uuid4()), "status": "committed",
         "episode_index": int(e), "length": n, "task": ep["task"], "started_at": started_at, "ended_at": ended_at,
+        "task_id": UNKNOWN, "task_rev": UNKNOWN, "planner": None if no_policy else UNKNOWN,
         "termination_reason": reason, "task_success": None if reason == "unknown" else reason == "success",
         "labels": [], "failure_mode": failure_mode,
         "fingerprint": fingerprint(schema.id, ep["task"], sent),
         "events": events, "takeovers": derive_takeovers(tick_rows), "subgoals": derive_subgoals(events, n),
         "policy": {"family": None, "source": None, "revision": None, "code_revision": None, "config_digest": None,
                    "chunk_size": None, "temporal_ensembling": False, "device": None, "precision": None,
-                   **(policy or {})} if policy else None,
+                   **(policy or {})} if policy else None if no_policy else UNKNOWN,
         "env": {"robot_id": None, "calibration_digest": None, "operator": None, "extras": {},
                 "software": {"lerobot": None, "dataop_logger": None}},  # filled below
         "action_schema": {**schema.to_dict(), "id": schema.id},
