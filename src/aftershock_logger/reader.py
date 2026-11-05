@@ -30,8 +30,29 @@ def planned_columns(table, n: int | None = None) -> dict:
     return out
 
 
+def tick_records(run_path: Path) -> list[dict]:
+    """Every tick of a run as the Aftershock schema states it, for anything that stores records rather than training
+    tensors: prompt_rev and control_gen read as the literal "unknown" instead of the on-disk -1, and a run from an older
+    logger gets "unknown" for all four L2 fields. Other columns are kept as written."""
+    t = pq.read_table(Path(run_path) / "ticks.parquet")
+    rows = t.to_pylist()
+    planned = planned_columns(t)
+    for i, r in enumerate(rows):
+        for c in PLANNED_TICK_COLUMNS:
+            v = planned[c][i]
+            if c in STRING_COLS:
+                r[c] = v
+            else:
+                r[c] = UNKNOWN if int(v) == UNKNOWN_INT else int(v)
+    return rows
+
+
 class DataopDataset:
     """Wraps a LeRobotDataset, including episode-filtered views. Keeps LeRobot's own sampling and indices.
+
+    The L2 tick fields come out as dataop.prompt and dataop.subtask_cmd (strings, "unknown" when not recorded, and
+    subtask_cmd None when no planner commanded one) and dataop.prompt_rev and dataop.control_gen (ints, -1 when not
+    recorded, like inference_id). Use tick_records() for the schema's record form, where unknown is the literal.
 
     missing: "error" (default) refuses episodes in the view that have no committed run,
              "exclude" drops those episodes from iteration (original indices stay in each item),

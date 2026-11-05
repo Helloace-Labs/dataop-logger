@@ -272,14 +272,14 @@ def _check_planned_ticks(t, m: dict, err) -> None:
             return
     rows = t.select(list(PLANNED_TICK_COLUMNS)).to_pylist()
     for i, r in enumerate(rows):
-        if not isinstance(r["prompt"], str) or not r["prompt"]:
-            err(f"tick {i}: prompt is empty or null (write 'unknown' when it was not recorded)")
+        if not isinstance(r["prompt"], str):
+            err(f"tick {i}: prompt is null (write 'unknown' when it was not recorded)")
         if r["subtask_cmd"] == "":
             err(f"tick {i}: subtask_cmd is an empty string")
         for c in ("prompt_rev", "control_gen"):
             if r[c] is None or r[c] < -1:
                 err(f"tick {i}: {c} must be >= 0, or -1 when not recorded")
-    if any(r["prompt_rev"] is None or r["control_gen"] is None for r in rows):
+    if any(r["prompt"] is None or r["prompt_rev"] is None or r["control_gen"] is None for r in rows):
         return
     for p in tick_sequence_problems(rows, m.get("planner", UNKNOWN)):
         err(p)

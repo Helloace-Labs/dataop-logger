@@ -92,7 +92,8 @@ def collect(root: Path) -> dict:
         modes = t.column("control_mode").to_pylist()
         sources = t.column("expert_source").to_pylist()
         lat = (t.column("sent_ns").to_numpy() - t.column("obs_ns").to_numpy()) / 1e6     # ms, frame -> command
-        policy, env = m.get("policy") or {}, m.get("env") or {}
+        policy, env = m.get("policy"), m.get("env") or {}
+        policy = policy if isinstance(policy, dict) else {}       # null (no policy) or "unknown" (not recorded)
         runs.append({
             "run_id": m["run_id"], "episode": m["episode_index"], "task": m["task"], "length": m["length"],
             "fps": m["action_schema"]["rate_hz"], "outcome": m["termination_reason"],

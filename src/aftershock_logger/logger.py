@@ -97,11 +97,13 @@ class RunLogger:
         self.close()
 
     @contextmanager
-    def run(self, task: str, policy: PolicyInfo | None = None, env: EnvInfo | None = None,
+    def run(self, task: str, policy: PolicyInfo | None | str = UNKNOWN, env: EnvInfo | None = None,
             log_predictions: bool = False, task_id: str = UNKNOWN, task_rev: int | str = UNKNOWN,
             planner=_FROM_LOGGER):
         """Record one episode. Call run.end(...) inside the block; saving and commit happen on exit.
 
+        policy: the PolicyInfo that drove, None when no policy ran (a teleop demo; then no frame may carry a
+        base_action), or "unknown" (the default) when the caller does not say.
         task_id and task_rev name the Aftershock task and its revision (its subtask list); "unknown" when not given.
         planner overrides the RunLogger's planner for this run."""
         if self.broken:
@@ -111,6 +113,8 @@ class RunLogger:
             raise RunError("a run is already in progress on this dataset")
         if not isinstance(task, str) or not task:
             raise ValueError("task must be a non-empty string")
+        if not (policy is None or isinstance(policy, PolicyInfo) or (isinstance(policy, str) and policy == UNKNOWN)):
+            raise ValueError("policy must be a PolicyInfo, None (no policy ran) or 'unknown'")
         planned = {"task_id": task_id_value(task_id), "task_rev": task_rev_value(task_rev),
                    "planner": self.planner if planner is _FROM_LOGGER else planner_value(planner)}
         try:
@@ -138,7 +142,7 @@ class RunLogger:
 
 
 class Run:
-    def __init__(self, logger: RunLogger, task: str, policy: PolicyInfo | None, env: EnvInfo | None,
+    def __init__(self, logger: RunLogger, task: str, policy: PolicyInfo | None | str, env: EnvInfo | None,
                  log_predictions: bool, planned: dict | None = None):
         self.logger = logger
         planned = planned or {"task_id": UNKNOWN, "task_rev": UNKNOWN, "planner": logger.planner}
@@ -179,11 +183,14 @@ class Run:
         obs_ns and sent_ns are required monotonic-clock readings (time.monotonic_ns()) taken by the caller.
         Optional, "unknown" when not given: prompt (the text the policy received on this frame), prompt_rev (counts
         prompt changes), control_gen (the command generation counter) and subtask_cmd (the subtask id the planner
-        commanded; None when no planner commanded one, the default when the run has planner None).
+        commanded, or None when no planner commanded one).
         """
         self._require("active")
         if subtask_cmd is _AUTO:
-            subtask_cmd = None if self.planner is None else UNKNOWN
+            subtask_cmd = UNKNOWN
+        if self.policy is None and (base_action is not None or control_mode in ("base", "blend")):
+            raise ValueError("this run was started with policy=None (no policy ran), so no frame can carry a "
+                             "base_action or be driven by the policy; pass the PolicyInfo, or 'unknown'")
         planned = tick_values(prompt, prompt_rev, subtask_cmd, control_gen)
         bad = self._seq.problem(planned)
         if bad:
@@ -450,7 +457,7 @@ class Run:
             "fingerprint": fingerprint(self.schema.id, self.task, sent),
             "events": self._events, "takeovers": derive_takeovers(self._rows),
             "subgoals": derive_subgoals(self._events, len(self._rows)),
-            "policy": asdict(self.policy) if self.policy else None,
+            "policy": asdict(self.policy) if isinstance(self.policy, PolicyInfo) else self.policy,
             "env": {**asdict(self.env), "software": {"lerobot": _lerobot_version(), "dataop_logger": _DATAOP_VERSION}},
             "action_schema": {**self.schema.to_dict(), "id": self.schema.id},
             "clock": {"source": "time.monotonic_ns", "obs_timestamp_kind": self.logger.obs_timestamp_kind},
@@ -515,7 +522,7 @@ class Run:
         store.rebuild_index(self.logger.root)
         try:
             batches.join(self.logger.root, self.run_id, self.logger.batch,
-                         asdict(self.policy) if self.policy else None)
+                         asdict(self.policy) if isinstance(self.policy, PolicyInfo) else None)
         except Exception as e:                           # the run is saved; batches place it on the next read
             warnings.warn(f"run {self.run_id} was saved but not added to a batch yet ({e})")
 

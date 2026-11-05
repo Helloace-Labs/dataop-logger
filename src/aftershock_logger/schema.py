@@ -218,8 +218,8 @@ def manifest_fields(m: dict) -> dict:
 
 def tick_values(prompt, prompt_rev, subtask_cmd, control_gen) -> dict:
     """Check one tick's optional fields and return them as stored (ints use -1 for unknown on disk)."""
-    if not isinstance(prompt, str) or not prompt:
-        raise ValueError("prompt must be the non-empty text the policy received, or 'unknown'")
+    if not isinstance(prompt, str):
+        raise ValueError("prompt must be the text the policy received (a string), or 'unknown'")
     out = {"prompt": prompt}
     for name, v in (("prompt_rev", prompt_rev), ("control_gen", control_gen)):
         if isinstance(v, str) and v == UNKNOWN:
@@ -238,12 +238,14 @@ class TickSequence:
     """Rules across one run's ticks, on stored values (ints -1 when unknown), checked one tick at a time.
 
     prompt_rev and control_gen never go down where known; ticks with the same known prompt_rev carry the same known
-    prompt; with planner null (no planner ran) no tick names a subtask command."""
+    prompt; with planner null (no planner ran) no tick names a subtask command and the known prompt never changes,
+    since a changing prompt means a planner is present."""
 
     def __init__(self, planner):
         self.planner = planner
         self.last = {"prompt_rev": None, "control_gen": None}
         self.rev_prompt: dict[int, str] = {}
+        self.prompt: str | None = None                  # the last known prompt
 
     def problem(self, r: dict) -> str | None:
         for k in ("prompt_rev", "control_gen"):
@@ -255,6 +257,8 @@ class TickSequence:
             return f"prompt changed without a new prompt_rev (still {rev})"
         if self.planner is None and r["subtask_cmd"] not in (None, UNKNOWN):
             return f"subtask_cmd {r['subtask_cmd']!r} given, but the run has no planner (planner is None)"
+        if self.planner is None and p != UNKNOWN and self.prompt is not None and p != self.prompt:
+            return "the prompt changed, which means a planner is present, but the run has no planner (planner is None)"
         return None
 
     def accept(self, r: dict) -> None:
@@ -263,6 +267,8 @@ class TickSequence:
                 self.last[k] = r[k]
         if r["prompt_rev"] != UNKNOWN_INT and r["prompt"] != UNKNOWN:
             self.rev_prompt.setdefault(r["prompt_rev"], r["prompt"])
+        if r["prompt"] != UNKNOWN:
+            self.prompt = r["prompt"]
 
 
 def tick_sequence_problems(rows: list[dict], planner) -> list[str]:

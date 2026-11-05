@@ -21,7 +21,7 @@ from aftershock_logger import UNKNOWN, ActionSchema, PlannerInfo, PolicyInfo, Ru
 from aftershock_logger import batches as B  # noqa: E402
 from aftershock_logger import adapter, importer, store  # noqa: E402
 from aftershock_logger import validate as V  # noqa: E402
-from aftershock_logger.reader import planned_columns  # noqa: E402
+from aftershock_logger.reader import planned_columns, tick_records  # noqa: E402
 from aftershock_logger.schema import manifest_fields  # noqa: E402
 
 lerobot_dataset = pytest.importorskip("lerobot.datasets.lerobot_dataset")
@@ -122,6 +122,7 @@ def test_no_planner_is_null_and_kept_apart_from_unknown(tmp_path):
     with RunLogger(ds, SCHEMA, planner=None) as log:
         r0 = record(log, [{}, {}])
         with log.run(task=TASK, policy=PolicyInfo("smolvla", "x")) as run:
+            r1 = run
             add(run, 0)
             with pytest.raises(ValueError, match="no planner"):
                 add(run, 1, subtask_cmd="st_01")
@@ -133,7 +134,9 @@ def test_no_planner_is_null_and_kept_apart_from_unknown(tmp_path):
     ds.finalize()
     m0, m2, m3 = (store.read_manifest(r.run_path) for r in (r0, r2, r3))
     assert m0["planner"] is None and "planner" in m0
-    assert pq.read_table(r0.run_path / "ticks.parquet").column("subtask_cmd").to_pylist() == [None, None]
+    # an omitted subtask_cmd stays unknown even without a planner; None only when the caller says so
+    assert pq.read_table(r0.run_path / "ticks.parquet").column("subtask_cmd").to_pylist() == [UNKNOWN, UNKNOWN]
+    assert pq.read_table(r1.run_path / "ticks.parquet").column("subtask_cmd").to_pylist() == [UNKNOWN, None]
     assert m2["planner"] == {"name": "Rules", "id": "rules-v3"} and m3["planner"] == UNKNOWN
     assert pq.read_table(r3.run_path / "ticks.parquet").column("subtask_cmd").to_pylist() == [UNKNOWN]
     res = V.validate(ds.root)
@@ -163,7 +166,7 @@ def test_bad_planner_on_the_writer_is_refused(tmp_path):
         PlannerInfo(name="", id="x")
 
 
-@pytest.mark.parametrize("kw", [{"prompt": ""}, {"prompt": None}, {"prompt": 3}, {"prompt_rev": -1},
+@pytest.mark.parametrize("kw", [{"prompt": None}, {"prompt": 3}, {"prompt_rev": -1},
                                 {"prompt_rev": 1.5}, {"prompt_rev": True}, {"control_gen": -1},
                                 {"control_gen": "2"}, {"subtask_cmd": ""}, {"subtask_cmd": 2}])
 def test_bad_tick_fields_are_refused_before_lerobot(tmp_path, kw):
@@ -245,8 +248,7 @@ def _as_string(col):
     (_set("prompt_rev", 3, 0), "prompt_rev went down"),
     (_set("control_gen", 1, 5), "control_gen went down"),
     (_set("prompt", 1, "other"), "without a new prompt_rev"),
-    (_set("prompt", 0, ""), "prompt is empty or null"),
-    (_set("prompt", 0, None), "prompt is empty or null"),
+    (_set("prompt", 0, None), "prompt is null"),
     (_set("subtask_cmd", 0, ""), "subtask_cmd is an empty string"),
     (_set("prompt_rev", 0, -2), "prompt_rev must be >= 0"),
     (_set("control_gen", 0, None), "control_gen must be >= 0"),
@@ -391,7 +393,7 @@ def test_import_demos_know_no_policy_or_planner_ran(tmp_path):
     m, t = _imported(ds.root)
     assert m["policy"] is None and m["planner"] is None and "task_rev" in m
     assert manifest_fields(m)["policy"] is None                 # not legacy: null stays "no policy"
-    assert t["subtask_cmd"] == [None] * 6 and set(t["prompt"]) == {UNKNOWN}
+    assert set(t["subtask_cmd"]) == {UNKNOWN} and set(t["prompt"]) == {UNKNOWN}
     res = V.validate(ds.root)
     assert res["ok"], res["errors"]
 
@@ -413,3 +415,118 @@ def test_manifest_json_round_trip_keeps_unknown_null_and_values_apart(tmp_path):
     ds.finalize()
     raw = json.loads((r.run_path / "manifest.json").read_text())
     assert raw["planner"] is None and raw["task_rev"] == UNKNOWN and raw["task_id"] == "tube-pick"
+
+
+# ── round 1 review ─────────────────────────────────────────────────────────────────────────────────────────
+
+
+def test_empty_prompt_is_kept(tmp_path):
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        r = record(log, [{"prompt": "", "prompt_rev": 0}, {"prompt": "", "prompt_rev": 0}])
+    ds.finalize()
+    assert pq.read_table(r.run_path / "ticks.parquet").column("prompt").to_pylist() == ["", ""]
+    assert V.validate(ds.root)["ok"]
+
+
+def test_policy_not_given_is_unknown_and_none_means_no_policy(tmp_path):
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        with log.run(task=TASK) as run:                          # Watch mode that does not name its policy
+            add(run, 0)
+            run.end(termination_reason="success")
+        unnamed = run
+        with log.run(task=TASK, policy=None) as run:             # a teleop demo: no policy ran
+            with pytest.raises(ValueError, match="policy=None"):
+                add(run, 0)
+            a = np.zeros(6, np.float32)
+            with pytest.raises(ValueError, match="policy=None"):
+                run.add_frame({"observation.state": a, "task": TASK}, sent_action=a, expert_action=a,
+                              expert_source="human", base_action=a, inference_id=0, chunk_offset=0,
+                              control_mode="expert", **ts())
+            assert adapter.buffer_size(ds) == 0
+            run.add_frame({"observation.state": a, "task": TASK}, sent_action=a, expert_action=a,
+                          expert_source="human", control_mode="expert", **ts())
+            run.end(termination_reason="success")
+        demo = run
+        with pytest.raises(ValueError, match="policy must be"):
+            with log.run(task=TASK, policy="smolvla"):
+                pass
+    ds.finalize()
+    assert store.read_manifest(unnamed.run_path)["policy"] == UNKNOWN
+    m = store.read_manifest(demo.run_path)
+    assert m["policy"] is None and manifest_fields(m)["policy"] is None
+    res = V.validate(ds.root)
+    assert res["ok"], res["errors"]
+    assert sum(b["n_runs"] for b in B.summary(ds.root)) == 2
+
+
+def test_no_planner_means_the_prompt_never_changes(tmp_path):
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, planner=None) as log:
+        with log.run(task=TASK, policy=PolicyInfo("smolvla", "x")) as run:
+            add(run, 0, prompt="reach", prompt_rev=0)
+            add(run, 1, prompt=UNKNOWN)
+            with pytest.raises(ValueError, match="planner is present"):
+                add(run, 2, prompt="grasp", prompt_rev=1)
+            add(run, 2, prompt="reach", prompt_rev=0)
+            run.end(termination_reason="success")
+        r = run
+    ds.finalize()
+    assert V.validate(ds.root)["ok"]
+    _tamper_ticks(r.run_path, lambda d, types: (d["prompt"].__setitem__(2, "grasp"),
+                                                d["prompt_rev"].__setitem__(2, 1)))
+    assert any("planner is present" in e for e in V.validate(ds.root)["errors"])
+
+
+def test_tick_records_use_the_unknown_literal(tmp_path):
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, planner=RULES) as log:
+        r = record(log, [{"prompt": "a", "prompt_rev": 2, "control_gen": 0, "subtask_cmd": "st_01"},
+                         {"subtask_cmd": None}])
+    ds.finalize()
+    rows = tick_records(r.run_path)
+    assert [(x["prompt"], x["prompt_rev"], x["subtask_cmd"], x["control_gen"]) for x in rows] == \
+        [("a", 2, "st_01", 0), (UNKNOWN, UNKNOWN, None, UNKNOWN)]
+    assert rows[0]["control_mode"] == "base" and len(rows[0]["sent_action"]) == 6
+    root = tmp_path / "old"
+    shutil.copytree(OLD_DATASET, root)
+    for run_path, _ in store.iter_manifests(root, "committed"):
+        for x in tick_records(run_path):
+            assert (x["prompt"], x["prompt_rev"], x["subtask_cmd"], x["control_gen"]) == (UNKNOWN,) * 4
+
+
+def test_import_all_expert_mapping_without_declarations_stays_unknown(tmp_path):
+    ds = _plain(tmp_path)                    # a scripted skill drove every frame; a planner may have run
+    importer.import_dataset(str(ds.root), mapping={"control": {"constant": "expert"}, "expert_source": "skill:pick"})
+    m, t = _imported(ds.root)
+    assert m["policy"] == UNKNOWN and m["planner"] == UNKNOWN and set(t["subtask_cmd"]) == {UNKNOWN}
+    assert m["origin"]["fields"]["policy"] == "unknown" and m["origin"]["fields"]["planner"] == "unknown"
+    assert V.validate(ds.root)["ok"]
+
+
+def test_import_declarations_for_policy_and_planner(tmp_path):
+    ds = _plain(tmp_path)
+    rep = importer.import_dataset(str(ds.root), mapping={"control": {"column": "intervention"},
+                                                         "base_action": "sent_on_policy_frames", "policy": None})
+    assert rep["runs"] == [] and "no policy ran" in rep["skipped"][0]["why"]     # the policy drove frames 0 to 3
+    importer.import_dataset(str(ds.root), mapping={"control": {"column": "intervention"},
+                                                   "base_action": "sent_on_policy_frames",
+                                                   "planner": {"name": "Rules", "id": "rules-v3"}})
+    m, _ = _imported(ds.root)
+    assert m["planner"] == {"name": "Rules", "id": "rules-v3"} and m["origin"]["fields"]["planner"] == "mapping"
+    assert V.validate(ds.root)["ok"]
+    for bad in ({"planner": "Rules"}, {"planner": {"name": "Rules"}}, {"policy": "smolvla"}):
+        with pytest.raises(importer.ImportError_):
+            importer.import_dataset(str(ds.root), mapping=bad, dry_run=True)
+
+
+def test_viewer_lists_imports_with_unknown_and_null_policy(tmp_path):
+    from aftershock_logger import viewer
+    ds = _plain(tmp_path)
+    importer.import_dataset(str(ds.root))
+    runs = viewer.collect(ds.root)["runs"]
+    assert len(runs) == 1 and runs[0]["policy"] is None
+    ds2 = _plain(tmp_path / "b")
+    importer.import_dataset(str(ds2.root), preset="demos")
+    assert viewer.collect(ds2.root)["runs"][0]["policy"] is None

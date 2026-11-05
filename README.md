@@ -139,7 +139,7 @@ with log.run(task=task, policy=policy, task_id="tube-pick", task_rev=3) as run:
     run.add_frame(frame, ..., prompt="grasp the cap", prompt_rev=2, subtask_cmd="st_02", control_gen=1)
 ```
 
-`prompt` is the text the policy received, `prompt_rev` counts prompt changes, `subtask_cmd` is the subtask id the planner commanded, and `control_gen` is your loop's command generation counter. Leave out what you do not know: it is stored as `unknown`, which is different from `None` (known to be none, for example no planner ran). On disk the two counters are int64 columns with -1 for unknown. Runs written before these fields existed read as `unknown` too.
+`prompt` is the text the policy received, `prompt_rev` counts prompt changes, `subtask_cmd` is the subtask id the planner commanded, and `control_gen` is your loop's command generation counter. Leave out what you do not know: it is stored as `unknown`, which is different from `None` (known to be none, for example no planner ran). The same holds for `policy`: leave it out and it is `unknown`; pass `policy=None` only for runs no policy drove, such as teleop demos. On disk the two counters are int64 columns with -1 for unknown. Runs written before these fields existed read as `unknown` too.
 
 ## Rewards for RL
 
