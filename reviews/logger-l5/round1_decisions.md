@@ -25,3 +25,11 @@ The fallback confirmation round of `bb917a2` approved the round 1 fixes: 0 High,
 12. **L8, test gaps for round 1 L1, L2 and L5. Changed.** `tests/test_frame_queue.py`: `test_write_partial_returns_this_runs_record_and_refuses_another` (the already-present path, matching and mismatched), `test_an_interrupt_during_the_quarantine_write_blocks_the_logger` (logger refused, run registered for `close()`, retry works), `test_close_does_not_misreport_an_idle_writer` (`stop_timeout=0` with an idle writer).
 
 Tests after the confirmation fixes: 264 passed, 1 skipped.
+
+## Confirmation round 2 (round1_confirm2_claude.md)
+
+The fallback confirmation round 2 of `71760cc` approved the fixes for L6, L7 and L8 with no findings. The review loop is done.
+
+## Codex confirmation round: after merge
+
+Every review of this change was a fallback review, because Codex was at its usage limit (it resets at 01:00 PST on Nov 5). The lead merges it now and runs the one Codex confirmation round on the whole change **after merge**, once Codex is back. Its file will be `reviews/logger-l5/codex_confirm_after_merge.md`. A finding from that round gets its own pull request.
