@@ -75,6 +75,7 @@ def _main(argv=None) -> int:
     an.add_argument("--failure-type", default=None, help="a name from the dataset's failure types")
     an.add_argument("--takeover-at", type=float, default=None, help="seconds where control really switched from the policy")
     an.add_argument("--by", required=True, help="name of the agent")
+
     mg = sub.add_parser("migrate-reviews", help="rewrite format 1 review files as review format 2 now (lossless)")
     mg.add_argument("root")
     mg.add_argument("--dry-run", action="store_true", help="only check that every format 1 file migrates")
@@ -102,6 +103,10 @@ def _main(argv=None) -> int:
     sc.add_argument("run_id")
     sc.add_argument("start", type=int)
     sc.add_argument("end", type=int)
+    for sp in (it, an, nt, sc):
+        sp.add_argument("--job-id", default=None, help="your job's id, recorded on each proposal (default: one per call)")
+        sp.add_argument("--agent-version", default=None,
+                        help="your agent's or model's version, recorded on each proposal (default: this logger's)")
     sc.add_argument("--reason", required=True, help="short description shown to the person")
     sc.add_argument("--by", default="agent", help="name of the agent making the suggestion")
     bp = sub.add_parser("batches", help="batches of runs (one per policy version or DAgger round): list, open, close, lock")
@@ -265,26 +270,34 @@ def _main(argv=None) -> int:
         from . import review, store
         for run_path, m in store.iter_manifests(Path(a.root), "committed"):
             if m["run_id"] == a.run_id:
-                review.interpret(run_path, a.label_id, a.train, a.meaning, by=a.by, replace=a.replace)
+                review.interpret(run_path, a.label_id, a.train, a.meaning, by=a.by, replace=a.replace,
+                                 job_id=a.job_id, agent_version=a.agent_version)
                 print(f"{a.label_id}: proposed {a.train} ({a.meaning})")
                 return 0
         print(f"no committed run {a.run_id}", file=sys.stderr)
         return 1
     if a.cmd == "migrate-reviews":
-        from . import review, store
-        done, bad = 0, 0
+        from . import batches, review, store
+        done, locked, bad = 0, 0, 0
         for run_path, m in store.iter_manifests(Path(a.root), "committed"):
             if review.file_format(run_path) != 1:
                 continue
             try:
                 review.load(run_path, m)
+                try:
+                    batches.check_editable(Path(a.root), m["run_id"])
+                except batches.BatchError:
+                    locked += 1        # read through the migration as it is; rewritten after its batch is unlocked
+                    print(f"{m['run_id']}: skipped, its batch is locked", file=sys.stderr)
+                    continue
                 if not a.dry_run:
                     review.migrate_file(run_path, m)
                 done += 1
             except review.ReviewError as e:
                 bad += 1
                 print(f"{m['run_id']}: {e}", file=sys.stderr)
-        print(f"{done} review file(s) {'would migrate' if a.dry_run else 'migrated'}, {bad} refused")
+        print(f"{done} review file(s) {'would migrate' if a.dry_run else 'migrated'}, "
+              f"{locked} skipped in locked batches, {bad} refused")
         return 1 if bad else 0
     if a.cmd == "runs":
         from . import annotate
@@ -295,7 +308,8 @@ def _main(argv=None) -> int:
         from . import annotate
         segs = _json.loads(a.segments) if a.segments else None
         for line in annotate.annotate(a.root, a.run_id, a.by, segments=segs, failure_at=a.failure_at,
-                                      failure_type=a.failure_type, takeover_at=a.takeover_at):
+                                      failure_type=a.failure_type, takeover_at=a.takeover_at, job_id=a.job_id,
+                                      agent_version=a.agent_version):
             print(line)
         return 0
     if a.cmd == "lists":
@@ -325,7 +339,8 @@ def _main(argv=None) -> int:
                 continue
             found = True
             if a.cmd == "note":
-                review.add_event_note(run_path, m, a.key, a.text, by=a.by)
+                review.add_event_note(run_path, m, a.key, a.text, by=a.by, job_id=a.job_id,
+                                      agent_version=a.agent_version)
                 print(f"{m['run_id']}: note on {a.key}")
                 continue
             t = pq.read_table(run_path / "ticks.parquet", columns=["control_mode", "expert_source"])
@@ -353,7 +368,8 @@ def _main(argv=None) -> int:
                     p = f["edit"]["payload"]
                     print(f"{m['run_id']}: {f['status'].replace('_', ' ')}: {p['start']}-{p['end']} ({f['edit']['reason']})")
             else:
-                f = review.suggest_cut(run_path, m, a.start, a.end, a.reason, by=a.by)
+                f = review.suggest_cut(run_path, m, a.start, a.end, a.reason, by=a.by, job_id=a.job_id,
+                                       agent_version=a.agent_version)
                 print(f"{m['run_id']}: {f['status'].replace('_', ' ')}: {a.start}-{a.end} ({f['edit']['edit_id']})")
         if not found:
             print("no matching committed run", file=sys.stderr)

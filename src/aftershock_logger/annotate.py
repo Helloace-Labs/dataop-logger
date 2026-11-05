@@ -75,7 +75,11 @@ def _known(lists: dict, kind: str, name: str) -> str:
 
 
 def annotate(root: Path, run_id: str, by: str, segments: list | None = None, failure_at: float | None = None,
-             failure_type: str | None = None, takeover_at: float | None = None) -> list[str]:
+             failure_type: str | None = None, takeover_at: float | None = None, job_id: str | None = None,
+             agent_version: str | None = None) -> list[str]:
+    """Propose the given values on one run, one undoable step each, all under one job id (the caller's, or one made
+    for this call). A value the same agent already proposed and nobody decided yet is not proposed again."""
+    job_id = job_id or rv._job_id()
     root = Path(root)
     run_path, m = _run(root, run_id)
     rate, n = m["action_schema"]["rate_hz"], m["length"]
@@ -109,6 +113,7 @@ def annotate(root: Path, run_id: str, by: str, segments: list | None = None, fai
     done = []
     for kind, payload, what, said in todo:
         with rv.recording(what):
-            rv.apply_agent_edit(run_path, m, kind, payload, by, reason=what)
+            rv.apply_agent_edit(run_path, m, kind, payload, by, reason=what, job_id=job_id,
+                                agent_version=agent_version)
         done.append(said)
     return done

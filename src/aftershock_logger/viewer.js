@@ -64,11 +64,7 @@ function driveModes(r) {        // policy and rescue, then any other drive modes
 const SEG_SHADES = 4;
 // The dataset's agreed lists (its schema): failure types and task segments. Renames keep old names as aliases.
 let LISTS = DATA.lists || { rev: 0, failure_types: [], task_segments: [] };
-// review format 2 stores a task segment by subtask id; without an Aftershock task the logger makes the id from the
-// name (review.subtask_id_for), so an id finds its list entry the same way
-const subtaskId = n => n.trim().toLowerCase().replace(/[^a-z0-9_.-]+/g, "-").replace(/^[-._]+|[-._]+$/g, "").slice(0, 64).replace(/[-._]+$/, "");
-const listEntry = (kind, name) => (LISTS[kind] || []).find(e => e.name === name || (e.aliases || []).includes(name))
-  || (kind === "task_segments" ? (LISTS[kind] || []).find(e => [e.name, ...(e.aliases || [])].some(n => subtaskId(n) === name)) : undefined);
+const listEntry = (kind, name) => (LISTS[kind] || []).find(e => e.name === name || (e.aliases || []).includes(name));
 const canon = (kind, name) => { const e = name && listEntry(kind, name); return e ? e.name : name; };
 function segShade(name) {       // one color family for task segments; each list entry keeps its own shade
   const i = (LISTS.task_segments || []).findIndex(e => e.name === canon("task_segments", name));
@@ -466,7 +462,7 @@ function defaultsFor(r, lo, hi) {       // who drove and the step that cover mos
 
 function proposalText(r, x) {    // one line for an agent's proposal of any kind other than a cut
   const p = x.payload, at = f => fmt(f / r.fps);
-  const what = x.kind === "segments" ? p.segments.map(s => `${s.legacy_name || s.subtask_id} ${at(s.start)}–${at(s.end)}`).join(", ")
+  const what = x.kind === "segments" ? p.segments.map(s => `${canon("task_segments", s.legacy_name || s.subtask_id)} ${at(s.start)}–${at(s.end)}`).join(", ")
     : x.kind === "outcome" ? `${p.termination_reason || p.outcome}${p.failure_mode ? ": " + p.failure_mode : ""}`
     : x.kind === "reading" ? `${p.train}: ${p.meaning}`
     : p.frame !== undefined ? at(p.frame) + (p.text ? ": " + p.text : "")

@@ -24,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import review_cases as rc  # noqa: E402
-from aftershock_logger import review as rv, review_format as fmt  # noqa: E402
+from aftershock_logger import batches as B, review as rv, review_format as fmt, store  # noqa: E402
 
 EXPECTED = rc.read("expected.json")
 MANIFEST = rc.read("manifest.json")
@@ -137,8 +137,10 @@ def test_logger_only_operations_write_ordinary_format2_reviews():
     assert r["rev"] == 1 and len(r["history"]) == 1 and made[1] is not made[0] and made[1] == made[2]
     r = fmt.decide_many(r, [made[0]["edit_id"], made[1]["edit_id"]], True, by="p", expect_rev=1, now="t2",
                         what="cut all")
-    r, gone = fmt.retract(r, made[0]["edit_id"], by="p", expect_rev=2, now="t3")
-    assert gone["status"] == "rejected" and gone["accepted_seq"] == 1 and gone["decided_by"] == "p"
+    r, gone = fmt.retract(r, made[0]["edit_id"], by="q", expect_rev=2, now="t3")
+    # the acceptance stays as it was; the take back is its own step
+    assert (gone["status"], gone["accepted_seq"], gone["decided_by"], gone["decided_at"]) == ("rejected", 1, "p", "t2")
+    assert r["history"][-1]["at"] == "t3" and "taken back by q" in r["history"][-1]["what"]
     assert [e["edit_id"] for e in fmt.active_edits(r)] == [made[1]["edit_id"]]
     with pytest.raises(fmt.ReviewError):
         fmt.retract(r, made[0]["edit_id"], by="p", expect_rev=3, now="t4")
@@ -226,17 +228,52 @@ def test_a_broken_format1_file_is_refused_and_left_alone(tmp_path):
     assert json.loads((run / "review.json").read_text()) == raw
 
 
-def test_viewer_segments_get_subtask_ids_and_keep_their_names_through_the_lists():
-    from aftershock_logger import lists as ls
-    assert rv.subtask_id_for("Pick tube") == "pick-tube" and rv.subtask_id_for(" grasp ") == "grasp"
-    assert rv.subtask_id_for("unresolved").startswith("segment-") and rv.subtask_id_for("??").startswith("segment-")
-    assert fmt.SLUG.fullmatch(rv.subtask_id_for("x" * 90))
-    d = {"failure_types": [], "task_segments": [{"name": "Pick tube", "description": "", "aliases": ["Grab"]}]}
-    assert ls.canonical(d, "task_segments", "pick-tube") == "Pick tube"
-    assert ls.canonical(d, "task_segments", "grab") == "Pick tube"
-    kind, p = rv._input("segment_plan", {"segments": [{"name": "Pick tube", "start": 0, "end": 5}]}, MANIFEST)
-    assert (kind, p) == ("segments", {"segments": [{"subtask_id": "pick-tube", "start": 0, "end": 5,
-                                                    "legacy_name": None}]})
+def _named_run(tmp_path, steps, review=None):
+    m = dict(MANIFEST, subgoals=steps)
+    run = tmp_path / "ds" / "dataop" / "runs" / rc.RUN_ID
+    run.mkdir(parents=True)
+    (run / "manifest.json").write_text(dumps(m))
+    if review is not None:
+        (run / "review.json").write_text(dumps(review))
+    return run, m
+
+
+def test_named_segments_keep_their_names_status_and_reason_and_get_no_invented_id(tmp_path):
+    steps = [{"name": "Reach over", "start_frame": 0, "end_frame": 40, "status": "completed", "reason": None},
+             {"name": "Pick tube", "start_frame": 40, "end_frame": 100, "status": "failed", "reason": "slipped"},
+             {"name": "抓取", "start_frame": 100, "end_frame": 120, "status": "completed", "reason": None}]
+    run, m = _named_run(tmp_path, steps)
+    plan = [{"name": "Reach over", "start": 0, "end": 42}, {"name": "Pick tube ", "start": 42, "end": 100},
+            {"name": "抓取", "start": 100, "end": 120}]
+    rv.add_edit(run, m, "segment_plan", {"segments": plan})
+    segs = next(e for e in rv.load(run, m)["edits"] if e["kind"] == "segments")["payload"]["segments"]
+    assert [(s["subtask_id"], s["legacy_name"]) for s in segs] == [
+        ("unresolved", "Reach over"), ("unresolved", "Pick tube"), ("unresolved", "抓取")]
+    eff = rv.effective(m, rv.load(run, m))["subgoals"]
+    assert [(s["name"], s["start_frame"], s["status"], s["reason"]) for s in eff] == [
+        ("Reach over", 0, "completed", None), ("Pick tube", 42, "failed", "slipped"), ("抓取", 100, "completed", None)]
+    assert rv.load(run, m)["legacy_subtask_map"] is None                     # a review never migrated has no map
+
+
+def test_named_segments_in_a_migrated_review_keep_its_map(tmp_path):
+    run, m = _named_run(tmp_path, MANIFEST["subgoals"], rc.read("format1_all_kinds.json"))
+    # the viewer sends the whole plan by name; one segment changed, one new name
+    plan = [{"name": "reach", "start": 0, "end": 28}, {"name": "Grasp", "start": 28, "end": 72},
+            {"name": "wiggle", "start": 72, "end": 100}, {"name": "Place it", "start": 100, "end": 110}]
+    rv.add_edit(run, m, "segment_plan", {"segments": plan})
+    r = rv.load(run, m)
+    segs = r["edits"][-1]["payload"]["segments"]
+    assert [(s["subtask_id"], s["legacy_name"]) for s in segs] == [
+        ("unresolved", "reach"), ("unresolved", "Grasp"), ("unresolved", "wiggle"), ("unresolved", "Place it")]
+    assert r["legacy_subtask_map"]["entries"][-1] == {"step_index": None, "recorded_name": "Place it",
+                                                      "subtask_id": "unresolved"}
+    assert fmt.dump_review(fmt.load_review(fmt.dump_review(r))) == fmt.dump_review(r)
+    # with a task, names keep the ids the map gave them
+    run2, _ = _named_run(tmp_path / "t", MANIFEST["subgoals"], rc.read("format1_all_kinds.json"))
+    rv.migrate_file(run2, m, TASK)
+    rv.add_edit(run2, m, "segment_plan", {"segments": plan})
+    segs = rv.load(run2, m)["edits"][-1]["payload"]["segments"]
+    assert [s["subtask_id"] for s in segs] == ["s-reach", "s-grasp", "unresolved", "unresolved"]
 
 
 # ------------------------------------------------------------------ against the reference implementation, live
@@ -331,7 +368,8 @@ def _mutations(rng: random.Random, d):
                 walk(v, path + (i,))
     walk(d, ())
     values = [None, 0, -1, 1, 2, True, "", " ", "x", "unknown", "unresolved", "aaaaaaaaaaaa", [], {}, 1.5, "a\n",
-              "human", "agent", "accepted", "proposed", "rejected", 10 ** 6, "s-reach", "Grasp"]
+              "human", "agent", "accepted", "proposed", "rejected", 10 ** 6, "s-reach", "Grasp", "\ud800",
+              "a\udc00b"]
     for path in paths[1:]:
         yield path, "set", rng.choice(values)
         yield path, "drop", None
@@ -398,6 +436,109 @@ def test_random_changes_to_format1_migrate_like_the_reference():
         assert mine == theirs, f"{path} {how} {value!r}: logger {'accepts' if mine else 'refuses'}"
 
 
+def test_agent_values_name_a_version_and_a_rerun_adds_nothing(tmp_path):
+    run, m = _named_run(tmp_path, MANIFEST["subgoals"])
+    e = rv.apply_agent_edit(run, m, "failure_start", {"frame": 50}, "agent-a")
+    assert e["agent_version"] != "unknown" and e["job_id"]
+    again = rv.apply_agent_edit(run, m, "failure_start", {"frame": 50}, "agent-a", job_id="another-job")
+    assert again["edit_id"] == e["edit_id"] and len(rv.load(run, m)["edits"]) == 1
+    mine = rv.apply_agent_edit(run, m, "failure_start", {"frame": 51}, "agent-a", job_id="j7", agent_version="m-2")
+    assert (mine["job_id"], mine["agent_version"]) == ("j7", "m-2")
+
+
+def test_migrate_reviews_skips_locked_batches(tmp_path, capsys, monkeypatch):
+    from aftershock_logger import batches
+    from aftershock_logger.cli import main
+    run = _dataset(tmp_path)
+    before = (run / "review.json").read_bytes()
+
+    def locked(root, run_id):
+        raise batches.BatchError("locked")
+    monkeypatch.setattr(batches, "check_editable", locked)
+    assert main(["migrate-reviews", str(tmp_path / "ds")]) == 0
+    assert "1 skipped in locked batches" in capsys.readouterr().out
+    assert (run / "review.json").read_bytes() == before
+
+
+# ------------------------------------------------------------------ against the reference, live: logger-only steps
+
+
+def test_logger_only_steps_load_in_the_reference_and_its_operations_continue_after_them():
+    impl = rc.contract_impl()
+    m = impl.manifest(MANIFEST)
+    with impl.ids(rc.Ids(0xdd0000000000)):
+        r = fmt.migrate_format1(rc.read("format1_all_kinds.json"), MANIFEST, None)
+        steps = []
+        r, made = fmt.propose_many(r, [dict(kind="exclude", payload={"start": i, "end": i + 3}, source="agent", by="a",
+                                            job_id="j", agent_version="v", reason="idle") for i in (30, 40)],
+                                   expect_rev=r["rev"], now="t1", what="find idle")
+        steps.append(r)
+        r = fmt.decide_many(r, [x["edit_id"] for x in made], True, by="p", expect_rev=r["rev"], now="t2",
+                            what="cut all")
+        steps.append(r)
+        r, _ = fmt.retract(r, made[0]["edit_id"], by="p", expect_rev=r["rev"], now="t3")
+        steps.append(r)
+        r, _ = fmt.retract(r, "00000000000c", by="p", expect_rev=r["rev"], now="t4")     # a label with a reading
+        steps.append(r)
+        for x in steps:
+            text = fmt.dump_review(x)
+            ref = impl.load(text)
+            impl.check_manifest(ref, m)
+            assert impl.dump(ref) == text
+        # the shared operations go on from there the same way on both sides
+        ref = impl.load(fmt.dump_review(r))
+        ops = [("undo", dict(step_id=r["history"][-1]["step_id"])), ("undo", dict(step_id=r["history"][-2]["step_id"])),
+               ("undo", dict(step_id=r["history"][-3]["step_id"])),
+               ("accept", dict(edit_id=made[1]["edit_id"], by="p")),
+               ("replace", dict(edit_id=made[1]["edit_id"], payload={"start": 41, "end": 45}, by="p")),
+               ("accept", dict(edit_id="000000000004", by="p")), ("set_reviewed", dict(reviewed=True, by="p"))]
+        fmt_ids, ref_ids = rc.Ids(0xee0000000000), rc.Ids(0xee0000000000)
+        for i, (op, kw) in enumerate(ops):
+            with rc.LoggerImpl().ids(fmt_ids), impl.ids(ref_ids):
+                out_l = getattr(fmt, op)(r, expect_rev=r["rev"], now=f"u{i}", **kw)    # each one applies
+                out_r = impl.op(op)(ref, expect_rev=ref.rev, now=f"u{i}", **kw)
+            r = out_l[0] if isinstance(out_l, tuple) else out_l
+            ref = out_r[0] if isinstance(out_r, tuple) else out_r
+            assert fmt.dump_review(r) == impl.dump(ref), f"{op} differs"
+
+
+def _string_paths(d, path=()):
+    if isinstance(d, dict):
+        for k, v in d.items():
+            yield from _string_paths(v, path + (k,))
+    elif isinstance(d, list):
+        for i, v in enumerate(d):
+            yield from _string_paths(v, path + (i,))
+    elif isinstance(d, str):
+        yield path
+
+
+def test_lone_surrogates_are_refused_or_accepted_like_the_reference():
+    impl = rc.contract_impl()
+    m = impl.manifest(MANIFEST)
+    texts = [EXPECTED["migration"]["format1_all_kinds.json task"]["format2"],
+             rc.run_case(rc.LoggerImpl(), "every_kind")["final"], rc.run_case(rc.LoggerImpl(), "lock_and_unlock")["final"]]
+    seen = {True: 0, False: 0}
+    for text in texts:
+        good = json.loads(text)
+        for path in _string_paths(good):
+            for value in ("\ud800", "a\udc00", "\udbff\udfff"):
+                body = json.dumps(_apply(good, path, "set", value))
+                try:
+                    mine = fmt.dump_review(fmt.read(body, MANIFEST))
+                except (fmt.FormatError, ValueError):
+                    mine = None
+                try:
+                    ref = impl.load(body)
+                    impl.check_manifest(ref, m)
+                    theirs = impl.dump(ref)
+                except (ValueError, TypeError):
+                    theirs = None
+                assert mine == theirs, f"{path} {value!r}: logger {'accepts' if mine else 'refuses'}"
+                seen[mine is not None] += 1
+    assert seen[True] and seen[False]           # both kinds of field were exercised
+
+
 # ------------------------------------------------------------------ real files, read only
 
 
@@ -409,6 +550,42 @@ def _real_reviews() -> list[Path]:
     if not found:
         pytest.skip("no review.json files under AFTERSHOCK_REVIEW_DATA")
     return found
+
+
+def _format1_logger():
+    """review.py as it was before review format 2 (from this repo's history), or None without git history."""
+    import importlib.util
+    import subprocess
+    repo = Path(__file__).resolve().parents[1]
+    try:
+        src = subprocess.run(["git", "show", f"{FORMAT1_COMMIT}:src/aftershock_logger/review.py"], cwd=repo,
+                             capture_output=True, check=True, text=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    path = Path(os.environ.get("TMPDIR", "/tmp")) / f"review_format1_{os.getpid()}.py"
+    path.write_text(src)
+    spec = importlib.util.spec_from_file_location("aftershock_logger._review_before_format2", path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    path.unlink()
+    return mod
+
+
+FORMAT1_COMMIT = "a051fa0"     # the last commit whose logger wrote format 1
+
+
+def test_effective_matches_the_format1_logger_from_history():
+    old = _format1_logger()
+    if old is None:
+        pytest.skip("no git history to read the format 1 logger from")
+    for f1 in ("format1_all_kinds.json", "format1_minimal.json"):
+        raw = rc.read(f1)
+        r1 = copy.deepcopy(raw)
+        r1.setdefault("rev", 0)
+        r1.setdefault("seq", 0)
+        for h in r1.get("history", []):
+            h.setdefault("t", 1)
+        assert rv.effective(MANIFEST, raw) == old.effective(MANIFEST, r1)
 
 
 def test_real_review_files_migrate_losslessly_on_copies(tmp_path):
@@ -432,6 +609,15 @@ def test_real_review_files_migrate_losslessly_on_copies(tmp_path):
         assert {e["subtask_id"] for e in r["legacy_subtask_map"]["entries"]} <= {"unresolved"}   # no guesses
         if impl is not None:
             assert impl.dump(impl.migrate(raw, impl.RunManifest.model_validate(m), None)) == fmt.dump_review(r)
-        rv.effective(m, rv.load(run, m))
-        assert rv.migrate_file(run, m) and (run / "review.json").read_text() == fmt.dump_review(r)
+        # batch locks record a digest of effective(): the logger before this change must give the same one
+        old = _format1_logger()
+        if old is not None:
+            r1 = copy.deepcopy(raw)
+            r1.setdefault("rev", 0)
+            r1.setdefault("seq", 0)
+            for h in r1.get("history", []):
+                h.setdefault("t", 1)            # that reader wanted t on every step; effective() never reads history
+            assert B.review_digest(m, rv.load(run, m)) == store.json_sha256(old.effective(m, r1))
+        assert rv.migrate_file(run, m)
+        assert B.review_digest(m, rv.load(run, m)) == B.review_digest(m, r) and (run / "review.json").read_text() == fmt.dump_review(r)
         assert dumps(fmt.to_format1(rv.load(run, m))) == dumps(fmt.normalize_format1(raw))

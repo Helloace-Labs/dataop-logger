@@ -87,9 +87,17 @@ def _int(v, what: str, lo: int = 0) -> int:
     return v
 
 
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
 def _str(v, what: str, lo: int = 0, hi: int | None = None, blank_ok: bool = True) -> str:
+    """Text. A field with any limit (a length or not blank) is also refused when it holds a lone surrogate code
+    point, which is not valid unicode; a field with no limit (by, reason, a step's what) takes any string. The
+    reference reader draws the line in the same place."""
     if not isinstance(v, str) or len(v) < lo or (hi is not None and len(v) > hi):
         raise FormatError(f"{what} must be text of {lo} to {hi if hi is not None else 'any'} characters")
+    if (lo > 0 or hi is not None or not blank_ok) and _SURROGATE.search(v):
+        raise FormatError(f"{what} is not valid unicode text")
     if not blank_ok and not v.strip():
         raise FormatError(f"{what} must not be blank")
     return v
@@ -582,7 +590,7 @@ def _write(review: dict, expect_rev: int, *, what: str | None = None, allow_lock
         raise ReviewLocked(f"the review is locked by {review['locked']['by']}; unlock the pack first")
     before = review
     d = copy.deepcopy(before)
-    box: dict[str, Any] = {"d": d, "now": None, "t": None, "step": None}
+    box: dict[str, Any] = {"d": d, "now": None, "t": None, "step": None, "what": None}
     yield box
     if what is not None:
         old = {e["edit_id"]: e for e in before["edits"]}
@@ -590,7 +598,8 @@ def _write(review: dict, expect_rev: int, *, what: str | None = None, allow_lock
         changes = [{"edit_id": i, "before": copy.deepcopy(old.get(i)), "after": copy.deepcopy(new.get(i))}
                    for i in list(old) + [i for i in new if i not in old] if old.get(i) != new.get(i)]
         if changes:
-            step = {"step_id": new_id(), "at": box["now"], "t": box["t"], "what": what, "changes": changes,
+            step = {"step_id": new_id(), "at": box["now"], "t": box["t"], "what": box.get("what") or what,
+                    "changes": changes,
                     "undone": False, "undone_at": None}
             hist = d["history"]
             if _size(step) <= HISTORY_BYTES:                # one huge step is not kept for undo
@@ -891,16 +900,20 @@ def decide_many(review: dict, edit_ids: list[str], accept_them: bool, *, by: str
 
 def retract(review: dict, edit_id: str, *, by: str, expect_rev: int, now: str, t: int | None = None,
             what: str | None = None) -> tuple[dict, dict]:
-    """A person takes back an accepted edit (deletes a label or a cut in the viewer). It is kept as rejected, with
-    its accepted_seq, so the edit accepted before it in the same slot is in effect again. Format 1 recorded the same
-    change the same way. Readings of a label taken back stay with it and no longer apply, as with replace."""
+    """A person takes back an accepted edit (deletes a label or a cut in the viewer). The edit is kept as rejected
+    with its accepted_seq, so the edit accepted before it in the same slot is in effect again. Its acceptance stays
+    as it was (decided_at and decided_by still say who accepted it and when); the take back is recorded as its own
+    history step, whose `what` names who took it back and whose `at` says when. Format 1 recorded the same state
+    (rejected with an accepted_seq). Readings of a label taken back stay with it and no longer apply, as with
+    replace."""
     by = _who(by)
-    with _write(review, expect_rev, what=what or "retract") as box:
+    with _write(review, expect_rev, what=what or "take back") as box:
         box["now"], box["t"] = now, t
         e = _find(box["d"], edit_id)
         if e["status"] != "accepted":
             raise ReviewError("only an accepted edit can be taken back")
-        e.update(status="rejected", decided_at=now, decided_by=by)
+        box["what"] = f"{what or 'take back'} (taken back by {by})"
+        e["status"] = "rejected"
     return box["out"], _edit_of(box["out"], edit_id)
 
 

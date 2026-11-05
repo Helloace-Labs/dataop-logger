@@ -90,19 +90,8 @@ def _check(kind: str, name) -> str:
     return name.strip()
 
 
-def _names(kind: str, e: dict) -> set:
-    """Every name that means this entry: its name and aliases, and for task segments the subtask ids the logger gives
-    those names in review format 2 (review.subtask_id_for)."""
-    names = {e["name"], *e.get("aliases", [])}
-    if kind == "task_segments":
-        from .review import subtask_id_for
-        names |= {subtask_id_for(n) for n in names}
-    return names
-
-
 def _find(d: dict, kind: str, name: str):
-    return next((e for e in d[kind] if e["name"] == name or name in e.get("aliases", [])), None) \
-        or next((e for e in d[kind] if name in _names(kind, e)), None)
+    return next((e for e in d[kind] if e["name"] == name or name in e.get("aliases", [])), None)
 
 
 def canonical(d: dict, kind: str, name):
@@ -155,7 +144,7 @@ def describe(root: Path, kind: str, name: str, description: str, expect_rev: int
 def in_use(root: Path, kind: str, entry: dict) -> int:
     """How many runs use this entry (by its name or an alias)."""
     from . import review as rv
-    names = _names(kind, entry)
+    names = {entry["name"], *entry.get("aliases", [])}
     n = 0
     for run_path, m in store.iter_manifests(Path(root), "committed"):
         try:

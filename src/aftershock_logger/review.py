@@ -15,7 +15,7 @@ Edit kinds and their payloads (frames are frame indices of the run; ranges are [
   failure_type   {"failure_type_id": id, "vocab_rev": int}
   exclude        {"start": int, "end": int}   frames [start, end) are left out of training
   segments       {"segments": [{"subtask_id", "start", "end", "legacy_name"}]}: the run's full list of task segments
-                 (callers may pass [{"name", "start", "end"}]; see subtask_id_for)
+                 (callers may pass [{"name", "start", "end"}]; see _segment_names)
   step_boundary  {"index": int, "before": str, "after": str, "frame": int}
                  moves the shared boundary between recorded steps `index` and `index + 1`
   segment_edge   {"index": int, "edge": start | end, "frame": int}
@@ -36,6 +36,7 @@ Every change happens under a cross-process lock, is checked against the recorded
 from __future__ import annotations
 
 import contextvars
+import copy
 import fcntl
 import json
 import re
@@ -89,11 +90,13 @@ def _path(run_path: Path) -> Path:
 
 
 def _agent_version() -> str:
+    """The version written on an agent proposal when the caller names none: this logger's own, never "unknown"
+    (which marks edits migrated from format 1)."""
     try:
         from importlib.metadata import version
         return f"aftershock-logger {version('aftershock-logger')}"
-    except Exception:                                   # not installed as a package
-        return fmt.UNKNOWN
+    except Exception:                                   # run from a source checkout
+        return "aftershock-logger (source)"
 
 
 def _job_id() -> str:
@@ -204,20 +207,6 @@ def _ints(v):
     return v
 
 
-_SLUG_BAD = re.compile(r"[^a-z0-9_.-]+")
-
-
-def subtask_id_for(name: str) -> str:
-    """The subtask id the logger gives a task segment name when no Aftershock task names one: lowercase, every run of
-    other characters as one "-", at most 64 characters (for example "Pick tube" -> "pick-tube"). A name with no usable
-    character gets "segment-" and a short hash of the name. The dataset's lists show the name for the id."""
-    s = _SLUG_BAD.sub("-", name.strip().lower()).strip("-._")[:64].rstrip("-._")
-    if not s or s == fmt.UNRESOLVED:
-        import hashlib
-        s = "segment-" + hashlib.sha256(name.encode()).hexdigest()[:10]
-    return s
-
-
 def _input(kind: str, payload, manifest: dict) -> tuple[str, dict]:
     """A caller's payload in the stored form: the format 1 shapes the viewer and scripts send (an outcome without
     `outcome`, named segments, a step boundary without its step names), texts trimmed, numpy integers as ints.
@@ -242,8 +231,8 @@ def _input(kind: str, payload, manifest: dict) -> tuple[str, dict]:
                     name = x["name"]
                     if not isinstance(name, str) or not 0 < len(name.strip()) <= 100:
                         raise ReviewError("each segment needs a name")
-                    x = {"subtask_id": subtask_id_for(name), "start": x.get("start"), "end": x.get("end"),
-                         "legacy_name": None}
+                    x = {"subtask_id": fmt.UNRESOLVED, "start": x.get("start"), "end": x.get("end"),
+                         "legacy_name": name.strip()}
                 out.append(x)
             p = {"segments": out}
     elif kind == "step_boundary":
@@ -265,6 +254,40 @@ def _input(kind: str, payload, manifest: dict) -> tuple[str, dict]:
         if isinstance(p.get("text"), str):
             p["text"] = p["text"].strip()
     return kind, p
+
+
+def _segment_names(review: dict, kind: str, payload: dict) -> dict:
+    """A segments payload given by name (from _input), made to agree with the review. The logger has no Aftershock
+    task, so it never invents a subtask id: a name keeps its subtask id from the review's legacy_subtask_map when the
+    map has the name, and is otherwise "unresolved" with the name kept, for a person to map in Aftershock. A name the
+    map does not have yet is added to it as unresolved (the format requires every named segment to agree with the
+    map). Returns the review to apply the edit to: the same object when nothing was added."""
+    lmap = review["legacy_subtask_map"]
+    if kind != "segments" or lmap is None or not isinstance(payload.get("segments"), list):
+        return review
+    out = review
+    for s in payload["segments"]:
+        if not isinstance(s, dict) or not isinstance(s.get("legacy_name"), str) or s.get("subtask_id") != fmt.UNRESOLVED:
+            continue
+        known = fmt._lookup(out["legacy_subtask_map"], None, s["legacy_name"])
+        if known is not None:
+            s["subtask_id"] = known
+        else:
+            if out is review:
+                out = copy.deepcopy(review)
+            out["legacy_subtask_map"]["entries"].append({"step_index": None, "recorded_name": s["legacy_name"],
+                                                          "subtask_id": fmt.UNRESOLVED})
+    return out
+
+
+def _propose(box: dict, **kw) -> dict:
+    """fmt.propose on the transaction's review, naming segments first (see _segment_names). A proposal that changes
+    nothing (the same open one exists) leaves the review exactly as it was."""
+    base = _segment_names(box["review"], kw["kind"], kw["payload"])
+    out, e = fmt.propose(base, expect_rev=base["rev"], now=box["now"], t=box["t"], what=box["what"], **kw)
+    if out is not base:
+        box["review"] = out
+    return e
 
 
 def check_payload(kind: str, payload: dict, manifest: dict) -> dict:
@@ -317,16 +340,14 @@ def add_edit(run_path: Path, manifest: dict, kind: str, payload: dict, source: s
     if by is None:
         by = "person" if source == "human" else source
     if source != "human":
-        job_id, agent_version = job_id or _job_id(), agent_version or fmt.UNKNOWN
+        job_id, agent_version = job_id or _job_id(), agent_version or _agent_version()
     with transaction(run_path, manifest, expect_rev) as box:
         if source != "human":
             prior, _ = _prior_suggestion(box["review"], kind, payload)
             if prior is not None:
                 return prior
-        box["review"], e = fmt.propose(box["review"], kind=kind, payload=payload, source=source, by=by,
-                                       reason=reason, job_id=job_id, agent_version=agent_version,
-                                       expect_rev=box["review"]["rev"], now=box["now"], t=box["t"],
-                                       what=box["what"])
+        e = _propose(box, kind=kind, payload=payload, source=source, by=by, reason=reason, job_id=job_id,
+                     agent_version=agent_version)
     return e
 
 
@@ -358,7 +379,7 @@ def add_suggestions(run_path: Path, manifest: dict, items: list[dict], by: str, 
             raise ReviewError("a suggestion needs a short description (1 to 300 characters)")
         checked.append((check_payload("exclude", {"start": it.get("start"), "end": it.get("end")}, manifest),
                         reason.strip()))
-    job_id, agent_version = job_id or _job_id(), agent_version or fmt.UNKNOWN
+    job_id, agent_version = job_id or _job_id(), agent_version or _agent_version()
     with transaction(run_path, manifest, expect_rev) as box:
         out, new = [], []
         for payload, reason in checked:
@@ -406,7 +427,7 @@ def decide(run_path: Path, manifest: dict, edit_id: str, accept: bool, payload: 
             if e["source"] == "human":
                 raise ReviewError("only an agent's proposal is accepted with changes")
             kind, p = _input(e["kind"], payload, manifest)
-            box["review"], out = fmt.propose(r, kind=kind, payload=p, source="human", corrects=edit_id, **kw)
+            out = _propose(box, kind=kind, payload=p, source="human", corrects=edit_id, by=by)
         elif accept:
             box["review"], out = fmt.accept(r, edit_id, **kw)
         elif e["status"] == "proposed":
@@ -434,17 +455,28 @@ def apply_agent_edit(run_path: Path, manifest: dict, kind: str, payload: dict, b
                      expect_rev: int | None = None, reason: str | None = None, job_id: str | None = None,
                      agent_version: str | None = None) -> dict:
     """An agent fills in the schema (segments, failure moment and type, drive switch). The value is a proposal,
-    marked with who set it and why; a person accepts, changes or rejects it in the viewer."""
+    marked with who set it and why; a person accepts, changes or rejects it in the viewer. The same value from the
+    same agent while its earlier proposal is still open returns that proposal, so running an agent twice adds
+    nothing."""
     if not isinstance(by, str) or not by.strip() or len(by) > 100:
         raise ReviewError("by must name the agent in 1 to 100 characters")
     kind, payload = _input(kind, payload, manifest)
     reason = reason if isinstance(reason, str) and reason.strip() else f"{by.strip()} set {kind}"
     with transaction(run_path, manifest, expect_rev) as box:
-        box["review"], e = fmt.propose(box["review"], kind=kind, payload=payload, source="agent", by=by.strip(),
-                                       reason=reason, job_id=job_id or _job_id(),
-                                       agent_version=agent_version or fmt.UNKNOWN, expect_rev=box["review"]["rev"],
-                                       now=box["now"], t=box["t"], what=box["what"])
+        same = _open_from(box["review"], "agent", by.strip(), kind, payload)
+        if same is not None:
+            return same
+        e = _propose(box, kind=kind, payload=payload, source="agent", by=by.strip(), reason=reason,
+                     job_id=job_id or _job_id(), agent_version=agent_version or _agent_version())
     return e
+
+
+def _open_from(review: dict, source: str, by: str, kind: str, payload: dict) -> dict | None:
+    """An open proposal of this value from this source and author, whatever job wrote it."""
+    want = copy.deepcopy(payload)
+    _segment_names(review, kind, want)
+    return next((e for e in review["edits"] if e["status"] == "proposed" and e["source"] == source
+                 and e["by"] == by and e["kind"] == kind and e["payload"] == want), None)
 
 
 def add_event_note(run_path: Path, manifest: dict, key: str, text: str, by: str, source: str = "agent",
@@ -459,12 +491,12 @@ def add_event_note(run_path: Path, manifest: dict, key: str, text: str, by: str,
     _, payload = _input("event_note", {"key": key, "text": text}, manifest)
     agent = source != "human"
     with transaction(run_path, manifest, expect_rev) as box:
-        box["review"], e = fmt.propose(box["review"], kind="event_note", payload=payload, source=source,
-                                       by=by.strip(), reason=f"note on {key}" if agent else None,
-                                       job_id=(job_id or _job_id()) if agent else None,
-                                       agent_version=(agent_version or fmt.UNKNOWN) if agent else None,
-                                       expect_rev=box["review"]["rev"], now=box["now"], t=box["t"],
-                                       what=box["what"])
+        same = _open_from(box["review"], source, by.strip(), "event_note", payload) if agent else None
+        if same is not None:
+            return same
+        e = _propose(box, kind="event_note", payload=payload, source=source, by=by.strip(),
+                     reason=f"note on {key}" if agent else None, job_id=(job_id or _job_id()) if agent else None,
+                     agent_version=(agent_version or _agent_version()) if agent else None)
     return e
 
 
@@ -477,8 +509,9 @@ def replace_edit(run_path: Path, manifest: dict, edit_id: str, payload: dict, ex
         if old is None or old["status"] != "accepted":
             raise ReviewError(f"no accepted edit {edit_id!r} on this run")
         _, p = _input(old["kind"], payload, manifest)
-        box["review"], e = fmt.replace(box["review"], edit_id, p, by=by, expect_rev=box["review"]["rev"],
-                                       now=box["now"], t=box["t"], what=box["what"])
+        base = _segment_names(box["review"], old["kind"], p)
+        box["review"], e = fmt.replace(base, edit_id, p, by=by, expect_rev=base["rev"], now=box["now"], t=box["t"],
+                                       what=box["what"])
     return e
 
 
@@ -508,12 +541,10 @@ def interpret(run_path: Path, edit_id: str, train: str, meaning: str, by: str = 
         if (now or open_) and not replace:
             what = f"read as {now['train']!r} by {now['by']}" if now else f"has an open reading by {open_[0]['by']}"
             raise ReviewError(f"label {edit_id} was already {what}; pass replace to add another")
-        box["review"], e = fmt.propose(r, kind="reading",
-                                       payload={"label_id": edit_id, "train": train, "meaning": meaning.strip()},
-                                       source=source, by=by.strip(), reason=meaning.strip() if agent else None,
-                                       job_id=(job_id or _job_id()) if agent else None,
-                                       agent_version=(agent_version or fmt.UNKNOWN) if agent else None,
-                                       expect_rev=r["rev"], now=box["now"], t=box["t"], what=box["what"])
+        e = _propose(box, kind="reading", payload={"label_id": edit_id, "train": train, "meaning": meaning.strip()},
+                     source=source, by=by.strip(), reason=meaning.strip() if agent else None,
+                     job_id=(job_id or _job_id()) if agent else None,
+                     agent_version=(agent_version or _agent_version()) if agent else None)
     return e
 
 
