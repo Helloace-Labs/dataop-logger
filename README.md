@@ -402,6 +402,15 @@ The full field list and design are in [SPEC.md](SPEC.md).
 
 The design and code went through five rounds of review between Claude (Anthropic) and Codex (OpenAI). Every review and the decision taken on each finding are in [reviews/](reviews/).
 
+## Changes
+
+The logger is before 1.0, so a minor change may change behavior. Changes since 0.1.0:
+
+- `RunLogger.close()` raises a `RunError` when a frame writer that timed out is still inside LeRobot's `add_frame`. The dataset's writer lock is then kept until that thread returns (a background thread releases it, or the lock goes when the process ends), so no second writer can open the dataset meanwhile.
+- `validate.quarantine_entries` has a new entry kind, `"unreadable"`, for a quarantine folder whose `manifest.json` is missing or not valid JSON. `validate` reports it as an error and `validate --repair` as left untouched.
+- A quarantine retry (`run.retry_quarantine()`, and the spill on close) accepts a folder already at the destination only if it is a complete record of this run's frames; otherwise it raises and keeps the frames in memory.
+- The bounded queue example holds the robot inside the run block on `ControlledStop`, then re-raises.
+
 ## License
 
 Apache 2.0
