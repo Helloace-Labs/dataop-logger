@@ -167,6 +167,27 @@ with log.run(task="...", log_predictions=True) as run:
 - An exception inside the `run` block discards the episode. Leaving the block without `run.end()` is an error, never a silent save.
 - If `save_episode` fails, the run is kept for repair and the logger refuses further runs until you reopen the dataset.
 
+## Recording from a control loop: the bounded queue
+
+On a robot, record through `run.queue()` so the loop never waits for the disk:
+
+```python
+from aftershock_logger import ControlledStop
+
+with log.run(task=TASK, policy=policy) as run:
+    q = run.queue()                      # holds at most 2 s of frames
+    try:
+        for each tick:
+            q.put(frame, sent_action=a, base_action=a, control_mode="base",
+                  inference_id=k, chunk_offset=j, obs_ns=t_obs, sent_ns=t_sent)
+    except ControlledStop:
+        hold_the_robot()                 # then leave the block; the logger quarantines the run
+        raise
+    run.end(termination_reason="success")
+```
+
+If the queue fills or a write fails (a full disk, for example), `put()` raises `ControlledStop`. Hold the robot and leave the block. Every frame the logger accepted is written to `dataop/quarantine/<run_id>/` with the reason, and the run is never saved as a complete episode. If even that write fails, the stop says so, the frames stay in memory and `run.retry_quarantine()` writes them once there is space. `aftershock-logger validate --repair` checks quarantined runs and keeps them. Details are in [SPEC.md](SPEC.md).
+
 ## Command line
 
 ```bash
@@ -359,7 +380,7 @@ Every per-tick field is also available as `item["dataop.<field>"]`. `missing="ex
   runs/<run_id>/ticks.parquet       # one row per frame
   runs/<run_id>/predictions.parquet # only with log_predictions=True
   index.jsonl                       # summary of committed runs
-  quarantine/                       # runs repair could not match, kept for inspection
+  quarantine/                       # runs repair could not match, and runs stopped through the queue, kept for inspection
 ```
 
 The full field list and design are in [SPEC.md](SPEC.md).

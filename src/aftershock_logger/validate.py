@@ -321,7 +321,19 @@ def validate(root: Path, action_key: str = "action") -> dict:
     if batches.has_batches(root):
         errors += batches.check(root)
     q = store.quarantine_dir(root)
-    quarantined = sorted(p.name for p in q.iterdir()) if q.exists() else []
+    quarantined = sorted(p.name for p in q.iterdir() if not p.name.startswith(".")) if q.exists() else []
+    run_ids = {p.name for p, _, _ in store.iter_run_dirs(root)}
+    for entry in quarantine_entries(root):
+        if entry["kind"] == "unfinished":
+            errors.append(f"quarantine/{entry['name']}: {entry['problems'][0]}")
+        elif entry["kind"] == "partial":
+            for p in entry["problems"]:
+                errors.append(f"quarantined partial run {entry['name']}: {p}")
+            if entry["name"] in run_ids:
+                errors.append(f"quarantined partial run {entry['name']} also has a folder in runs/")
+            if not entry["problems"]:
+                warnings.append(f"quarantined partial run {entry['name']}: {entry['frames']} frames kept, "
+                                f"stopped by {entry['reason']}; it is not a LeRobot episode")
     unbound = sorted(set(episodes) - set(bound))
     if unbound:
         warnings.append(f"{len(unbound)} LeRobot episodes have no dataop run: {unbound[:20]}")
@@ -350,6 +362,84 @@ def integrity_problems(run_path: Path, m: dict) -> list[str]:
                 out.append("predictions.parquet does not match its recorded digest")
         except OSError as e:
             out.append(f"predictions.parquet unreadable ({e})")
+    return out
+
+
+def partial_problems(path: Path, m: dict) -> list[str]:
+    """Check a partial run the frame queue quarantined (status "quarantined") against its recorded digests."""
+    out = []
+    info = m.get("quarantine")
+    if not isinstance(info, dict) or not isinstance(info.get("reason"), str):
+        return ["manifest has no quarantine reason"]
+    if m.get("run_id") != path.name:
+        out.append("run_id does not match its folder name")
+    integ = m.get("integrity")
+    if not isinstance(integ, dict):
+        return out + ["integrity record is malformed"]
+    n = m.get("length")
+    for name, key in (("ticks.parquet", "ticks_sha256"), ("frames.parquet", "frames_sha256"),
+                      ("predictions.parquet", "predictions_sha256")):
+        f = path / name
+        want = integ.get(key)
+        if want is None and not f.exists():
+            continue
+        try:
+            if store.sha256(f.read_bytes()) != want:
+                out.append(f"{name} does not match its recorded digest")
+                continue
+        except OSError as e:
+            out.append(f"{name} unreadable ({e})")
+            continue
+        if name != "predictions.parquet" and pq.read_metadata(f).num_rows != n:
+            out.append(f"{name} has {pq.read_metadata(f).num_rows} rows, manifest says {n}")
+    if store.json_sha256(m.get("events", [])) != integ.get("events_sha256"):
+        out.append("events do not match their recorded digest")
+    if info.get("frames") != n:
+        out.append(f"quarantine record counts {info.get('frames')} frames, manifest says {n}")
+    elif n != (info.get("frames_written_to_lerobot") or 0) + (info.get("frames_queued") or 0):
+        out.append("frames written and queued do not add up to the frame count")
+    if not out and n:
+        try:
+            schema = ActionSchema.from_dict(m["action_schema"])
+            t = pq.read_table(path / "ticks.parquet")
+            if t.column("frame_index").to_pylist() != list(range(n)):
+                out.append(f"frame_index is not 0..{n - 1}")
+            if fingerprint(schema.id, m["task"], _arr(t, "sent_action", n, schema.dim)) != m.get("fingerprint"):
+                out.append("fingerprint does not match the logged actions")
+        except Exception as e:
+            out.append(f"could not be checked ({type(e).__name__}: {e})")
+    return out
+
+
+def quarantine_entries(root: Path) -> list[dict]:
+    """Every entry under dataop/quarantine: kind "partial" (a run the frame queue stopped), "run" (a staged run
+    repair could not match) or "unfinished" (a quarantine write that did not complete), with its problems."""
+    q = store.quarantine_dir(Path(root))
+    if not q.exists():
+        return []
+    out = []
+    for p in sorted(q.iterdir()):
+        if p.name.startswith("."):
+            out.append({"name": p.name, "kind": "unfinished", "frames": None, "reason": None,
+                        "problems": ["an unfinished quarantine write (the process stopped while writing it); "
+                                     "the run's frames may be incomplete here, so it is kept for inspection"]})
+            continue
+        try:
+            m = store.read_manifest(p)
+        except Exception as e:
+            note = p / "QUARANTINED.txt"
+            reason = note.read_text().strip() if note.exists() else None
+            out.append({"name": p.name, "kind": "run", "frames": None, "reason": reason,
+                        "problems": [f"manifest.json unreadable ({type(e).__name__})"]})
+            continue
+        if m.get("status") == "quarantined":
+            info = m.get("quarantine") if isinstance(m.get("quarantine"), dict) else {}
+            out.append({"name": p.name, "kind": "partial", "frames": m.get("length"), "reason": info.get("reason"),
+                        "detail": info.get("detail"), "problems": partial_problems(p, m)})
+        else:
+            note = p / "QUARANTINED.txt"
+            out.append({"name": p.name, "kind": "run", "frames": m.get("length"),
+                        "reason": note.read_text().strip() if note.exists() else None, "problems": []})
     return out
 
 
@@ -393,6 +483,15 @@ def repair(root: Path, delete_unmatched: bool = False, action_key: str = "action
             why = "no matching episode" if not matches else f"several matching episodes {matches}"
             store.quarantine(root, run_path, why)
             report.append(f"quarantined {m['run_id']}: {why}")
+    for entry in quarantine_entries(root):
+        if entry["kind"] == "unfinished":
+            report.append(f"left untouched quarantine/{entry['name']}: {entry['problems'][0]}")
+        elif entry["kind"] == "partial":
+            if entry["problems"]:
+                report.append(f"left untouched quarantined partial run {entry['name']}: {'; '.join(entry['problems'])}")
+            else:
+                report.append(f"kept quarantined partial run {entry['name']}: {entry['frames']} frames, "
+                              f"{entry['reason']} ({entry['detail']}); never committed, not a LeRobot episode")
     store.rebuild_index(root)
     return report
 

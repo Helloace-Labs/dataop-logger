@@ -129,7 +129,7 @@ with log.run(task="pick up the tube", policy=policy_info, env=env) as run:
 # leaving the block after run.end(): dataset.save_episode(), then commit
 ```
 
-**State machine:** `active -> staged -> committed`, with terminal `discarded`, `save_failed` and `quarantined`. `run.end()` sets the final tick's flag from the reason (`success`/`failure` -> `terminated`; `timeout`/`operator_abort`/`system_error` -> `truncated`) and rejects a contradicting flag. Any exception from `dataset.add_frame` discards the run and resets the LeRobot buffer. If `save_episode` raises, the staged run stays in `runs/` with a `save_error` note for `validate --repair`, and the logger refuses further runs. An exception before `run.end()` clears the LeRobot episode buffer and discards the sidecar state without saving. Leaving the block without `run.end()` is an error, never treated as success. A second `end` or an `add_frame` after `end` raises.
+**State machine:** `active -> staged -> committed`, with terminal `discarded`, `save_failed` and `quarantined` (a staged run repair could not match, or a run stopped through the frame queue). `run.end()` sets the final tick's flag from the reason (`success`/`failure` -> `terminated`; `timeout`/`operator_abort`/`system_error` -> `truncated`) and rejects a contradicting flag. Any exception from `dataset.add_frame` discards the run and resets the LeRobot buffer. If `save_episode` raises, the staged run stays in `runs/` with a `save_error` note for `validate --repair`, and the logger refuses further runs. An exception before `run.end()` clears the LeRobot episode buffer and discards the sidecar state without saving. Leaving the block without `run.end()` is an error, never treated as success. A second `end` or an `add_frame` after `end` raises.
 
 **What is verified when:** before save, the frame counter, buffer size, action shapes, sidecar indices, and byte equality of each `sent_action` against the logger's own copy of the frame actions; after save, that `save_episode` completed and the writer's episode index and length; at `finalize()` or `validate`, disk-level metadata, parquet rows and action equality. Supported LeRobot versions are listed in the README and tested in CI.
 
@@ -138,6 +138,27 @@ with log.run(task="pick up the tube", policy=policy_info, env=env) as run:
 - Crash points: before stage, nothing written; after stage and before or during save, a staged run with no matching episode goes to quarantine; after save and before commit, the staged run matches and is committed; after commit and before the index rebuild, the index is rebuilt from manifests.
 - `run.event(kind, source, reason, text)` adds a typed event. `run.subgoal(name, status, reason)` adds a `subgoal` event (`started`, `completed` or `failed`); a step with no `started` begins where the previous one ended. `run.end(..., failure_mode=...)` names the failure. `run.predictions(inference_id, chunk, ...)` logs a chunk.
 - Local filesystem only in v0; temp files in the destination directory, fsync, then rename. Remote URIs raise.
+
+### Bounded write queue, controlled stop and quarantine (logger task L5)
+
+A control loop must never wait for the disk, and must never move a robot it cannot record. `run.queue()` puts a bounded queue between the loop and LeRobot:
+
+```python
+with log.run(task=..., policy=...) as run:
+    q = run.queue()                     # capacity: 2 s of frames at the schema's rate (max_seconds, or max_frames)
+    for each tick:
+        q.put(frame, sent_action=..., ...)   # same arguments as run.add_frame; returns at once
+    run.end(termination_reason="success")    # waits for every queued frame to be written, then stages
+```
+
+- `put()` checks the frame on the caller's thread (the same rules as `add_frame`; a bad frame raises `ValueError` and nothing is accepted), copies its arrays (the caller may reuse them) and returns. One writer thread hands frames to `dataset.add_frame` in order. While a queue is attached, `run.add_frame` raises, so frames have one path.
+- At most `capacity` frames wait. The frame that finds the queue full is still accepted, so the queue holds at most `capacity + 1` frames and memory stays bounded however slow the disk is.
+- **Controlled stop.** When the queue is full, or `dataset.add_frame` raises in the writer (a full disk, an encoder error), `put()` raises `ControlledStop` (a `RunError`) with `reason` `queue_full` or `write_failed` and a `detail`. `queue.check()` raises it without putting a frame, and `run.end()` raises it if a write failed or the queue did not drain within `WRITER_TIMEOUT_S` (10 s). The caller holds the robot and leaves the run block.
+- **Quarantine.** When the block exits after a stop (by the `ControlledStop`, by another exception, or normally), the logger waits for the writer (at most `WRITER_TIMEOUT_S`), resets the LeRobot episode buffer, and writes every accepted frame to `dataop/quarantine/<run_id>/`: `ticks.parquet` (the sidecar rows, frames that reached LeRobot first, then the queued ones, in frame order), `frames.parquet` (each frame's numeric low-dimensional values such as `observation.state`), `predictions.parquet` when logged, `manifest.json` with `status: "quarantined"`, `termination_reason: "system_error"`, checksums and a `quarantine` record (`reason`, `detail`, `frames`, `frames_written_to_lerobot`, `frames_queued`, `queue_capacity`, `dropped_features`, `lerobot_buffer_reset`), and `QUARANTINED.txt`. Image and video features are not kept and are named in `dropped_features`. The files go to a hidden temporary folder that is renamed into place only when complete. The run's state is `quarantined`; it is never committed and never becomes a LeRobot episode. The block then raises the `ControlledStop`, with `frames` and `quarantine_path` set (or a warning carries it when another exception is raised).
+- **No silent loss when the quarantine cannot be written.** If writing the quarantine fails (for example the disk is still full), the `ControlledStop` carries `quarantine_error`, the frames stay in memory, the logger refuses new runs, and `run.retry_quarantine()` writes them once there is space and lets the logger record again.
+- **A stuck writer.** If LeRobot does not return within `WRITER_TIMEOUT_S`, the frame it holds is written to quarantine as queued, its late result is ignored, the LeRobot buffer is left alone (`lerobot_buffer_reset: false`), and the logger refuses new runs until the dataset writer is reopened.
+- `run.discard()` on a queued run stops the writer first. After a stop it raises instead: stopped frames are quarantined, never discarded.
+- **`validate` and `validate --repair`.** `validate` checks each quarantined partial run against its checksums, frame counts and fingerprint; problems, and hidden folders left by an unfinished quarantine write, are errors; a sound partial run is a warning. `validate --repair` reports each quarantined partial run (kept, or left untouched with its problems) and never commits, moves or deletes it.
 
 ## CLI
 
