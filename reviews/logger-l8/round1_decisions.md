@@ -26,3 +26,11 @@ Review: `round1_confirm_claude.md` (fallback reviewer), on commit 41766bb. All e
 | N3 after a take back, the edit reads as rejected by the person who accepted it once the history step is dropped | No code change | Part of the take back recording question for the shared format, Aftershock contracts issue #81 |
 
 Tests: 302 passed and 56 skipped; with the reference implementation and the real data folder, 357 passed and 1 skipped.
+
+## Confirmation round 2 (round1_confirm2_claude.md)
+
+The fallback confirmation round 2 of `d6b6eea` approved the fixes for N1 and N2 with no findings. N3 stays with Aftershock contracts issue #81. The review loop is done.
+
+## Codex confirmation round: after merge
+
+Every review of this change was a fallback review, because Codex was at its usage limit (it resets at 01:00 PST on Nov 5). The lead merges it now and runs the one Codex confirmation round on the whole change **after merge**, once Codex is back. Its file will be `reviews/logger-l8/codex_confirm_after_merge.md`. A finding from that round gets its own pull request.
