@@ -346,3 +346,103 @@ def test_a_real_pre_l3_dataset_reads_the_same_on_a_copy(tmp_path):
         assert {k: f[k] for k in b} == b
     assert B.summary(root) == expected and B.check(root) == []
     assert len(expected) == len(old["batches"]) and sum(x["n_runs"] for x in expected) == len(old["members"])
+
+
+def test_pack_fields_kind_station_task_planner(tmp_path):
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, batch="policy runs", planner=PlannerInfo("rules", "rules-v3")) as log:
+        record(log, task_id="tube-pick", task_rev=1)
+    with RunLogger(ds, SCHEMA, batch="demos", planner=None) as log:
+        record(log, policy=None, task_id="tube-pick", task_rev=1)
+    ds.finalize()
+    d = B._read(ds.root)
+    p, t = (on_disk(ds.root, B.find(d, n)["batch_id"]) for n in ("policy runs", "demos"))
+    assert (p["kind"], p["station"], p["task"], p["planner"]) == ("model_run", UNKNOWN, "tube-pick", "rules-v3")
+    assert (t["kind"], t["planner"]) == ("teleop", None)
+    to_legacy(ds.root)                                      # an old file gets them on its move
+    B.load(ds.root)
+    assert on_disk(ds.root, p["batch_id"])["kind"] == "model_run" and on_disk(ds.root, t["batch_id"])["kind"] == "teleop"
+
+
+def test_a_review_edit_waits_for_a_batch_change(tmp_path):
+    import fcntl
+    import threading
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, batch="r") as log:
+        r = record(log)
+    ds.finalize()
+    done = threading.Event()
+    with open(ds.root / "dataop" / "batches.lock", "a+") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)                      # as a lock or move in progress holds it
+        t = threading.Thread(target=lambda: (rv.set_reviewed(r.run_path, True), done.set()))
+        t.start()
+        time.sleep(0.3)
+        assert not done.is_set()
+        fcntl.flock(lk, fcntl.LOCK_UN)
+    t.join(5)
+    assert done.is_set()
+
+
+def test_a_reader_racing_the_move_off_the_old_file_still_sees_the_lock(tmp_path, monkeypatch):
+    ds, a1, a2, b1 = two_batches(tmp_path)
+    to_legacy(ds.root)
+    real = B._read_json
+
+    def migrate_right_after_reading_the_old_file(p):
+        out = real(p)
+        if p.name == "batches.json":
+            monkeypatch.setattr(B, "_read_json", real)
+            B.load(ds.root)                                 # another process moves it to per-batch files now
+        return out
+    monkeypatch.setattr(B, "_read_json", migrate_right_after_reading_the_old_file)
+    assert B.batch_of(ds.root, a1.run_id)["status"] == "locked"
+    assert not (ds.root / "dataop" / "batches.json").exists()
+
+
+def test_a_run_placed_before_its_join_goes_where_join_would_put_it(tmp_path, monkeypatch):
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        record(log)
+    B.new(ds.root, "later")                                 # the first batch is now closed, same identity
+    real = B.join
+    monkeypatch.setattr(B, "join", lambda *a, **k: None)   # the run commits, but a reader comes before join
+    with RunLogger(ds, SCHEMA) as log:
+        r = record(log)
+    ds.finalize()
+    d = B.load(ds.root)
+    later = B.find(d, "later")
+    assert d["members"][r.run_id] == later["batch_id"] and later["status"] == "collecting"
+    assert real(ds.root, r.run_id, None, None)["batch_id"] == later["batch_id"]
+
+
+def test_an_import_that_moves_a_run_marks_the_source_training_sets_out_of_date(tmp_path):
+    ds, a1, a2, b1 = two_batches(tmp_path)
+    B.add_export([(ds.root, "b", None)], {"export_id": "x1", "recipe": "dagger", "path": "/out"})
+    B.add_runs(ds.root, [b1.run_id], "imported")
+    d = B._read(ds.root)
+    assert all(e["stale"] for e in B.find(d, "b")["exports"])
+    assert d["members"][b1.run_id] == B.find(d, "imported")["batch_id"]
+    assert "moved out" in B.find(d, "b")["history"][-1]["what"]
+
+
+def test_a_move_in_one_dataset_puts_a_combined_training_set_out_of_date_in_the_other(tmp_path):
+    from aftershock_logger import export as X
+    roots = []
+    for name in ("a", "b"):
+        ds = make_ds(tmp_path, name)
+        with RunLogger(ds, SCHEMA, batch="r") as log:
+            record(log), record(log)
+        with RunLogger(ds, SCHEMA, batch="s") as log:
+            record(log)
+        ds.finalize()
+        review_all(ds)
+        B.set_status(ds.root, "r", "locked")
+        roots.append(ds.root)
+    X.export([(roots[0], "r"), (roots[1], "r")], "filtered", str(tmp_path / "out"))
+    assert not any(x["out_of_date"] for x in X.training_sets(roots[0]))
+    B.set_status(roots[1], "r", "reviewing", reason="regroup")
+    moved = B._read(roots[1])["members"]
+    rid = next(r for r, x in moved.items() if x == B.find(B._read(roots[1]), "r")["batch_id"])
+    B.move(roots[1], [rid], "s")
+    (x,) = X.training_sets(roots[0])
+    assert x["moved_runs"] == 1 and x["out_of_date"]

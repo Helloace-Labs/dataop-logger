@@ -107,11 +107,13 @@ def recording(what: str):
 
 @contextmanager
 def transaction(run_path: Path, expect_rev: int | None = None):
-    """Load, change and save one run's review under an exclusive cross-process lock."""
-    with open(Path(run_path) / "review.lock", "a+") as lock:
+    """Load, change and save one run's review under an exclusive cross-process lock. The batches lock is held shared
+    from the lock check to the write (taken first, as batches.set_status does), so a batch cannot be locked or its
+    files moved between the check and the edit."""
+    from . import batches
+    with batches.shared(Path(run_path).parent.parent.parent), open(Path(run_path) / "review.lock", "a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
-            from . import batches
             try:
                 batches.check_editable(Path(run_path).parent.parent.parent, Path(run_path).name)
             except batches.BatchError as e:

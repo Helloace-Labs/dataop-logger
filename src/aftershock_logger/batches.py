@@ -103,12 +103,24 @@ def run_identity(manifest: dict) -> dict:
             "planner": plan.get("id") if isinstance(plan, dict) else (None if plan is None else UNKNOWN)}
 
 
+def _set_identity(b: dict, identity: dict | None) -> None:
+    """The identity and the pack fields read from it: station, task, planner and kind (teleop when no policy ran,
+    model_run when one did, unknown when the policy was not recorded). Empty until the batch has a run."""
+    b["identity"] = identity
+    i = identity or {}
+    b["station"], b["task"], b["planner"] = i.get("station"), i.get("task"), i.get("planner")
+    b["kind"] = None if identity is None else ("teleop" if i.get("policy") is None
+                                               else UNKNOWN if i.get("policy") == UNKNOWN else "model_run")
+
+
 def _new(name: str, status: str, policy: dict | None = None, purpose: str = "", by: str = "dataop",
          identity: dict | None = None) -> dict:
-    return {"batch_id": uuid.uuid4().hex[:12], "name": name, "purpose": purpose, "status": status,
-            "created_at": _now(), "policy": _policy_key(policy), "identity": identity, "mixed_policy": False,
-            "parent": None, "model": None, "locked": None, "exports": [],
-            "history": [{"at": _now(), "by": by, "what": f"created ({status})"}]}
+    b = {"batch_id": uuid.uuid4().hex[:12], "name": name, "purpose": purpose, "status": status,
+         "created_at": _now(), "policy": _policy_key(policy), "mixed_policy": False,
+         "parent": None, "model": None, "locked": None, "exports": [],
+         "history": [{"at": _now(), "by": by, "what": f"created ({status})"}]}
+    _set_identity(b, identity)
+    return b
 
 
 def _add(d: dict, b: dict) -> dict:
@@ -193,8 +205,7 @@ def _journal(root: Path) -> dict | None:
     return j
 
 
-def _read_legacy(p: Path) -> dict:
-    d = _read_json(p)
+def _read_legacy(p: Path, d) -> dict:
     if not isinstance(d, dict) or d.get("version") != 1 or not isinstance(d.get("batches"), list) \
             or not isinstance(d.get("members"), dict) or not isinstance(d.get("rev", 0), int):
         raise BatchError(f"{p} is not a version 1 batches file")
@@ -207,8 +218,9 @@ def _read_legacy(p: Path) -> dict:
         raise BatchError(f"{p} lists a run in a batch that does not exist")
     for i, b in enumerate(d["batches"]):
         b.setdefault("seq", i)
-        b.setdefault("identity", None)
         b.setdefault("mixed_policy", False)
+        if "identity" not in b:
+            _set_identity(b, None)
     return {"version": 1, "rev": d.get("rev", 0), "batches": d["batches"], "members": d["members"]}
 
 
@@ -216,6 +228,11 @@ def _load(root: Path, strict: bool = True, derive: bool = True) -> tuple[dict, b
     """The registry as it is on disk, without locking: (registry, from the old single file, runs in several batches).
     A journal left by an interrupted change is overlaid, so readers see the change it was making."""
     root = Path(root)
+    legacy = _legacy(root)
+    try:                    # read the old file before listing the new ones: a move to per-batch files writes them
+        old = _read_json(legacy)        # all before renaming the old file, so a reader never sees neither
+    except FileNotFoundError:
+        old = None
     files = {}
     dr = _dir(root)
     if dr.is_dir():
@@ -228,9 +245,8 @@ def _load(root: Path, strict: bool = True, derive: bool = True) -> tuple[dict, b
     j = _journal(root) if dr.is_dir() else None
     for bid, f in (j or {}).get("files", {}).items():
         files[bid] = (_file(root, bid), f)
-    legacy = _legacy(root)
-    if not files and legacy.exists() and not (j and j.get("retire_legacy")):
-        d = _read_legacy(legacy)
+    if not files and old is not None and not (j and j.get("retire_legacy")):
+        d = _read_legacy(legacy, old)
         if derive:
             _derive(root, d)
         return d, True, {}
@@ -305,32 +321,41 @@ def _derive(root: Path, d: dict, only: set | None = None) -> None:
         if b.get("identity") is None:
             counts = Counter(json.dumps(i, sort_keys=True) for i in ids)
             best = max(counts.values())
-            b["identity"] = next(i for i in ids if counts[json.dumps(i, sort_keys=True)] == best)
+            _set_identity(b, next(i for i in ids if counts[json.dumps(i, sort_keys=True)] == best))
+        elif "kind" not in b:
+            _set_identity(b, b["identity"])
         b["mixed_policy"] = any(i != b["identity"] for i in ids)
 
 
 def _place(root: Path, d: dict) -> bool:
-    """Put committed runs that are not members yet into a batch, never a locked one. Returns True if anything
-    changed."""
+    """Put committed runs that are not members yet into a batch, never a locked one. A run the logger committed but
+    did not add yet (a crash, or a reader that came first) goes where join would put it; older and imported runs are
+    grouped by identity into a batch for review. Returns True if anything changed."""
     changed = False
-    for _, m in store.iter_manifests(Path(root), "committed"):
+    todo = [m for _, m in store.iter_manifests(Path(root), "committed") if m["run_id"] not in d["members"]]
+    for m in sorted(todo, key=lambda m: (m.get("episode_index") if isinstance(m.get("episode_index"), int) else -1,
+                                         m["run_id"])):
         rid = m["run_id"]
-        if rid in d["members"]:
-            continue
         ident = run_identity(m)
         hint = m.get("batch")
+        name = hint.get("name") if isinstance(hint, dict) and isinstance(hint.get("name"), str) else None
         b = None
-        if isinstance(hint, dict):
-            b = next((x for x in d["batches"] if x["batch_id"] == hint.get("batch_id")), None)
-            if b is None and hint.get("name"):
-                b = next((x for x in d["batches"] if x["name"] == hint["name"]), None)
-            if b is not None and b["status"] == "locked":   # frozen: the run goes to a batch like it instead
+        if isinstance(hint, dict) and hint.get("batch_id"):
+            b = next((x for x in d["batches"] if x["batch_id"] == hint["batch_id"]), None)
+        if b is None and "batch" in m and (m.get("origin") or {}).get("kind") != "import":
+            try:
+                b = _choose_for_commit(d, name, m.get("policy"), ident)
+            except BatchError:                            # its named batch is closed or locked by now
                 b = None
-            elif b is None and isinstance(hint.get("name"), str) and NAME.match(hint["name"].strip() or "-"):
-                b = _add(d, _new(hint["name"], "collecting" if not _collecting(d) else "reviewing", m.get("policy"),
+        if b is None and name:
+            b = next((x for x in d["batches"] if x["name"] == name), None)
+            if b is None and NAME.match(name.strip() or "-"):
+                b = _add(d, _new(name.strip(), "collecting" if not _collecting(d) else "reviewing", m.get("policy"),
                                  identity=ident))
                 if isinstance(hint.get("batch_id"), str) and BATCH_ID.match(hint["batch_id"]):
                     b["batch_id"] = hint["batch_id"]
+        if b is not None and b["status"] == "locked":     # frozen: the run goes to a batch like it instead
+            b = None
         if b is None:
             b = next((x for x in d["batches"] if x.get("identity") == ident and x["status"] != "locked"), None)
             if b is None:
@@ -339,6 +364,32 @@ def _place(root: Path, d: dict) -> bool:
         d["members"][rid] = b["batch_id"]
         changed = True
     return changed
+
+
+def _choose_for_commit(d: dict, name: str | None, policy, identity: dict | None) -> dict:
+    """The batch a newly committed run joins: the batch called `name` (opened if needed; refused unless collecting),
+    or the collecting batch when the identities match, or a new collecting batch named after the policy. Opening a
+    batch closes the one collecting until now."""
+    target = None
+    if name:
+        target = next((x for x in d["batches"] if x["name"] == name), None)
+        if target is not None and target["status"] != "collecting":
+            raise BatchError(f"batch {name!r} is {target['status']}; open a new batch for new runs")
+    if target is None:
+        cur = _collecting(d)
+        other = cur is not None and None not in (cur.get("identity"), identity) and cur["identity"] != identity
+        if name or cur is None or other:
+            if cur is not None:
+                cur["status"] = "reviewing"
+                _log(cur, "dataop", "closed: a new batch was opened by the logger" + (
+                    " for a run with another station, task, policy or planner" if other and not name else ""))
+            target = _add(d, _new(name or _unique_name(d, _policy_name(policy)), "collecting",
+                                  policy if isinstance(policy, dict) else None, identity=identity))
+        else:
+            target = cur
+    if target["policy"] is None and isinstance(policy, dict) and policy:
+        target["policy"] = _policy_key(policy)
+    return target
 
 
 def _collecting(d: dict) -> dict | None:
@@ -442,11 +493,26 @@ def find(d: dict, ref: str) -> dict:
     return b
 
 
+@contextmanager
+def shared(root: Path):
+    """Hold the batches lock shared, so no batch is locked, unlocked or moved meanwhile. Review edits hold it from
+    their lock check to their write; it is always taken before a run's review lock, as set_status does."""
+    try:
+        lock = open(_lock_path(root), "a+")
+    except OSError:                                       # read-only or not a dataset yet: nothing can change
+        yield
+        return
+    with lock:
+        fcntl.flock(lock, fcntl.LOCK_SH)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
 def batch_of(root: Path, run_id: str) -> dict | None:
-    """The batch a run belongs to, read without locking (the review lock check runs inside a review lock, and the
-    batch lock is taken before review locks). Every lock and unlock rewrites one file atomically, and runs only move
-    between unlocked batches, so the locked answer is never torn. An unreadable registry raises, so a broken file
-    never unlocks a locked batch."""
+    """The batch a run belongs to, read without taking the lock (review edits already hold it shared). An unreadable
+    registry raises, so a broken file never unlocks a locked batch."""
     d, _, _ = _load(root, strict=False, derive=False)
     bid = d["members"].get(run_id)
     return next((b for b in d["batches"] if b["batch_id"] == bid), None) if bid else None
@@ -504,25 +570,7 @@ def join(root: Path, run_id: str, name: str | None, policy: dict | None, identit
         b = d["members"].get(run_id)
         if b:
             return next(x for x in d["batches"] if x["batch_id"] == b)
-        target = None
-        if name:
-            target = next((x for x in d["batches"] if x["name"] == name), None)
-            if target is not None and target["status"] != "collecting":
-                raise BatchError(f"batch {name!r} is {target['status']}; open a new batch for new runs")
-        if target is None:
-            cur = _collecting(d)
-            other = cur is not None and None not in (cur.get("identity"), identity) and cur["identity"] != identity
-            if name or cur is None or other:
-                if cur is not None:
-                    cur["status"] = "reviewing"
-                    _log(cur, "dataop", "closed: a new batch was opened by the logger" + (
-                        " for a run with another station, task, policy or planner" if other and not name else ""))
-                target = _add(d, _new(name or _unique_name(d, _policy_name(policy)), "collecting", policy,
-                                      identity=identity))
-            else:
-                target = cur
-        if target["policy"] is None and policy:
-            target["policy"] = _policy_key(policy)
+        target = _choose_for_commit(d, name, policy, identity)
         d["members"][run_id] = target["batch_id"]
         return target
 
@@ -542,6 +590,8 @@ def add_runs(root: Path, run_ids: list[str], name: str, policy: dict | None = No
                 src = find(d, cur)
                 if src["status"] == "locked":
                     raise _frozen(src, f"run {rid} cannot move to {name!r}")
+                for e in src["exports"]:
+                    e["stale"] = True
                 _log(src, by, f"run {rid} moved out to {name!r} by an import")
         for rid in run_ids:
             d["members"][rid] = b["batch_id"]

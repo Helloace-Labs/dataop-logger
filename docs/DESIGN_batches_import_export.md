@@ -38,6 +38,7 @@ a pack, and this file is the pack record:
 {version: 1, registry_rev, seq, batch_id, name, purpose: free text, status, created_at,
  policy: {family, source, revision} | null,     # the policy the runs were collected with (from run manifests)
  identity: {station, task, policy, planner} | null,   # what every run in the batch should share
+ station, task, planner, kind,                    # read from identity; kind is model_run, teleop or unknown
  mixed_policy: bool,                              # some run's identity differs from the batch's
  parent: {batch_id, export_id} | null,            # the training set whose model collected this batch (lineage)
  model: source@revision | null,                   # the model trained from this batch's export
@@ -56,7 +57,9 @@ a pack, and this file is the pack record:
   `dataop/batches/.journal.json`, then the files, then removes the journal. Readers overlay a journal left by a crash,
   and the next writer finishes it, so a run is never seen in two batches or in none. `registry_rev` is the registry's
   revision when the file was last written; the registry's revision is the highest one, and every change raises it by
-  one. Callers pass the revision they read, and a stale one is refused.
+  one. Callers pass the revision they read, and a stale one is refused. A review edit holds the same lock shared
+  from its lock check to its write (taken before the run's review lock, as locking a batch does), so a batch cannot
+  be locked or moved between the check and the edit.
 - **Older datasets.** A dataset written before L3 keeps every batch in one `dataop/batches.json`
   (`{version: 1, rev, batches, members: {run_id: batch_id}}`). Readers accept it unchanged, including on a read-only
   dataset. The first change (or first read of a writable dataset) writes the per-batch files with every field kept, and
@@ -75,6 +78,8 @@ a pack, and this file is the pack record:
   is placed into it; each attempt fails with an error naming the batch. Unlock it first, with a reason. The lock check
   and the move happen under the same lock, so a batch cannot be locked or unlocked halfway through a move. A move
   marks the training sets made from the batch the run left as out of date, and is written to both batches' history.
+  A training set made from several datasets is also out of date in every one of them once any of its runs is in
+  another batch than the one it was exported from (`moved_runs`).
 
 **How runs join.**
 
@@ -85,6 +90,8 @@ a pack, and this file is the pack record:
   `mixed_policy` on the batch (shown as a data warning), because mixing policies in one DAgger round is usually a
   mistake but sometimes intended.
 - Import: imported runs join the batch named with `--batch` (section 2).
+- A run the logger committed but did not add to a batch yet (a crash, or a reader that got there first) is placed
+  where the logger would have put it.
 - Existing datasets with no batches: on first read, every committed run with no batch goes into one batch per
   identity (station, task, policy, planner), status `reviewing`, never into a locked batch. Nothing is moved; this is
   just grouping.

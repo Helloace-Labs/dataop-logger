@@ -400,7 +400,7 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
         if dropped_short:
             why["span shorter than min_span"] = dropped_short
         split = _split(m["run_id"], val) if val > 0 else "train"
-        runs_out.append({"root": str(root), "batch": b["name"], "run_id": m["run_id"], "episode": m["episode_index"],
+        runs_out.append({"root": str(root), "batch": b["name"], "batch_id": b["batch_id"], "run_id": m["run_id"], "episode": m["episode_index"],
                          "as": ("dagger" if np.isin(s["mode"], ("base", "blend")).any() else "teleop") if recipe == "lora" else recipe,
                          "outcome": "rejected" if s["effective"]["rejected"] else s["effective"]["termination_reason"],
                          "split": split, "frames": m["length"], "kept": sum(b_ - a for a, b_ in sp), "spans": sp,
@@ -509,10 +509,20 @@ def training_sets(root: Path) -> list[dict]:
                 except rv.ReviewError:
                     digests[r][m["run_id"]] = None
         return digests[r]
+    members: dict[str, dict] = {}
+
+    def member_of(r: str) -> dict:
+        if r not in members:
+            try:
+                members[r] = B.load(Path(r))["members"]
+            except (B.BatchError, OSError):
+                members[r] = {}
+        return members[r]
     out = {}
     for b in d["batches"]:
         for e in b["exports"]:
-            x = out.setdefault(e["export_id"], {**e, "batches": [], "changed_runs": 0, "missing": False})
+            x = out.setdefault(e["export_id"], {**e, "batches": [], "changed_runs": 0, "moved_runs": 0,
+                                                "missing": False})
             x["batches"].append(b["name"])
             x["stale"] = x["stale"] or e["stale"]
     for x in out.values():
@@ -521,7 +531,12 @@ def training_sets(root: Path) -> list[dict]:
             x["changed_runs"] = sum(current(str(Path(r["root"]).expanduser().resolve())).get(r["run_id"])
                                     != r["review_digest"] for r in rec["runs"])
             x["runs"] = sum(1 for r in rec["runs"] if r["kept"])
+            # a run moved to another batch since, in any of the set's datasets (older records name the batch only)
+            ids = {(str(Path(s_["root"]).expanduser().resolve()), s_["batch"]): s_["batch_id"] for s_ in rec["sources"]}
+            for r in rec["runs"]:
+                rr = str(Path(r["root"]).expanduser().resolve())
+                x["moved_runs"] += member_of(rr).get(r["run_id"]) != r.get("batch_id", ids.get((rr, r["batch"])))
         except (OSError, ValueError, KeyError):
             x["missing"] = True
-        x["out_of_date"] = bool(x["stale"] or x["changed_runs"])
+        x["out_of_date"] = bool(x["stale"] or x["changed_runs"] or x["moved_runs"])
     return sorted(out.values(), key=lambda x: x["at"], reverse=True)
