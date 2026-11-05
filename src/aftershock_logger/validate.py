@@ -318,7 +318,7 @@ def validate(root: Path, action_key: str = "action") -> dict:
         errors.append(f"LeRobot data rows for episodes missing from or inconsistent with meta/episodes "
                       f"(an incomplete save?): {orphans}")
     from . import batches
-    if (store.dataop_dir(root) / "batches.json").exists():
+    if batches.has_batches(root):
         errors += batches.check(root)
     q = store.quarantine_dir(root)
     quarantined = sorted(p.name for p in q.iterdir()) if q.exists() else []
@@ -458,7 +458,7 @@ def remap(old_root: Path, new_root: Path, action_key: str = "action", repo_id: s
         taken.add(matches[0])
         report.append(f"{m['run_id']}: episode {m['episode_index']} -> {matches[0]}")
     store.rebuild_index(Path(new_root))
-    for name in ("lists.json", "batches.json"):       # the dataset's agreed lists and its batches move with the runs
+    for name in ("lists.json",):                      # the dataset's agreed lists and its batches move with the runs
         src, dst = store.dataop_dir(Path(old_root)) / name, store.dataop_dir(Path(new_root)) / name
         if src.exists():
             if dst.exists() and dst.read_bytes() != src.read_bytes():
@@ -466,6 +466,10 @@ def remap(old_root: Path, new_root: Path, action_key: str = "action", repo_id: s
             else:
                 store.atomic_write_bytes(dst, src.read_bytes())
                 report.append(f"copied {name}")
+    from . import batches
+    line = batches.copy_to(Path(old_root), Path(new_root))
+    if line:
+        report.append(line)
     return report
 
 

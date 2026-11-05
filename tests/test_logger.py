@@ -1310,7 +1310,8 @@ def test_batches_place_existing_runs_by_policy(tmp_path):
         record(log, 5)
         record(log, 5)
     ds.finalize()
-    (ds.root / "dataop" / "batches.json").unlink()          # as if recorded before batches existed
+    import shutil
+    shutil.rmtree(ds.root / "dataop" / "batches")           # as if recorded before batches existed
     s = B.summary(ds.root)
     assert len(s) == 1 and s[0]["n_runs"] == 2 and s[0]["policy"]["source"] == "train/smolvla_100"
 
@@ -1453,10 +1454,29 @@ def test_a_change_after_review_needs_a_new_review(tmp_path):
         B.set_status(ds.root, "r", "locked")
 
 
-def test_broken_batches_file_keeps_runs_locked(tmp_path):
+def _batch_file(ds, legacy=False):
+    """The one batch file of a dataset with one batch; with legacy=True, first rewrite the registry as the single
+    batches.json a logger before task L3 wrote."""
+    from dataop_logger import batches as B
+    if legacy:
+        import shutil
+        d = B._read(ds.root)
+        old = {"version": 1, "rev": d["rev"], "members": d["members"],
+               "batches": [{k: v for k, v in b.items() if k not in ("seq", "identity", "mixed_policy")}
+                           for b in d["batches"]]}
+        shutil.rmtree(ds.root / "dataop" / "batches")
+        (ds.root / "dataop" / "batches.json").write_text(json.dumps(old))
+        return ds.root / "dataop" / "batches.json"
+    files = sorted((ds.root / "dataop" / "batches").glob("[!.]*.json"))
+    assert len(files) == 1
+    return files[0]
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_broken_batches_file_keeps_runs_locked(tmp_path, legacy):
     from dataop_logger import review as rv
     ds, ok, bad = _locked_batch(tmp_path)
-    p = ds.root / "dataop" / "batches.json"
+    p = _batch_file(ds, legacy)
     p.write_text("{")
     with pytest.raises(rv.ReviewError):
         rv.set_reviewed(ok.run_path, False)
@@ -1520,11 +1540,12 @@ def test_multi_source_export_is_stale_everywhere_if_one_source_changed(tmp_path,
     lambda b: b.update(exports=None),
     lambda b: b.update(history="none"),
 ])
-def test_malformed_batch_fields_are_validation_errors(tmp_path, breakage):
+@pytest.mark.parametrize("legacy", [False, True])
+def test_malformed_batch_fields_are_validation_errors(tmp_path, breakage, legacy):
     ds, ok, bad = _locked_batch(tmp_path)
-    p = ds.root / "dataop" / "batches.json"
+    p = _batch_file(ds, legacy)
     d = json.loads(p.read_text())
-    breakage(d["batches"][0])
+    breakage(d["batches"][0] if legacy else d)
     p.write_text(json.dumps(d))
     res = V.validate(ds.root)
     assert not res["ok"] and any("batches" in e for e in res["errors"])
