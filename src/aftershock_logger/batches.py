@@ -340,13 +340,16 @@ def _place(root: Path, d: dict) -> bool:
         hint = m.get("batch")
         name = hint.get("name") if isinstance(hint, dict) and isinstance(hint.get("name"), str) else None
         b = None
+        if "batch" in m and (m.get("origin") or {}).get("kind") != "import":
+            try:                                          # committed by a logger with batches
+                b = _choose_for_commit(d, name, m.get("policy"), ident)
+            except BatchError:                            # its named batch closed while it recorded: like a run
+                b = _choose_for_commit(d, None, m.get("policy"), ident)   # recorded without a name
+            d["members"][rid] = b["batch_id"]
+            changed = True
+            continue
         if isinstance(hint, dict) and hint.get("batch_id"):
             b = next((x for x in d["batches"] if x["batch_id"] == hint["batch_id"]), None)
-        if b is None and "batch" in m and (m.get("origin") or {}).get("kind") != "import":
-            try:
-                b = _choose_for_commit(d, name, m.get("policy"), ident)
-            except BatchError:                            # its named batch is closed or locked by now
-                b = None
         if b is None and name:
             b = next((x for x in d["batches"] if x["name"] == name), None)
             if b is None and NAME.match(name.strip() or "-"):

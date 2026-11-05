@@ -509,15 +509,15 @@ def training_sets(root: Path) -> list[dict]:
                 except rv.ReviewError:
                     digests[r][m["run_id"]] = None
         return digests[r]
-    members: dict[str, dict] = {}
+    regs: dict[str, dict] = {str(root): d}
 
-    def member_of(r: str) -> dict:
-        if r not in members:
+    def reg(r: str) -> dict:
+        if r not in regs:
             try:
-                members[r] = B.load(Path(r))["members"]
+                regs[r] = B.load(Path(r))
             except (B.BatchError, OSError):
-                members[r] = {}
-        return members[r]
+                regs[r] = {"batches": [], "members": {}}
+        return regs[r]
     out = {}
     for b in d["batches"]:
         for e in b["exports"]:
@@ -535,7 +535,11 @@ def training_sets(root: Path) -> list[dict]:
             ids = {(str(Path(s_["root"]).expanduser().resolve()), s_["batch"]): s_["batch_id"] for s_ in rec["sources"]}
             for r in rec["runs"]:
                 rr = str(Path(r["root"]).expanduser().resolve())
-                x["moved_runs"] += member_of(rr).get(r["run_id"]) != r.get("batch_id", ids.get((rr, r["batch"])))
+                x["moved_runs"] += reg(rr)["members"].get(r["run_id"]) != r.get("batch_id", ids.get((rr, r["batch"])))
+            # out of date in one source dataset (an unlock, a run moved out and back) is out of date in all of them
+            for rr in {str(Path(s_["root"]).expanduser().resolve()) for s_ in rec["sources"]}:
+                x["stale"] = x["stale"] or any(e.get("stale") for b in reg(rr)["batches"] for e in b["exports"]
+                                               if e.get("export_id") == x["export_id"])
         except (OSError, ValueError, KeyError):
             x["missing"] = True
         x["out_of_date"] = bool(x["stale"] or x["changed_runs"] or x["moved_runs"])

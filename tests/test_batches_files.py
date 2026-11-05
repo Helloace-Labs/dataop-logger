@@ -446,3 +446,51 @@ def test_a_move_in_one_dataset_puts_a_combined_training_set_out_of_date_in_the_o
     B.move(roots[1], [rid], "s")
     (x,) = X.training_sets(roots[0])
     assert x["moved_runs"] == 1 and x["out_of_date"]
+
+
+def test_a_named_run_whose_batch_closed_before_its_join_is_not_placed_in_the_closed_batch(tmp_path, monkeypatch):
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, batch="round 1") as log:
+        record(log)
+        monkeypatch.setattr(B, "join", lambda *a, **k: None)   # the run commits, but a reader comes before join
+        with log.run(task=TASK, policy=POL_A) as run:
+            for i in range(4):
+                t = time.monotonic_ns()
+                run.add_frame({"observation.state": np.full(6, i, np.float32), "task": TASK},
+                              sent_action=np.zeros(6, np.float32), base_action=np.zeros(6, np.float32),
+                              control_mode="base", inference_id=i, chunk_offset=0, obs_ns=t, sent_ns=t + 1000)
+            B.set_status(ds.root, "round 1", "reviewing")       # closed while the run records
+            run.end(termination_reason="success")
+    ds.finalize()
+    d = B.load(ds.root)
+    b = B.find(d, d["members"][run.run_id])
+    assert b["name"] != "round 1" and b["status"] == "collecting"
+    assert len(_members(d, "round 1")) == 1
+
+
+def _members(d, name):
+    bid = B.find(d, name)["batch_id"]
+    return [r for r, x in d["members"].items() if x == bid]
+
+
+def test_a_run_moved_out_and_back_keeps_a_combined_training_set_out_of_date_everywhere(tmp_path):
+    from aftershock_logger import export as X
+    roots = []
+    for name in ("a", "b"):
+        ds = make_ds(tmp_path, name)
+        with RunLogger(ds, SCHEMA, batch="r") as log:
+            record(log), record(log)
+        with RunLogger(ds, SCHEMA, batch="s") as log:
+            record(log)
+        ds.finalize()
+        review_all(ds)
+        B.set_status(ds.root, "r", "locked")
+        roots.append(ds.root)
+    X.export([(roots[0], "r"), (roots[1], "r")], "filtered", str(tmp_path / "out"))
+    B.set_status(roots[1], "r", "reviewing", reason="regroup")
+    rid = _members(B._read(roots[1]), "r")[0]
+    B.move(roots[1], [rid], "s")
+    B.move(roots[1], [rid], "r")
+    for root in roots:
+        (x,) = X.training_sets(root)
+        assert x["moved_runs"] == 0 and x["out_of_date"], root.name
