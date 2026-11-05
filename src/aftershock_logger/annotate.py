@@ -78,7 +78,7 @@ def annotate(root: Path, run_id: str, by: str, segments: list | None = None, fai
              failure_type: str | None = None, takeover_at: float | None = None, job_id: str | None = None,
              agent_version: str | None = None) -> list[str]:
     """Propose the given values on one run, one undoable step each, all under one job id (the caller's, or one made
-    for this call). A value the same agent already proposed and nobody decided yet is not proposed again."""
+    for this call). Run again with the same job id and agent version, a value still open is not proposed again."""
     job_id = job_id or rv._job_id()
     root = Path(root)
     run_path, m = _run(root, run_id)

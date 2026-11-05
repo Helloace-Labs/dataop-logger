@@ -456,27 +456,17 @@ def apply_agent_edit(run_path: Path, manifest: dict, kind: str, payload: dict, b
                      agent_version: str | None = None) -> dict:
     """An agent fills in the schema (segments, failure moment and type, drive switch). The value is a proposal,
     marked with who set it and why; a person accepts, changes or rejects it in the viewer. The same value from the
-    same agent while its earlier proposal is still open returns that proposal, so running an agent twice adds
-    nothing."""
+    same agent, job_id and agent_version while that proposal is still open returns it (the format's rule), so an agent
+    that runs again under the same job id adds nothing, and a new job or agent version gets its own proposal."""
     if not isinstance(by, str) or not by.strip() or len(by) > 100:
         raise ReviewError("by must name the agent in 1 to 100 characters")
     kind, payload = _input(kind, payload, manifest)
     reason = reason if isinstance(reason, str) and reason.strip() else f"{by.strip()} set {kind}"
     with transaction(run_path, manifest, expect_rev) as box:
-        same = _open_from(box["review"], "agent", by.strip(), kind, payload)
-        if same is not None:
-            return same
         e = _propose(box, kind=kind, payload=payload, source="agent", by=by.strip(), reason=reason,
                      job_id=job_id or _job_id(), agent_version=agent_version or _agent_version())
     return e
 
-
-def _open_from(review: dict, source: str, by: str, kind: str, payload: dict) -> dict | None:
-    """An open proposal of this value from this source and author, whatever job wrote it."""
-    want = copy.deepcopy(payload)
-    _segment_names(review, kind, want)
-    return next((e for e in review["edits"] if e["status"] == "proposed" and e["source"] == source
-                 and e["by"] == by and e["kind"] == kind and e["payload"] == want), None)
 
 
 def add_event_note(run_path: Path, manifest: dict, key: str, text: str, by: str, source: str = "agent",
@@ -491,9 +481,6 @@ def add_event_note(run_path: Path, manifest: dict, key: str, text: str, by: str,
     _, payload = _input("event_note", {"key": key, "text": text}, manifest)
     agent = source != "human"
     with transaction(run_path, manifest, expect_rev) as box:
-        same = _open_from(box["review"], source, by.strip(), "event_note", payload) if agent else None
-        if same is not None:
-            return same
         e = _propose(box, kind="event_note", payload=payload, source=source, by=by.strip(),
                      reason=f"note on {key}" if agent else None, job_id=(job_id or _job_id()) if agent else None,
                      agent_version=(agent_version or _agent_version()) if agent else None)

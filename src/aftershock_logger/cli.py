@@ -104,7 +104,8 @@ def _main(argv=None) -> int:
     sc.add_argument("start", type=int)
     sc.add_argument("end", type=int)
     for sp in (it, an, nt, sc):
-        sp.add_argument("--job-id", default=None, help="your job's id, recorded on each proposal (default: one per call)")
+        sp.add_argument("--job-id", default=None, help="your job's id, recorded on each proposal (default: a new one "
+                        "per call); run again with the same id to avoid repeating open proposals")
         sp.add_argument("--agent-version", default=None,
                         help="your agent's or model's version, recorded on each proposal (default: this logger's)")
     sc.add_argument("--reason", required=True, help="short description shown to the person")
@@ -285,10 +286,12 @@ def _main(argv=None) -> int:
             try:
                 review.load(run_path, m)
                 try:
-                    batches.check_editable(Path(a.root), m["run_id"])
-                except batches.BatchError:
+                    b = batches.batch_of(Path(a.root), m["run_id"])
+                except batches.BatchError as e:       # an unreadable or malformed batch file is a refusal
+                    raise review.ReviewError(f"batches: {e}") from None
+                if b is not None and b["status"] == "locked":
                     locked += 1        # read through the migration as it is; rewritten after its batch is unlocked
-                    print(f"{m['run_id']}: skipped, its batch is locked", file=sys.stderr)
+                    print(f"{m['run_id']}: skipped, batch locked", file=sys.stderr)
                     continue
                 if not a.dry_run:
                     review.migrate_file(run_path, m)

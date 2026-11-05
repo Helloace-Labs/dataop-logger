@@ -440,8 +440,12 @@ def test_agent_values_name_a_version_and_a_rerun_adds_nothing(tmp_path):
     run, m = _named_run(tmp_path, MANIFEST["subgoals"])
     e = rv.apply_agent_edit(run, m, "failure_start", {"frame": 50}, "agent-a")
     assert e["agent_version"] != "unknown" and e["job_id"]
-    again = rv.apply_agent_edit(run, m, "failure_start", {"frame": 50}, "agent-a", job_id="another-job")
-    assert again["edit_id"] == e["edit_id"] and len(rv.load(run, m)["edits"]) == 1
+    again = rv.apply_agent_edit(run, m, "failure_start", {"frame": 50}, "agent-a", job_id=e["job_id"])
+    assert again["edit_id"] == e["edit_id"] and len(rv.load(run, m)["edits"]) == 1      # same job: no repeat
+    newer = rv.apply_agent_edit(run, m, "failure_start", {"frame": 50}, "agent-a", job_id=e["job_id"],
+                                agent_version="m-3")
+    other = rv.apply_agent_edit(run, m, "failure_start", {"frame": 50}, "agent-a", job_id="another-job")
+    assert len({e["edit_id"], newer["edit_id"], other["edit_id"]}) == 3                    # a new version or job counts
     mine = rv.apply_agent_edit(run, m, "failure_start", {"frame": 51}, "agent-a", job_id="j7", agent_version="m-2")
     assert (mine["job_id"], mine["agent_version"]) == ("j7", "m-2")
 
@@ -452,11 +456,18 @@ def test_migrate_reviews_skips_locked_batches(tmp_path, capsys, monkeypatch):
     run = _dataset(tmp_path)
     before = (run / "review.json").read_bytes()
 
-    def locked(root, run_id):
-        raise batches.BatchError("locked")
-    monkeypatch.setattr(batches, "check_editable", locked)
+    monkeypatch.setattr(batches, "batch_of", lambda root, run_id: {"status": "locked", "name": "b"})
     assert main(["migrate-reviews", str(tmp_path / "ds")]) == 0
-    assert "1 skipped in locked batches" in capsys.readouterr().out
+    out = capsys.readouterr()
+    assert "1 skipped in locked batches" in out.out and "skipped, batch locked" in out.err
+    assert (run / "review.json").read_bytes() == before
+
+    def broken(root, run_id):
+        raise batches.BatchError("batches.json is unreadable")
+    monkeypatch.setattr(batches, "batch_of", broken)           # a broken batch file is refused, not skipped
+    assert main(["migrate-reviews", str(tmp_path / "ds")]) == 1
+    out = capsys.readouterr()
+    assert "1 refused" in out.out and "batches.json is unreadable" in out.err
     assert (run / "review.json").read_bytes() == before
 
 
