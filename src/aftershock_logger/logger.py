@@ -20,9 +20,11 @@ from .fingerprint import fingerprint
 from .schema import (LIVE_CONTROL_MODES as CONTROL_MODES, SCHEMA_VERSION, SUBGOAL_STATUSES, TERMINAL_FLAG, LIVE_TERMINATION_REASONS as TERMINATION_REASONS,
                      ActionSchema, EnvInfo, PolicyInfo)
 
+from importlib.metadata import PackageNotFoundError, version as _pkg_version  # noqa: E402  (also used by _lerobot_version)
+
+
 def _own_version() -> str:
     """Recorded in manifests (under the key `dataop_logger`, which keeps its name so old readers still find it)."""
-    from importlib.metadata import PackageNotFoundError, version as _pkg_version
     for dist in ("aftershock-logger", "dataop-logger"):  # new distribution name, then the old one
         try:
             return _pkg_version(dist)

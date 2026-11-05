@@ -7,6 +7,7 @@ still validates, inspects and reads, unchanged on disk).
 """
 import hashlib
 import importlib
+import importlib.metadata
 import json
 import os
 import pkgutil
@@ -98,6 +99,32 @@ def test_old_from_imports_give_the_same_objects():
     from aftershock_logger.review import ReviewError
     assert old_store is store and OldReader is DataopDataset and OldReviewError is ReviewError
     assert issubclass(OldReviewError, Exception) and OldReviewError.__module__ == "aftershock_logger.review"
+
+
+def test_versions_recorded_in_manifests_and_exports():
+    from aftershock_logger.logger import _DATAOP_VERSION, _lerobot_version
+    assert _lerobot_version() == importlib.metadata.version("lerobot")   # export records use the same function
+    assert isinstance(_DATAOP_VERSION, str) and _DATAOP_VERSION
+
+
+@pytest.mark.parametrize("first", ["dataop_logger", "aftershock_logger"])
+@pytest.mark.parametrize("module", ["aftershock_logger.cli", "dataop_logger.cli"])
+def test_runpy_and_reload_after_the_alias_was_imported(tmp_path, first, module):
+    """runpy.run_module and importlib.reload must work when the module is already imported under either name."""
+    root = copy_old(tmp_path)
+    code = f"""
+import importlib, runpy, sys
+import {first}.cli, dataop_logger.cli, dataop_logger.store
+import aftershock_logger.store as store
+assert importlib.reload(dataop_logger.store) is store and store.__spec__.name == "aftershock_logger.store"
+sys.argv = ["x", "validate", {str(root)!r}]
+try:
+    runpy.run_module({module!r}, run_name="__main__", alter_sys=True)
+except SystemExit as e:
+    sys.exit(e.code)
+"""
+    r = run_py(["-c", code], pythonpath=SRC, cwd=tmp_path)
+    assert r.returncode == 0 and r.stdout.startswith("OK: 2 runs"), r.stdout + r.stderr
 
 
 def test_unknown_old_submodule_still_fails():
@@ -224,6 +251,7 @@ def test_writes_still_go_to_the_dataop_folder(tmp_path, pkg_name):
     m = json.loads(next((side / "runs").glob("*/manifest.json")).read_text())
     assert set(m["env"]["software"]) == {"lerobot", "dataop_logger"}    # manifest key keeps its old name
     assert m["env"]["software"]["dataop_logger"]
+    assert m["env"]["software"]["lerobot"] == importlib.metadata.version("lerobot")
     from aftershock_logger import validate as V
     assert V.validate(ds.root)["ok"]
 
