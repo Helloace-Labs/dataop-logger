@@ -631,9 +631,9 @@ def test_review_edits_effective_and_train_mask(tmp_path):
     ds, run, m = _review_fixture(tmp_path)
     modes = ["base"] * 30 + ["expert"] * 10
     p = rv.add_edit(run.run_path, m, "failure_start", {"frame": 12}, source="agent", reason="test")
-    assert rv.add_edit(run.run_path, m, "failure_start", {"frame": 12}, source="agent")["id"] == p["id"]
+    assert rv.add_edit(run.run_path, m, "failure_start", {"frame": 12}, source="agent")["edit_id"] == p["edit_id"]
     assert rv.effective(m, rv.load(run.run_path))["failure_start"] is None
-    rv.decide(run.run_path, m, p["id"], True, {"frame": 20})
+    rv.decide(run.run_path, m, p["edit_id"], True, {"frame": 20})
     assert rv.effective(m, rv.load(run.run_path))["failure_start"] == 20
     mask = rv.train_mask(m, rv.load(run.run_path), modes)
     assert mask[:20].all() and not mask[20:30].any() and mask[30:].all()
@@ -666,11 +666,15 @@ def test_review_edits_effective_and_train_mask(tmp_path):
 ])
 def test_train_mask_failure_start_across_modes(modes, fs, masked):
     from dataop_logger import review as rv
-    m = {"length": len(modes), "termination_reason": "failure", "failure_mode": None, "subgoals": []}
-    r = rv.empty()
+    rid = "00000000-0000-4000-8000-000000000001"
+    m = {"run_id": rid, "length": len(modes), "termination_reason": "failure", "failure_mode": None, "subgoals": []}
+    r = rv.empty(rid)
     r["seq"] = 1
-    r["edits"].append({"id": "a" * 12, "kind": "failure_start", "payload": {"frame": fs}, "source": "human",
-                       "status": "accepted", "accepted_seq": 1})
+    r["edits"].append({"edit_id": "a" * 12, "kind": "failure_start", "payload": {"frame": fs}, "source": "human",
+                       "by": "person", "job_id": None, "agent_version": None, "reason": None, "status": "accepted",
+                       "created_at": "t", "decided_at": "t", "decided_by": "person", "accepted_seq": 1,
+                       "corrects": None, "replaces": None, "replaced_by": None, "adjusted": False,
+                       "legacy_reading": None, "legacy_reading_history": []})
     mask = rv.train_mask(m, r, modes)
     assert [i for i in range(len(modes)) if not mask[i]] == masked
     m["termination_reason"] = "success"                          # an effective success ignores failure_start
@@ -683,21 +687,23 @@ def test_review_undo_chain_and_reviewed_rules(tmp_path):
     a = rv.add_edit(run.run_path, m, "outcome", {"termination_reason": "failure", "failure_mode": "first"})
     b = rv.add_edit(run.run_path, m, "outcome", {"termination_reason": "failure", "failure_mode": "second"})
     assert rv.effective(m, rv.load(run.run_path))["failure_mode"] == "second"
-    rv.decide(run.run_path, m, b["id"], False)                    # undo B brings A back
+    rv.decide(run.run_path, m, b["edit_id"], False)                    # undo B brings A back
     assert rv.effective(m, rv.load(run.run_path))["failure_mode"] == "first"
-    rv.decide(run.run_path, m, a["id"], False)
+    rv.decide(run.run_path, m, a["edit_id"], False)
     assert rv.effective(m, rv.load(run.run_path))["failure_mode"] == "no_lift"
     # an outcome corrected to success retires the failure start
     rv.add_edit(run.run_path, m, "failure_start", {"frame": 5})
     rv.add_edit(run.run_path, m, "outcome", {"termination_reason": "success", "failure_mode": None})
     assert rv.effective(m, rv.load(run.run_path))["failure_start"] is None
     # only proposals can be accepted; accepted edits can only be undone
-    p = rv.add_edit(run.run_path, m, "exclude", {"start": 0, "end": 2}, source="agent")
-    rv.decide(run.run_path, m, p["id"], True)
+    with pytest.raises(rv.ReviewError):                           # an agent proposal says why
+        rv.add_edit(run.run_path, m, "exclude", {"start": 0, "end": 2}, source="agent")
+    p = rv.add_edit(run.run_path, m, "exclude", {"start": 0, "end": 2}, source="agent", reason="idle")
+    rv.decide(run.run_path, m, p["edit_id"], True)
     with pytest.raises(rv.ReviewError):
-        rv.decide(run.run_path, m, p["id"], True, {"start": 5, "end": 9})
+        rv.decide(run.run_path, m, p["edit_id"], True, {"start": 5, "end": 9})
     with pytest.raises(rv.ReviewError):
-        rv.decide(run.run_path, m, p["id"], "false")
+        rv.decide(run.run_path, m, p["edit_id"], "false")
     with pytest.raises(rv.ReviewConflict):
         rv.add_edit(run.run_path, m, "note", {"frame": 1, "text": "x"}, expect_rev=0)
 
@@ -742,15 +748,15 @@ def test_find_idle_and_suggest_cut(tmp_path):
     assert sugg[0]["reason"] == "no movement for 1.9 s mid-run, policy driving"
     assert sugg[0]["by"] == "dataop idle finder (measured state)"
     again = rv.find_idle(ds.root, run.run_path, m)
-    assert again[0]["edit"]["id"] == sugg[0]["id"] and again[0]["status"] == "already_suggested"
+    assert again[0]["edit"]["edit_id"] == sugg[0]["edit_id"] and again[0]["status"] == "already_suggested"
     assert rv.train_mask(m, rv.load(run.run_path), ["base"] * 120).all()             # a suggestion cuts nothing
-    rv.decide(run.run_path, m, sugg[0]["id"], True)
+    rv.decide(run.run_path, m, sugg[0]["edit_id"], True)
     assert not rv.train_mask(m, rv.load(run.run_path), ["base"] * 120)[31:89].any()
     assert rv.find_idle(ds.root, run.run_path, m)[0]["status"] == "already_cut"
     assert main(["suggest-cut", str(ds.root), run.run_id, "0", "10", "--reason", "warm-up", "--by", "my-agent"]) == 0
     mine = [e for e in rv.load(run.run_path)["edits"] if e.get("by") == "my-agent"]
     assert len(mine) == 1 and mine[0]["status"] == "proposed"
-    rv.decide(run.run_path, m, mine[0]["id"], False)                                  # the person keeps it
+    rv.decide(run.run_path, m, mine[0]["edit_id"], False)                                  # the person keeps it
     assert rv.suggest_cut(run.run_path, m, 0, 10, "again", by="other-agent")["status"] == "previously_kept"
     assert main(["suggest-cut", str(ds.root), run.run_id, "5", "5", "--reason", "x"]) == 2
     rv.add_edit(run.run_path, m, "exclude", {"start": 80, "end": 100})               # overlaps the accepted 31-89
@@ -787,13 +793,20 @@ def test_review_validation_covers_history_and_sequences(tmp_path):
     from dataop_logger import review as rv
     ds, run, m = _review_fixture(tmp_path)
     lb = rv.add_edit(run.run_path, m, "label", {"start": 1, "end": 3, "text": "x"})
-    rv.interpret(run.run_path, lb["id"], "keep", "fine")
+    rv.interpret(run.run_path, lb["edit_id"], "keep", "fine")
     good = json.loads((run.run_path / "review.json").read_text())
-    for mutate in (lambda r: r["edits"][0].__setitem__("interpretation_history", "oops"),
-                   lambda r: r["edits"][0].__setitem__("interpretation", {}),
-                   lambda r: r["edits"][0]["interpretation"].__setitem__("by", ""),
-                   lambda r: r["edits"][0].__setitem__("interpretation_history", [{"train": "keep"}]),
+    assert good["review_format"] == 2 and [e["kind"] for e in good["edits"]] == ["label", "reading"]
+    for mutate in (lambda r: r["edits"][0].__setitem__("legacy_reading_history", "oops"),
+                   lambda r: r["edits"][0].__setitem__("legacy_reading", {}),
+                   lambda r: r["edits"][1]["payload"].__setitem__("meaning", " "),
+                   lambda r: r["edits"][0].__setitem__("legacy_reading_history", [{"train": "keep"}]),
+                   lambda r: r["edits"][1].__setitem__("legacy_reading", {"train": "keep", "meaning": "m", "by": "b",
+                                                                          "at": "t"}),
+                   lambda r: r["edits"][1].__setitem__("job_id", None),
+                   lambda r: r["edits"][0].__setitem__("extra", 1),
+                   lambda r: r["edits"][0].pop("decided_by"),
                    lambda r: r.__setitem__("seq", 0),
+                   lambda r: r.__setitem__("review_format", 3),
                    lambda r: r["edits"][0].__setitem__("by", 5)):
         bad = json.loads(json.dumps(good))
         mutate(bad)
@@ -804,29 +817,36 @@ def test_review_validation_covers_history_and_sequences(tmp_path):
     (run.run_path / "review.json").write_text(json.dumps(good))
     rv.add_edit(run.run_path, m, "failure_start", {"frame": 5}, source="agent", reason="old")
     after = V.inspect(ds.root)["after_review"]
-    assert after["other_open_proposals"] == 1 and after["open_cut_suggestions"] == 0
+    assert after["other_open_proposals"] == 2 and after["open_cut_suggestions"] == 0     # with the agent's reading
 
 
 def test_interpretation_is_not_silently_replaced(tmp_path):
     from dataop_logger import review as rv
     ds, run, m = _review_fixture(tmp_path)
     lb = rv.add_edit(run.run_path, m, "label", {"start": 1, "end": 3, "text": "blocked camera"})
-    rv.interpret(run.run_path, lb["id"], "exclude", "camera blocked", by="agent-a")
-    with pytest.raises(rv.ReviewError):
-        rv.interpret(run.run_path, lb["id"], "keep", "looks fine", by="agent-b")
-    e = rv.interpret(run.run_path, lb["id"], "keep", "looks fine", by="agent-b", replace=True)
-    assert e["interpretation"]["train"] == "keep" and e["interpretation_history"][0]["by"] == "agent-a"
+    a = rv.interpret(run.run_path, lb["edit_id"], "exclude", "camera blocked", by="agent-a")
+    assert a["status"] == "proposed" and rv.effective(m, rv.load(run.run_path))["labels"][0]["interpretation"] is None
+    with pytest.raises(rv.ReviewError):                          # an open reading is not silently joined
+        rv.interpret(run.run_path, lb["edit_id"], "keep", "looks fine", by="agent-b")
+    e = rv.interpret(run.run_path, lb["edit_id"], "keep", "looks fine", by="agent-b", replace=True)
+    assert e["payload"]["train"] == "keep" and a["status"] == "proposed"      # both wait side by side
+    rv.decide(run.run_path, m, e["edit_id"], True)
+    it = rv.effective(m, rv.load(run.run_path))["labels"][0]["interpretation"]
+    assert (it["train"], it["by"]) == ("keep", "agent-b")
+    with pytest.raises(rv.ReviewError):                          # a reading in effect is not silently replaced
+        rv.interpret(run.run_path, lb["edit_id"], "exclude", "x", by="agent-c")
     with pytest.raises(rv.ReviewError):                          # an interpreted label cannot be re-aimed in place
-        rv.decide(run.run_path, m, lb["id"], True, {"start": 6, "end": 9, "text": "other"})
+        rv.decide(run.run_path, m, lb["edit_id"], True, {"start": 6, "end": 9, "text": "other"})
 
 
 def test_malformed_stored_review_fails_closed(tmp_path):
     from dataop_logger import review as rv, viewer
     ds, run, m = _review_fixture(tmp_path)
     lb = rv.add_edit(run.run_path, m, "label", {"start": 1, "end": 3, "text": "x"})
-    rv.interpret(run.run_path, lb["id"], "exclude", "drop")
+    rd = rv.interpret(run.run_path, lb["edit_id"], "exclude", "drop")
+    rv.decide(run.run_path, m, rd["edit_id"], True)
     r = json.loads((run.run_path / "review.json").read_text())
-    r["edits"][0]["interpretation"]["train"] = "exlcude"
+    r["edits"][1]["payload"]["train"] = "exlcude"
     (run.run_path / "review.json").write_text(json.dumps(r))
     with pytest.raises(rv.ReviewError):
         rv.effective(m, rv.load(run.run_path))
@@ -835,7 +855,7 @@ def test_malformed_stored_review_fails_closed(tmp_path):
         DataopDataset(lerobot_dataset.LeRobotDataset("test/ds", root=ds.root), check=False)
     state = viewer.collect(ds.root)["runs"][0]["review"]
     assert state["error"] and state["rev"] == -1
-    r["edits"][0]["interpretation"]["train"] = "exclude"
+    r["edits"][1]["payload"]["train"] = "exclude"
     r["edits"][0]["payload"]["start"] = -4
     (run.run_path / "review.json").write_text(json.dumps(r))
     with pytest.raises(rv.ReviewError):
@@ -934,8 +954,8 @@ def test_review_api(tmp_path):
         code, state = post({"run_id": rid, "rev": state["rev"], "op": "add", "kind": "exclude", "payload": {"start": 0, "end": 3}})
         cut = next(e for e in state["edits"] if e["kind"] == "exclude" and e["status"] == "accepted")
         for bad in ("false", 0, None):
-            assert post({"run_id": rid, "rev": state["rev"], "op": "decide", "edit_id": cut["id"], "accept": bad})[0] == 400
-        code, state = post({"run_id": rid, "rev": state["rev"], "op": "decide", "edit_id": cut["id"], "accept": False})
+            assert post({"run_id": rid, "rev": state["rev"], "op": "decide", "edit_id": cut["edit_id"], "accept": bad})[0] == 400
+        code, state = post({"run_id": rid, "rev": state["rev"], "op": "decide", "edit_id": cut["edit_id"], "accept": False})
         assert code == 200 and state["effective"]["excludes"] == []
         step = state["step"]["entry"]
         code, state = post({"run_id": rid, "rev": state["rev"], "op": "undo", "entry_id": step})
@@ -976,20 +996,24 @@ def test_labels_replace_interpret_and_mask(tmp_path):
     assert len(labels) == 1 and labels[0]["recorded"]["control_modes"] == {"base": 4}
     assert labels[0]["recorded"]["steps"] == ["grasp"]
     assert rv.train_mask(m, rv.load(run.run_path), modes).all()           # text alone changes nothing
-    assert main(["interpret", str(ds.root), run.run_id, lb["id"], "--train", "exclude",
+    assert main(["interpret", str(ds.root), run.run_id, lb["edit_id"], "--train", "exclude",
                  "--meaning", "camera view blocked"]) == 0
-    assert rv.list_labels(ds.root, only_uninterpreted=True) == []
+    assert rv.list_labels(ds.root, only_uninterpreted=True) == []         # an open reading is not asked for again
+    assert rv.train_mask(m, rv.load(run.run_path), modes).all()           # an agent's reading is a proposal
+    reading = next(e for e in rv.load(run.run_path)["edits"] if e["kind"] == "reading")
+    assert (reading["source"], reading["status"], reading["by"]) == ("agent", "proposed", "agent")
+    rv.decide(run.run_path, m, reading["edit_id"], True)                 # a person accepts it
     mask = rv.train_mask(m, rv.load(run.run_path), modes)
     assert not mask[2:6].any() and mask[:2].all() and mask[6:].all()
     # rewriting a label drops the old interpretation; deleting it brings the frames back
-    new = rv.replace_edit(run.run_path, m, lb["id"], {"start": 2, "end": 8, "text": "hand in view"})
+    new = rv.replace_edit(run.run_path, m, lb["edit_id"], {"start": 2, "end": 8, "text": "hand in view"})
     eff = rv.effective(m, rv.load(run.run_path))
-    assert [(x["id"], x["end"], x["interpretation"]) for x in eff["labels"]] == [(new["id"], 8, None)]
+    assert [(x["id"], x["end"], x["interpretation"]) for x in eff["labels"]] == [(new["edit_id"], 8, None)]
     assert rv.train_mask(m, rv.load(run.run_path), modes).all()
-    rv.decide(run.run_path, m, new["id"], False)
+    rv.decide(run.run_path, m, new["edit_id"], False)
     assert rv.effective(m, rv.load(run.run_path))["labels"] == []
     with pytest.raises(rv.ReviewError):
-        rv.interpret(run.run_path, new["id"], "exclude", "gone")
+        rv.interpret(run.run_path, new["edit_id"], "exclude", "gone")
     assert V.validate(ds.root)["ok"]
 
 
@@ -1000,9 +1024,10 @@ def test_undo_steps(tmp_path):
         rv.add_edit(run.run_path, m, "exclude", {"start": 0, "end": 5})
     cut_step = rec["entry"]
     lb = rv.add_edit(run.run_path, m, "label", {"start": 1, "end": 3, "text": "first"})
-    rv.interpret(run.run_path, lb["id"], "exclude", "drop it")
+    rd = rv.interpret(run.run_path, lb["edit_id"], "exclude", "drop it")
+    rv.decide(run.run_path, m, rd["edit_id"], True)
     with rv.recording("change label") as rec:
-        rv.replace_edit(run.run_path, m, lb["id"], {"start": 1, "end": 4, "text": "second"})
+        rv.replace_edit(run.run_path, m, lb["edit_id"], {"start": 1, "end": 4, "text": "second"})
     rv.undo(run.run_path, m, rec["entry"])                 # the old label and its reading come back
     eff = rv.effective(m, rv.load(run.run_path))
     assert [(x["text"], x["interpretation"]["train"]) for x in eff["labels"]] == [("first", "exclude")]
@@ -1014,16 +1039,16 @@ def test_undo_steps(tmp_path):
     a = rv.add_edit(run.run_path, m, "exclude", {"start": 10, "end": 12}, source="agent", reason="idle")
     b = rv.add_edit(run.run_path, m, "exclude", {"start": 20, "end": 22}, source="agent", reason="idle")
     with rv.recording("cut all") as rec:
-        rv.decide_many(run.run_path, m, [a["id"], b["id"]], True)
+        rv.decide_many(run.run_path, m, [a["edit_id"], b["edit_id"]], True)
     assert len(rv.effective(m, rv.load(run.run_path))["excludes"]) == 2
     with rv.recording("undo one") as rec2:
-        rv.decide(run.run_path, m, a["id"], False)
+        rv.decide(run.run_path, m, a["edit_id"], False)
     with pytest.raises(rv.ReviewError):
         rv.undo(run.run_path, m, rec["entry"])
     rv.undo(run.run_path, m, rec2["entry"])
     rv.undo(run.run_path, m, rec["entry"])
     r = rv.load(run.run_path)
-    assert {e["id"]: e["status"] for e in r["edits"] if e["id"] in (a["id"], b["id"])} == {a["id"]: "proposed", b["id"]: "proposed"}
+    assert {e["edit_id"]: e["status"] for e in r["edits"] if e["edit_id"] in (a["edit_id"], b["edit_id"])} == {a["edit_id"]: "proposed", b["edit_id"]: "proposed"}
     assert V.validate(ds.root)["ok"]
     with rv.recording("nothing") as rec:                # a step that changes nothing is not recorded
         pass
@@ -1040,7 +1065,7 @@ def test_undo_history_is_validated_and_one_step_per_recording(tmp_path):
     with rv.recording("cut") as rec:
         rv.add_edit(run.run_path, m, "exclude", {"start": 8, "end": 9})
     with rv.recording("undo cut") as rec:
-        rv.decide(run.run_path, m, next(e["id"] for e in rv.load(run.run_path)["edits"] if e["payload"]["start"] == 8), False)
+        rv.decide(run.run_path, m, next(e["edit_id"] for e in rv.load(run.run_path)["edits"] if e["payload"]["start"] == 8), False)
     r = json.loads((run.run_path / "review.json").read_text())
     assert [u["entry"] for u in rv.undoable(r)][-1] == rec["entry"]
     good = json.dumps(r)
@@ -1065,10 +1090,13 @@ def test_undoable_hides_steps_changed_later(tmp_path):
         rv.add_edit(run.run_path, m, "exclude", {"start": 0, "end": 2})
     with rv.recording("label") as second:
         lb = rv.add_edit(run.run_path, m, "label", {"start": 4, "end": 6, "text": "x"})
-    rv.interpret(run.run_path, lb["id"], "keep", "fine")          # not a viewer step: the label step can't be undone
-    assert [u["entry"] for u in rv.undoable(rv.load(run.run_path))] == [first["entry"]]
+    with rv.recording("reading") as third:                         # refers to the label: its step can't be undone
+        rv.interpret(run.run_path, lb["edit_id"], "keep", "fine")
+    assert [u["entry"] for u in rv.undoable(rv.load(run.run_path))] == [first["entry"], third["entry"]]
     rv.undo(run.run_path, m, first["entry"])                      # the older independent step is still reachable
-    assert rv.undoable(rv.load(run.run_path)) == []
+    assert [u["entry"] for u in rv.undoable(rv.load(run.run_path))] == [third["entry"]]
+    rv.undo(run.run_path, m, third["entry"])                      # without the reading, the label step comes back
+    assert [u["entry"] for u in rv.undoable(rv.load(run.run_path))] == [second["entry"]]
     r = json.loads((run.run_path / "review.json").read_text())   # a snapshot missing fields fails validation
     del r["history"][0]["changes"][0]["after"]["payload"]
     (run.run_path / "review.json").write_text(json.dumps(r))
@@ -1079,7 +1107,8 @@ def test_undoable_hides_steps_changed_later(tmp_path):
 def test_history_byte_cap(tmp_path, monkeypatch):
     from dataop_logger import review as rv
     ds, run, m = _review_fixture(tmp_path)
-    monkeypatch.setattr(rv, "HISTORY_BYTES", 2000)
+    from aftershock_logger import review_format
+    monkeypatch.setattr(review_format, "HISTORY_BYTES", 2000)
     with rv.recording("big") as rec:
         rv.add_edit(run.run_path, m, "label", {"start": 1, "end": 3, "text": "y" * 1990})
     assert rec["entry"] is None and rv.load(run.run_path).get("history", []) == []
@@ -1117,8 +1146,13 @@ def test_major_events_three_kinds_and_notes(tmp_path):
     got = [(e["kind"], e["frame"], e["title"]) for e in evs]
     assert ("failure", 22, "Policy fails") in got and ("drive", 25, "Teleop drives") in got
     assert not next(e for e in evs if e["kind"] == "failure")["estimated"]
-    # notes: an agent's note replaces the recorded one; undo-able like any edit
+    # notes: an agent's note is a proposal; once a person accepts it, it replaces the recorded one
     assert main(["note", str(ds.root), run.run_id, "failure", "--text", "gripper slips at the cap", "--by", "vlm-agent"]) == 0
+    note = next(e for e in rv.load(run.run_path)["edits"] if e["kind"] == "event_note")
+    assert note["status"] == "proposed" and note["reason"]
+    assert next(e for e in events.major_events(m, rv.load(run.run_path), modes, srcs)
+                if e["kind"] == "failure")["note_by"] != "vlm-agent"
+    rv.decide(run.run_path, m, note["edit_id"], True)
     evs = events.major_events(m, rv.load(run.run_path), modes, srcs)
     fail = next(e for e in evs if e["kind"] == "failure")
     assert (fail["note"], fail["note_by"]) == ("gripper slips at the cap", "vlm-agent")
@@ -1214,17 +1248,24 @@ def test_agent_annotates_through_the_schema(tmp_path):
     assert main(["annotate", str(ds.root), run.run_id, "--segments", segs, "--failure-at", "0.8",
                  "--failure-type", "no_lift", "--by", "vlm-agent"]) == 0
     assert main(["annotate", str(ds.root), run.run_id, "--failure-type", "teleported", "--by", "x"]) == 2   # not on the list
+    # each agent value is a proposal, one undoable step each, until a person accepts it
+    undo = rv.undoable(rv.load(run.run_path))
+    assert [u["what"] for u in undo] == ["vlm-agent: task segments", "vlm-agent: failure type no_lift",
+                                          "vlm-agent: policy fails at 0.8 s"]
+    props = [e for e in rv.load(run.run_path)["edits"] if e["status"] == "proposed"]
+    assert [(e["kind"], e["source"], e["by"]) for e in props] == [
+        ("segments", "agent", "vlm-agent"), ("outcome", "agent", "vlm-agent"), ("failure_start", "agent", "vlm-agent")]
+    assert all(e["job_id"] and e["agent_version"] and e["reason"] for e in props)
+    assert runs_json(ds.root)["runs"][0]["failure"]["estimated"]
+    with rv.recording("accept all") as acc:
+        rv.decide_many(run.run_path, m, [e["edit_id"] for e in props], True)
     out = runs_json(ds.root)
     r = out["runs"][0]
     assert [(s["name"], s["start_frame"], s["end_frame"]) for s in r["segments"]] == [("grasp", 0, 9), ("lift", 9, 30)]
     assert r["failure"]["frame"] == 24 and r["failure"]["type"] == "no_lift" and not r["failure"]["estimated"]
     assert r["failure"]["set_by"]["failure_start"] == "vlm-agent" and r["segments_set_by"] == "vlm-agent"
     assert {e["name"] for e in out["lists"]["task_segments"]} == {"grasp", "lift"}
-    # each agent change is one undoable step for a person
-    undo = rv.undoable(rv.load(run.run_path))
-    assert [u["what"] for u in undo] == ["vlm-agent: task segments", "vlm-agent: failure type no_lift",
-                                          "vlm-agent: policy fails at 0.8 s"]
-    rv.undo(run.run_path, m, undo[-1]["entry"])
+    rv.undo(run.run_path, m, acc["entry"])
     assert runs_json(ds.root)["runs"][0]["failure"]["estimated"]
 
 

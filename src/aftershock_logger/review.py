@@ -1,25 +1,37 @@
 """Human review of committed runs: corrections stored next to the run, never applied to the recorded data.
 
-Each run may have `dataop/runs/<run_id>/review.json`. It holds edits (agent proposals and human edits) and whether
-the run has been reviewed. The recorded frames, the manifest and its checksums never change; `effective()` folds the
-accepted edits into what training should use, and the reader turns that into `dataop.train_mask`.
+Each run may have `dataop/runs/<run_id>/review.json` in review format 2 (`review_format.py`): every edit people,
+agents and checks made, with its source, status and who decided it, an undo history, and whether the run has been
+reviewed. The recorded frames, the manifest and its checksums never change; `effective()` folds the accepted edits
+into what training should use, and the reader turns that into `dataop.train_mask`.
 
-Edit kinds and their payloads:
-  outcome        {"termination_reason": str, "failure_mode": str | None}
+A file in the logger's earlier format 1 (`{"version": 1, ...}`) is read through the lossless migration and stays as
+it is on disk until the next change to that run's review, which writes it as format 2.
+
+Edit kinds and their payloads (frames are frame indices of the run; ranges are [start, end)):
+  outcome        {"outcome": success | failure | unknown, "termination_reason": str | None, "failure_mode": str | None}
+                 (callers may pass only termination_reason and failure_mode; outcome follows from the reason)
   failure_start  {"frame": int}       on a failed run, frames from here to the next takeover are not good behaviour
+  failure_type   {"failure_type_id": id, "vocab_rev": int}
   exclude        {"start": int, "end": int}   frames [start, end) are left out of training
+  segments       {"segments": [{"subtask_id", "start", "end", "legacy_name"}]}: the run's full list of task segments
+                 (callers may pass [{"name", "start", "end"}]; see _segment_names)
   step_boundary  {"index": int, "before": str, "after": str, "frame": int}
                  moves the shared boundary between recorded steps `index` and `index + 1`
+  segment_edge   {"index": int, "edge": start | end, "frame": int}
+  drive_boundary {"index": int, "frame": int}
   reject_run     {}                           the whole run is left out of training
   note           {"frame": int, "text": str}
-  label          {"start": int, "end": int, "text": str, "driver": drive mode, e.g. "policy" or "rescue" | None, "segment": str | None}
-                 a person's description of frames [start, end) in plain language. An agent reads it later and
-                 records what it means with `interpret()`; an interpretation of train="exclude" leaves the span
-                 out of training.
+  event_note     {"key": str, "text": str}
+  label          {"start": int, "end": int, "text": str, "driver": str | None, "segment": str | None}
+                 a person's description of frames [start, end) in plain language
+  reading        {"label_id": id, "train": keep | exclude, "meaning": str}: what a label means for training; the
+                 reading in effect of "exclude" leaves the label's span out of training
+  name           {"text": str}
 
-Single-valued kinds (outcome, failure_start, reject_run, and step_boundary per index): the most recently accepted
-edit wins, and undoing it brings back the one accepted before it. Every change to review.json happens under a
-cross-process lock and bumps `rev`.
+A person's edit is accepted at once. An agent's edit is a proposal that a person accepts, corrects or rejects. In the
+one-value kinds the most recently accepted edit wins, and taking it back brings back the one accepted before it.
+Every change happens under a cross-process lock, is checked against the recorded run, and bumps `rev`.
 """
 from __future__ import annotations
 
@@ -36,17 +48,18 @@ from pathlib import Path
 import numpy as np
 import pyarrow.parquet as pq
 
+from . import review_format as fmt
 from . import store
-from .schema import LIVE_TERMINATION_REASONS as TERMINATION_REASONS
 
-KINDS = ("outcome", "failure_start", "exclude", "step_boundary", "segment_edge", "drive_boundary", "segment_plan",
-         "reject_run", "note", "label", "event_note")
-TRAIN_USE = ("keep", "exclude")
-SOURCES = ("agent", "human")
-STATUSES = ("proposed", "accepted", "rejected")
-MULTI = ("exclude", "note", "label")        # kinds where every accepted edit applies
+KINDS = fmt.KINDS + ("segment_plan",)       # segment_plan: the format 1 name for segments, still accepted as input
+TRAIN_USE = fmt.TRAIN_USE
+SOURCES = fmt.SOURCES
+STATUSES = fmt.STATUSES
+MULTI = fmt.MULTI
 TAKEOVER_MODES = ("expert", "blend")
 EDIT_ID = re.compile(r"^[0-9a-f]{12}$")
+HISTORY_LIMIT = fmt.HISTORY_LIMIT
+HISTORY_BYTES = fmt.HISTORY_BYTES
 
 
 class ReviewError(ValueError):
@@ -57,6 +70,17 @@ class ReviewConflict(ReviewError):
     """The review changed since the caller read it."""
 
 
+@contextmanager
+def _errors():
+    """Format and operation errors as this module's errors."""
+    try:
+        yield
+    except fmt.ReviewConflict as e:
+        raise ReviewConflict(str(e)) from None
+    except (fmt.ReviewError, fmt.FormatError) as e:
+        raise ReviewError(str(e)) from None
+
+
 def _now() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -65,38 +89,57 @@ def _path(run_path: Path) -> Path:
     return Path(run_path) / "review.json"
 
 
-def empty() -> dict:
-    return {"version": 1, "rev": 0, "seq": 0, "reviewed": False, "reviewed_at": None, "edits": []}
+def _agent_version() -> str:
+    """The version written on an agent proposal when the caller names none: this logger's own, never "unknown"
+    (which marks edits migrated from format 1)."""
+    try:
+        from importlib.metadata import version
+        return f"aftershock-logger {version('aftershock-logger')}"
+    except Exception:                                   # run from a source checkout
+        return "aftershock-logger (source)"
 
 
-def load(run_path: Path) -> dict:
+def _job_id() -> str:
+    """A job id for one logger command that proposes edits (one find_idle call, one suggest-cut)."""
+    return f"local-{uuid.uuid4().hex[:12]}"
+
+
+def empty(run_id: str) -> dict:
+    with _errors():
+        return fmt.empty_review(run_id)
+
+
+def load(run_path: Path, manifest: dict | None = None, task: dict | None = None) -> dict:
+    """The run's review as format 2, checked against the recorded run. A missing file is an empty review; a format 1
+    file is migrated in memory (by recorded name, against `task` when given) and left on disk as it is."""
+    run_path = Path(run_path)
+    if manifest is None:
+        manifest = store.read_manifest(run_path)
     p = _path(run_path)
     if not p.exists():
-        return empty()
+        return empty(manifest["run_id"])
     try:
-        r = json.loads(p.read_text())
-    except (json.JSONDecodeError, UnicodeDecodeError) as e:
-        raise ReviewError(f"{p} is unreadable ({e})") from e
-    if not isinstance(r, dict) or r.get("version") != 1 or not isinstance(r.get("edits"), list):
-        raise ReviewError(f"{p} is not a version 1 review file")
-    for e in r["edits"]:
-        if not isinstance(e, dict) or not EDIT_ID.match(str(e.get("id"))) or e.get("kind") not in KINDS \
-                or e.get("status") not in STATUSES or e.get("source") not in SOURCES:
-            raise ReviewError(f"{p} has a malformed edit")
-    r.setdefault("rev", 0)
-    r.setdefault("seq", 0)
-    return r
+        return fmt.read(p.read_bytes(), manifest, task)
+    except (fmt.FormatError, KeyError, TypeError, AttributeError) as e:
+        raise ReviewError(f"{p}: {e}") from None
+
+
+def file_format(run_path: Path) -> int | None:
+    """1 or 2 for the review file on disk, None when the run has none (or it is unreadable)."""
+    try:
+        raw = json.loads(_path(run_path).read_text())
+    except (OSError, ValueError):
+        return None
+    return 1 if fmt.is_format1(raw) else 2 if isinstance(raw, dict) and raw.get("review_format") == 2 else None
 
 
 _RECORDING = contextvars.ContextVar("dataop_review_recording", default=None)
-HISTORY_LIMIT = 200                  # steps kept for undo
-HISTORY_BYTES = 2_000_000            # and at most this much JSON; the oldest steps are dropped first
 
 
 @contextmanager
 def recording(what: str):
-    """Record the edits made inside this block as one undoable step in review["history"].
-    Yields a dict whose "entry" is the history id once the step is saved (None if nothing changed)."""
+    """Name the undoable step the review change inside this block makes (one change per block). Yields a dict whose
+    "entry" is the step id once it is saved (None if nothing changed or the step was too big to keep)."""
     box = {"what": what, "entry": None}
     token = _RECORDING.set(box)
     try:
@@ -106,251 +149,225 @@ def recording(what: str):
 
 
 @contextmanager
-def transaction(run_path: Path, expect_rev: int | None = None):
-    """Load, change and save one run's review under an exclusive cross-process lock. The batches lock is held shared
-    from the lock check to the write (taken first, as batches.set_status does), so a batch cannot be locked or its
-    files moved between the check and the edit."""
+def transaction(run_path: Path, manifest: dict | None = None, expect_rev: int | None = None):
+    """Load one run's review under an exclusive cross-process lock, let the caller replace box["review"] with the
+    result of format 2 operations, and save it if it changed. The batches lock is held shared from the lock check to
+    the write (taken first, as batches.set_status does), so a batch cannot be locked or its files moved between the
+    check and the edit. Yields {"review", "what", "now", "t"}; "what" names the step (from recording())."""
     from . import batches
-    with batches.shared(Path(run_path).parent.parent.parent), open(Path(run_path) / "review.lock", "a+") as lock:
+    run_path = Path(run_path)
+    if manifest is None:
+        manifest = store.read_manifest(run_path)
+    root = run_path.parent.parent.parent
+    with batches.shared(root), open(run_path / "review.lock", "a+") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         try:
             try:
-                batches.check_editable(Path(run_path).parent.parent.parent, Path(run_path).name)
+                batches.check_editable(root, run_path.name)
             except batches.BatchError as e:
                 raise ReviewError(str(e)) from None
-            review = load(run_path)
-            snapshot = copy.deepcopy(review)
+            review = load(run_path, manifest)
             if expect_rev is not None and review["rev"] != expect_rev:
                 raise ReviewConflict(f"the review changed (now at rev {review['rev']}, you had {expect_rev})")
-            box = _RECORDING.get()
-            if box is not None and box.get("used"):
+            rec = _RECORDING.get()
+            if rec is not None and rec.get("used"):
                 raise ReviewError("a recorded step may contain one transaction only")
-            before = {e["id"]: copy.deepcopy(e) for e in review["edits"]} if box is not None else None
-            yield review
-            if box is not None:
-                after = {e["id"]: e for e in review["edits"]}
-                changes = [{"id": i, "before": before.get(i), "after": copy.deepcopy(after.get(i))}
-                           for i in list(before) + [i for i in after if i not in before]
-                           if before.get(i) != after.get(i)]
-                box["used"] = True
-                if changes:
-                    entry = {"id": uuid.uuid4().hex[:12], "at": _now(), "t": time.time_ns(), "what": box["what"],
-                             "changes": changes, "undone": False}
-                    hist = review.setdefault("history", [])
-                    if len(json.dumps(entry)) <= HISTORY_BYTES:   # a single huge step is not kept for undo
-                        hist.append(entry)
-                    del hist[:-HISTORY_LIMIT]
-                    while hist and len(json.dumps(hist)) > HISTORY_BYTES:
-                        del hist[0]
-                    box["entry"] = entry["id"] if hist and hist[-1] is entry else None
-            if review.get("reviewed") and review["edits"] != snapshot["edits"]:
-                # the run changed after someone signed it off: it needs a fresh look before a batch can lock
-                review["reviewed"], review["reviewed_at"], review["reviewed_by"] = False, None, None
-            if review != snapshot:                      # a no-op keeps its revision, so it never causes a conflict
-                review["rev"] += 1
-                store.atomic_write_json(_path(run_path), review)
+            box = {"review": review, "what": rec["what"] if rec else None, "now": _now(), "t": time.time_ns()}
+            with _errors():
+                yield box
+            out = box["review"]
+            if rec is not None:
+                rec["used"] = True
+                rec["entry"] = _new_step(review, out)
+            if box.get("force") or (out is not review and out != review):
+                with _errors():
+                    fmt.check_review(out)
+                    fmt.check_against_manifest(out, manifest)
+                store.atomic_write_bytes(_path(run_path), fmt.dump_review(out).encode())
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
 
 
-def set_reviewed(run_path: Path, reviewed: bool, by: str = "person", expect_rev: int | None = None) -> None:
-    """Mark the run as reviewed (a person or agent has checked it), or not. Batches count reviewed runs."""
-    if not isinstance(reviewed, bool):
-        raise ReviewError("reviewed must be true or false")
-    with transaction(run_path, expect_rev) as review:
-        review["reviewed"] = reviewed
-        review["reviewed_at"] = _now() if reviewed else None
-        review["reviewed_by"] = (by or "person")[:80] if reviewed else None
+def _new_step(before: dict, after: dict) -> str | None:
+    """The id of the history step an operation added, if it kept one."""
+    if not after["history"]:
+        return None
+    last = after["history"][-1]["step_id"]
+    return None if any(h["step_id"] == last for h in before["history"]) else last
 
 
-def undoable(review: dict) -> list[dict]:
-    """Steps that can be undone right now, oldest first: [{entry, what, t}]. A step is offered only while every
-    edit it touched is still exactly as the step left it, so a later change (from the page, an agent or a script)
-    hides it until that later change is undone."""
-    current = {e["id"]: e for e in review["edits"]}
-    return [{"entry": h["id"], "what": h["what"], "t": h["t"]} for h in review.get("history", [])
-            if not h["undone"] and all(current.get(c["id"]) == c["after"] for c in h["changes"])]
+def _ints(v):
+    """numpy integers as plain ints, so callers can pass frame numbers straight from arrays."""
+    if isinstance(v, np.integer):
+        return int(v)
+    if isinstance(v, dict):
+        return {k: _ints(x) for k, x in v.items()}
+    if isinstance(v, list):
+        return [_ints(x) for x in v]
+    return v
 
 
-def undo(run_path: Path, manifest: dict, entry_id: str, expect_rev: int | None = None) -> dict:
-    """Revert one recorded step: every edit it touched goes back to how it was, if nothing changed it since.
-    The result is validated like any stored review before it is saved."""
-    with transaction(run_path, expect_rev) as review:
-        entry = next((h for h in review.get("history", []) if h.get("id") == entry_id), None)
-        if entry is None:
-            raise ReviewError("nothing to undo with that id")
-        if entry.get("undone"):
-            raise ReviewError("that step was already undone")
-        current = {e["id"]: e for e in review["edits"]}
-        for c in entry["changes"]:
-            if current.get(c["id"]) != c["after"]:
-                raise ReviewError("can't undo: those frames were changed again since; undo the later change first")
-        for c in entry["changes"]:
-            if c["before"] is None:
-                review["edits"] = [e for e in review["edits"] if e["id"] != c["id"]]
-            elif c["id"] in current:
-                review["edits"][review["edits"].index(current[c["id"]])] = copy.deepcopy(c["before"])
-            else:
-                review["edits"].append(copy.deepcopy(c["before"]))
-        entry["undone"], entry["undone_at"] = True, _now()
-        check_review(manifest, review)
-        return entry
+def _input(kind: str, payload, manifest: dict) -> tuple[str, dict]:
+    """A caller's payload in the stored form: the format 1 shapes the viewer and scripts send (an outcome without
+    `outcome`, named segments, a step boundary without its step names), texts trimmed, numpy integers as ints.
+    The result is checked by the operation itself."""
+    if kind not in KINDS:
+        raise ReviewError(f"kind must be one of {fmt.KINDS}")
+    if not isinstance(payload, dict):
+        raise ReviewError("payload must be an object")
+    p = _ints(dict(payload))
+    if kind == "segment_plan":
+        kind = "segments"
+    if kind == "outcome":
+        tr = p.get("termination_reason")
+        out = p.get("outcome", fmt.outcome_of(tr) if isinstance(tr, str) and tr in fmt.TERMINATION_REASONS else None)
+        p = {"outcome": out, "termination_reason": tr, "failure_mode": p.get("failure_mode")}
+    elif kind == "segments":
+        segs = p.get("segments")
+        if isinstance(segs, list):
+            out = []
+            for x in segs:
+                if isinstance(x, dict) and "subtask_id" not in x and "name" in x:
+                    name = x["name"]
+                    if not isinstance(name, str) or not 0 < len(name.strip()) <= 100:
+                        raise ReviewError("each segment needs a name")
+                    x = {"subtask_id": fmt.UNRESOLVED, "start": x.get("start"), "end": x.get("end"),
+                         "legacy_name": name.strip()}
+                out.append(x)
+            p = {"segments": out}
+    elif kind == "step_boundary":
+        steps, i = manifest.get("subgoals") or [], p.get("index")
+        if isinstance(i, int) and not isinstance(i, bool) and 0 <= i < len(steps) - 1:
+            p.setdefault("before", steps[i]["name"])
+            p.setdefault("after", steps[i + 1]["name"])
+    elif kind == "label":
+        text, driver, segment = p.get("text") or "", p.get("driver"), p.get("segment")
+        if not isinstance(text, str) or not text.strip():
+            raise ReviewError("a label needs a description of what happens")
+        if driver is not None and (not isinstance(driver, str) or not driver.strip()):
+            raise ReviewError("drive mode must be a short name (policy, rescue or your own) or null")
+        if segment is not None and (not isinstance(segment, str) or not segment.strip()):
+            raise ReviewError("segment must be a short name or null")
+        p = {"start": p.get("start"), "end": p.get("end"), "text": text.strip(),
+             "driver": driver.strip() if driver else None, "segment": segment.strip() if segment else None}
+    elif kind == "event_note":
+        if isinstance(p.get("text"), str):
+            p["text"] = p["text"].strip()
+    return kind, p
+
+
+def _segment_names(review: dict, kind: str, payload: dict) -> dict:
+    """A segments payload given by name (from _input), made to agree with the review. The logger has no Aftershock
+    task, so it never invents a subtask id: a name keeps its subtask id from the review's legacy_subtask_map when the
+    map has the name, and is otherwise "unresolved" with the name kept, for a person to map in Aftershock. A name the
+    map does not have yet is added to it as unresolved (the format requires every named segment to agree with the
+    map). Returns the review to apply the edit to: the same object when nothing was added."""
+    lmap = review["legacy_subtask_map"]
+    if kind != "segments" or lmap is None or not isinstance(payload.get("segments"), list):
+        return review
+    out = review
+    for s in payload["segments"]:
+        if not isinstance(s, dict) or not isinstance(s.get("legacy_name"), str) or s.get("subtask_id") != fmt.UNRESOLVED:
+            continue
+        known = fmt._lookup(out["legacy_subtask_map"], None, s["legacy_name"])
+        if known is not None:
+            s["subtask_id"] = known
+        else:
+            if out is review:
+                out = copy.deepcopy(review)
+            out["legacy_subtask_map"]["entries"].append({"step_index": None, "recorded_name": s["legacy_name"],
+                                                          "subtask_id": fmt.UNRESOLVED})
+    return out
+
+
+def _propose(box: dict, **kw) -> dict:
+    """fmt.propose on the transaction's review, naming segments first (see _segment_names). A proposal that changes
+    nothing (the same open one exists) leaves the review exactly as it was."""
+    base = _segment_names(box["review"], kw["kind"], kw["payload"])
+    out, e = fmt.propose(base, expect_rev=base["rev"], now=box["now"], t=box["t"], what=box["what"], **kw)
+    if out is not base:
+        box["review"] = out
+    return e
 
 
 def check_payload(kind: str, payload: dict, manifest: dict) -> dict:
-    """Validate and normalise one edit's payload against the recorded run."""
-    length = manifest["length"]
-    if kind not in KINDS:
-        raise ReviewError(f"kind must be one of {KINDS}")
-    if not isinstance(payload, dict):
-        raise ReviewError("payload must be an object")
-
-    def frame(v, name, lo, hi):
-        if isinstance(v, bool) or not isinstance(v, (int, np.integer)) or not lo <= v <= hi:
-            raise ReviewError(f"{name} must be an integer frame in [{lo}, {hi}]")
-        return int(v)
-
-    if kind == "outcome":
-        tr = payload.get("termination_reason")
-        if tr not in TERMINATION_REASONS:
-            raise ReviewError(f"termination_reason must be one of {TERMINATION_REASONS}")
-        fm = payload.get("failure_mode")
-        if fm is not None and (not isinstance(fm, str) or not fm.strip() or len(fm) > 200):
-            raise ReviewError("failure_mode must be a short non-empty string or null")
-        if tr == "success" and fm is not None:
-            raise ReviewError("a successful run has no failure_mode")
-        return {"termination_reason": tr, "failure_mode": fm}
-    if kind == "failure_start":
-        return {"frame": frame(payload.get("frame"), "frame", 0, length - 1)}
-    if kind == "exclude":
-        a, b = frame(payload.get("start"), "start", 0, length), frame(payload.get("end"), "end", 0, length)
-        if a >= b:
-            raise ReviewError("exclude needs start < end")
-        return {"start": a, "end": b}
-    if kind == "step_boundary":
-        steps = manifest.get("subgoals", [])
-        i = payload.get("index")
-        if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < len(steps) - 1:
-            raise ReviewError("step_boundary needs the index of a recorded step that has a next step")
-        a, b = steps[i], steps[i + 1]
-        if a["end_frame"] != b["start_frame"]:
-            raise ReviewError(f"steps {a['name']!r} and {b['name']!r} do not share a boundary")
-        if payload.get("before", a["name"]) != a["name"] or payload.get("after", b["name"]) != b["name"]:
-            raise ReviewError("step names do not match the steps at that index")
-        f = frame(payload.get("frame"), "frame", 0, length)   # clamped later against the steps as corrected
-        return {"index": i, "before": a["name"], "after": b["name"], "frame": f}
-    if kind == "segment_plan":                  # a person's full list of task segments for the run
-        segs = payload.get("segments")
-        if not isinstance(segs, list) or len(segs) > 500:
-            raise ReviewError("segment_plan needs a list of segments")
-        out, last = [], 0
-        for x in segs:
-            if not isinstance(x, dict) or not isinstance(x.get("name"), str) or not 0 < len(x["name"].strip()) <= 100:
-                raise ReviewError("each segment needs a name")
-            a, b = frame(x.get("start"), "start", 0, length), frame(x.get("end"), "end", 0, length)
-            if a >= b or a < last:
-                raise ReviewError("segments must be in order, at least one frame long, and must not overlap")
-            out.append({"name": x["name"].strip(), "start": a, "end": b})
-            last = b
-        return {"segments": out}
-    if kind == "drive_boundary":                # moves the switch between recorded drive spans index and index + 1
-        i = payload.get("index")
-        if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < length:
-            raise ReviewError("drive_boundary needs the index of a recorded drive span")
-        return {"index": i, "frame": frame(payload.get("frame"), "frame", 0, length)}
-    if kind == "segment_edge":                  # the outer start or end of a recorded step with no step next to it
-        steps = manifest.get("subgoals", [])
-        i, edge = payload.get("index"), payload.get("edge")
-        if isinstance(i, bool) or not isinstance(i, int) or not 0 <= i < len(steps) or edge not in ("start", "end"):
-            raise ReviewError("segment_edge needs a recorded step index and edge start or end")
-        return {"index": i, "edge": edge, "frame": frame(payload.get("frame"), "frame", 0, length)}
-    if kind == "reject_run":
-        return {}
-    if kind == "event_note":
-        key, text = payload.get("key"), payload.get("text")
-        if not isinstance(key, str) or not 0 < len(key) <= 120 or any(c in key for c in "\n\r"):
-            raise ReviewError("event_note needs the event's key")
-        if not isinstance(text, str) or not text.strip() or len(text) > 500:
-            raise ReviewError("a note must be 1 to 500 characters")
-        return {"key": key, "text": text.strip()}
-    if kind == "label":
-        a, b = frame(payload.get("start"), "start", 0, length), frame(payload.get("end"), "end", 0, length)
-        if a >= b:
-            raise ReviewError("a label needs start < end")
-        text = payload.get("text") or ""
-        driver, segment = payload.get("driver"), payload.get("segment")
-        if not isinstance(text, str) or len(text) > 2000:
-            raise ReviewError("label text must be at most 2000 characters")
-        if driver is not None and (not isinstance(driver, str) or not driver.strip() or len(driver) > 50):
-            raise ReviewError("drive mode must be a short name (policy, rescue or your own) or null")
-        if segment is not None and (not isinstance(segment, str) or not segment.strip() or len(segment) > 100):
-            raise ReviewError("segment must be a short name or null")
-        if not text.strip():
-            raise ReviewError("a label needs a description of what happens")
-        return {"start": a, "end": b, "text": text.strip(), "driver": driver.strip() if driver else None,
-                "segment": segment.strip() if segment else None}
-    text = payload.get("text")
-    if not isinstance(text, str) or not text.strip() or len(text) > 2000:
-        raise ReviewError("note text must be 1 to 2000 characters")
-    return {"frame": frame(payload.get("frame"), "frame", 0, length - 1), "text": text}
+    """Check and normalise one edit's payload against the recorded run, as an edit would store it."""
+    kind, p = _input(kind, payload, manifest)
+    with _errors():
+        fmt.check_payload(kind, p)
+        probe = fmt.empty_review(manifest["run_id"])
+        e = fmt._new_edit("0" * 12, kind, p, "human", "check", None, None, None, "now")
+        probe["edits"].append(e)
+        fmt.check_against_manifest(probe, manifest)
+    return p
 
 
-def _slot(e: dict):
-    """Edits that compete: same kind, and for step boundaries the same index."""
-    if e["kind"] == "step_boundary":
-        return (e["kind"], e["payload"].get("index"))
-    if e["kind"] == "event_note":
-        return (e["kind"], e["payload"].get("key"))
-    if e["kind"] == "segment_edge":
-        return (e["kind"], e["payload"].get("index"), e["payload"].get("edge"))
-    if e["kind"] == "drive_boundary":
-        return (e["kind"], e["payload"].get("index"))
-    return e["kind"]
+def set_reviewed(run_path: Path, reviewed: bool, by: str = "person", expect_rev: int | None = None) -> None:
+    """Mark the run as reviewed (a person has checked it), or not. Batches count reviewed runs."""
+    if not isinstance(reviewed, bool):
+        raise ReviewError("reviewed must be true or false")
+    with transaction(run_path, expect_rev=expect_rev) as box:
+        box["review"] = fmt.set_reviewed(box["review"], reviewed, by=(by or "person")[:80],
+                                         expect_rev=box["review"]["rev"], now=box["now"])
 
 
-def _accept(review: dict, edit: dict) -> None:
-    review["seq"] += 1
-    edit["status"], edit["decided_at"], edit["accepted_seq"] = "accepted", _now(), review["seq"]
+def undoable(review: dict) -> list[dict]:
+    """Steps that can be undone right now, oldest first: [{entry, what, t}]. A step is offered only while every edit
+    it touched is still exactly as the step left it and nothing else refers to an edit it would take away, so a
+    later change (from the page, an agent or a script) hides it until that later change is undone."""
+    ok = set(fmt.undoable(review))
+    return [{"entry": h["step_id"], "what": h["what"], "t": h["t"] or 0} for h in review["history"]
+            if h["step_id"] in ok]
+
+
+def undo(run_path: Path, manifest: dict, entry_id: str, expect_rev: int | None = None) -> dict:
+    """Revert one step: every edit it touched goes back to how it was, if nothing changed it since. Returns the
+    step."""
+    with transaction(run_path, manifest, expect_rev) as box:
+        box["review"], sid = fmt.undo(box["review"], entry_id, expect_rev=box["review"]["rev"], now=box["now"])
+    return next(h for h in box["review"]["history"] if h["step_id"] == sid)
 
 
 def add_edit(run_path: Path, manifest: dict, kind: str, payload: dict, source: str = "human",
-             reason: str | None = None, expect_rev: int | None = None, by: str | None = None) -> dict:
-    """Add an edit. Human edits are accepted at once; agent edits wait as proposals and reopen the run's review."""
+             reason: str | None = None, expect_rev: int | None = None, by: str | None = None,
+             job_id: str | None = None, agent_version: str | None = None) -> dict:
+    """Add an edit. A person's edit is accepted at once; an agent's edit waits as a proposal. An agent proposal that
+    repeats one a person already decided, or one that is still open, is not added again: the existing edit is
+    returned (see add_suggestions for what became of it)."""
     if source not in SOURCES:
         raise ReviewError(f"source must be one of {SOURCES}")
-    payload = check_payload(kind, payload, manifest)
-    with transaction(run_path, expect_rev) as review:
-        if source == "agent":
-            prior, _ = _prior_suggestion(review, kind, payload)
+    kind, payload = _input(kind, payload, manifest)
+    if by is None:
+        by = "person" if source == "human" else source
+    if source != "human":
+        job_id, agent_version = job_id or _job_id(), agent_version or _agent_version()
+    with transaction(run_path, manifest, expect_rev) as box:
+        if source != "human":
+            prior, _ = _prior_suggestion(box["review"], kind, payload)
             if prior is not None:
                 return prior
-        edit = {"id": uuid.uuid4().hex[:12], "kind": kind, "payload": payload, "source": source, "reason": reason,
-                "status": "proposed", "created_at": _now(), "decided_at": None}
-        if by is not None:
-            edit["by"] = by
-        review["edits"].append(edit)
-        if source == "human":
-            _accept(review, edit)
-    return edit
+        e = _propose(box, kind=kind, payload=payload, source=source, by=by, reason=reason, job_id=job_id,
+                     agent_version=agent_version)
+    return e
 
 
 def _prior_suggestion(review: dict, kind: str, payload: dict) -> tuple[dict | None, str]:
     """An agent suggestion for exactly this change that already exists, and what became of it.
     A person's decision stands: a span someone kept is not suggested again, whichever agent asks."""
     if kind == "exclude":                       # these exact frames are cut right now, by anyone
-        for e in active_edits(review):
+        for e in fmt.active_edits(review):
             if e["kind"] == "exclude" and e["payload"] == payload:
                 return e, "already_cut"
     for e in review["edits"]:
-        if e["source"] == "agent" and e["kind"] == kind and e["payload"] == payload and e["status"] != "accepted":
+        if e["source"] != "human" and e["kind"] == kind and e["payload"] == payload and e["status"] != "accepted":
             return e, {"proposed": "already_suggested",
                        "rejected": "previously_kept" if kind == "exclude" else "previously_dismissed"}[e["status"]]
     return None, "created"
 
 
-def add_suggestions(run_path: Path, manifest: dict, items: list[dict], by: str,
-                    expect_rev: int | None = None) -> list[dict]:
-    """Add a batch of agent cut suggestions in one locked, revision-checked transaction.
+def add_suggestions(run_path: Path, manifest: dict, items: list[dict], by: str, expect_rev: int | None = None,
+                    job_id: str | None = None, agent_version: str | None = None) -> list[dict]:
+    """Add a batch of agent cut suggestions in one locked, revision-checked step.
     items: [{"start", "end", "reason"}]. Returns one {"status", "edit"} per item, status one of created,
     already_suggested, already_cut or previously_kept."""
     if not isinstance(by, str) or not by.strip() or len(by) > 100:
@@ -362,245 +379,213 @@ def add_suggestions(run_path: Path, manifest: dict, items: list[dict], by: str,
             raise ReviewError("a suggestion needs a short description (1 to 300 characters)")
         checked.append((check_payload("exclude", {"start": it.get("start"), "end": it.get("end")}, manifest),
                         reason.strip()))
-    out = []
-    with transaction(run_path, expect_rev) as review:
+    job_id, agent_version = job_id or _job_id(), agent_version or _agent_version()
+    with transaction(run_path, manifest, expect_rev) as box:
+        out, new = [], []
         for payload, reason in checked:
-            prior, status = _prior_suggestion(review, "exclude", payload)
-            if prior is None:
-                prior = {"id": uuid.uuid4().hex[:12], "kind": "exclude", "payload": payload, "source": "agent",
-                         "reason": reason, "by": by.strip(), "status": "proposed", "created_at": _now(),
-                         "decided_at": None}
-                review["edits"].append(prior)
-            out.append({"status": status, "edit": prior})
-    return out
+            prior, status = _prior_suggestion(box["review"], "exclude", payload)
+            if prior is None and payload in [n["payload"] for n in new]:
+                prior, status = None, "already_suggested"
+            if prior is None and status == "created":
+                new.append({"kind": "exclude", "payload": payload, "source": "agent", "by": by.strip(),
+                            "reason": reason, "job_id": job_id, "agent_version": agent_version})
+            out.append({"status": status, "edit": prior, "payload": payload})
+        if new:
+            box["review"], made = fmt.propose_many(box["review"], new, expect_rev=box["review"]["rev"],
+                                                   now=box["now"], t=box["t"],
+                                                   what=box["what"] or f"{by.strip()}: {len(new)} suggested cut(s)")
+            by_payload = {json.dumps(e["payload"], sort_keys=True): e for e in made}
+            for o in out:
+                if o["edit"] is None:
+                    o["edit"] = by_payload[json.dumps(o["payload"], sort_keys=True)]
+    return [{"status": o["status"], "edit": o["edit"]} for o in out]
+
+
+def _edit_in(review: dict, edit_id) -> dict:
+    e = next((x for x in review["edits"] if x["edit_id"] == edit_id), None)
+    if e is None:
+        raise ReviewError(f"no edit {edit_id!r} on this run")
+    return e
 
 
 def decide(run_path: Path, manifest: dict, edit_id: str, accept: bool, payload: dict | None = None,
-           expect_rev: int | None = None) -> dict:
-    """Accept (optionally adjusted) or reject an edit. Rejecting an accepted edit undoes it."""
+           expect_rev: int | None = None, by: str = "person") -> dict:
+    """A person decides an edit. Accept a proposal as it is, or with a changed payload (stored as the person's own
+    edit that corrects the proposal). Reject a proposal; rejecting an accepted edit takes it back, which brings back
+    the edit accepted before it in the same slot. Returns the edit now in effect for that decision."""
     if not isinstance(accept, bool):
         raise ReviewError("accept must be true or false")
-    with transaction(run_path, expect_rev) as review:
-        edit = next((e for e in review["edits"] if e["id"] == edit_id), None)
-        if edit is None:
-            raise ReviewError(f"no edit {edit_id!r} on this run")
-        if accept and edit["status"] != "proposed":
+    with transaction(run_path, manifest, expect_rev) as box:
+        r = box["review"]
+        e = _edit_in(r, edit_id)
+        kw = dict(by=by, expect_rev=r["rev"], now=box["now"], t=box["t"], what=box["what"])
+        if accept and e["status"] != "proposed":
             raise ReviewError("only a proposal can be accepted; change an accepted edit by replacing it")
-        if not accept and edit["status"] == "rejected":
+        if not accept and e["status"] == "rejected":
             raise ReviewError("this edit is already rejected")
-        if accept:
-            if payload is not None:
-                edit["payload"] = check_payload(edit["kind"], payload, manifest)
-                edit["adjusted"] = True
-            _accept(review, edit)
+        if accept and payload is not None:
+            if e["source"] == "human":
+                raise ReviewError("only an agent's proposal is accepted with changes")
+            kind, p = _input(e["kind"], payload, manifest)
+            out = _propose(box, kind=kind, payload=p, source="human", corrects=edit_id, by=by)
+        elif accept:
+            box["review"], out = fmt.accept(r, edit_id, **kw)
+        elif e["status"] == "proposed":
+            box["review"], out = fmt.reject(r, edit_id, **kw)
         else:
-            edit["status"], edit["decided_at"] = "rejected", _now()
-    return edit
+            box["review"], out = fmt.retract(r, edit_id, **kw)
+    return out
 
 
-def apply_agent_edit(run_path: Path, manifest: dict, kind: str, payload: dict, by: str,
-                     expect_rev: int | None = None) -> dict:
-    """An agent fills in the schema directly (segments, failure moment and type, drive switch). It applies at once,
-    is marked with who set it, and a person reviews it in the viewer, changes it or undoes it."""
-    if not isinstance(by, str) or not by.strip() or len(by) > 100:
-        raise ReviewError("by must name the agent in 1 to 100 characters")
-    payload = check_payload(kind, payload, manifest)
-    with transaction(run_path, expect_rev) as review:
-        edit = {"id": uuid.uuid4().hex[:12], "kind": kind, "payload": payload, "source": "agent", "reason": None,
-                "by": by.strip(), "status": "proposed", "created_at": _now(), "decided_at": None}
-        review["edits"].append(edit)
-        _accept(review, edit)
-    return edit
-
-
-def add_event_note(run_path: Path, manifest: dict, key: str, text: str, by: str, source: str = "agent",
-                   expect_rev: int | None = None) -> dict:
-    """A note on a major event (its details). Notes are descriptions, not training changes, so an agent's note
-    applies at once like a person's; the newest note for an event wins and undo restores the previous one."""
-    if source not in SOURCES:
-        raise ReviewError(f"source must be one of {SOURCES}")
-    if not isinstance(by, str) or not by.strip() or len(by) > 100:
-        raise ReviewError("by must name who wrote the note in 1 to 100 characters")
-    payload = check_payload("event_note", {"key": key, "text": text}, manifest)
-    with transaction(run_path, expect_rev) as review:
-        edit = {"id": uuid.uuid4().hex[:12], "kind": "event_note", "payload": payload, "source": source,
-                "reason": None, "by": by.strip(), "status": "proposed", "created_at": _now(), "decided_at": None}
-        review["edits"].append(edit)
-        _accept(review, edit)
-    return edit
-
-
-def decide_many(run_path: Path, manifest: dict, edit_ids: list, accept: bool, expect_rev: int | None = None) -> int:
+def decide_many(run_path: Path, manifest: dict, edit_ids: list, accept: bool, expect_rev: int | None = None,
+                by: str = "person") -> int:
     """Accept or dismiss several proposals in one step (for "Cut all" and "Keep all")."""
     if not isinstance(accept, bool):
         raise ReviewError("accept must be true or false")
     if not isinstance(edit_ids, list) or not edit_ids or len(edit_ids) > 1000:
         raise ReviewError("edit_ids must be a non-empty list")
-    with transaction(run_path, expect_rev) as review:
-        by_id = {e["id"]: e for e in review["edits"]}
-        todo = [by_id.get(i) for i in edit_ids]
-        if any(e is None or e["status"] != "proposed" for e in todo):
-            raise ReviewError("every id must be an open proposal on this run")
-        for e in todo:
-            if accept:
-                _accept(review, e)
-            else:
-                e["status"], e["decided_at"] = "rejected", _now()
-    return len(todo)
+    with transaction(run_path, manifest, expect_rev) as box:
+        box["review"] = fmt.decide_many(box["review"], edit_ids, accept, by=by, expect_rev=box["review"]["rev"],
+                                        now=box["now"], t=box["t"],
+                                        what=box["what"] or f"{'accept' if accept else 'reject'} {len(edit_ids)}")
+    return len(edit_ids)
 
 
-def replace_edit(run_path: Path, manifest: dict, edit_id: str, payload: dict, expect_rev: int | None = None) -> dict:
+def apply_agent_edit(run_path: Path, manifest: dict, kind: str, payload: dict, by: str,
+                     expect_rev: int | None = None, reason: str | None = None, job_id: str | None = None,
+                     agent_version: str | None = None) -> dict:
+    """An agent fills in the schema (segments, failure moment and type, drive switch). The value is a proposal,
+    marked with who set it and why; a person accepts, changes or rejects it in the viewer. The same value from the
+    same agent, job_id and agent_version while that proposal is still open returns it (the format's rule), so an agent
+    that runs again under the same job id adds nothing, and a new job or agent version gets its own proposal."""
+    if not isinstance(by, str) or not by.strip() or len(by) > 100:
+        raise ReviewError("by must name the agent in 1 to 100 characters")
+    kind, payload = _input(kind, payload, manifest)
+    reason = reason if isinstance(reason, str) and reason.strip() else f"{by.strip()} set {kind}"
+    with transaction(run_path, manifest, expect_rev) as box:
+        e = _propose(box, kind=kind, payload=payload, source="agent", by=by.strip(), reason=reason,
+                     job_id=job_id or _job_id(), agent_version=agent_version or _agent_version())
+    return e
+
+
+
+def add_event_note(run_path: Path, manifest: dict, key: str, text: str, by: str, source: str = "agent",
+                   expect_rev: int | None = None, job_id: str | None = None,
+                   agent_version: str | None = None) -> dict:
+    """A note on a major event (its details). A person's note applies at once; an agent's waits as a proposal. The
+    newest accepted note for an event wins and undo restores the previous one."""
+    if source not in SOURCES:
+        raise ReviewError(f"source must be one of {SOURCES}")
+    if not isinstance(by, str) or not by.strip() or len(by) > 100:
+        raise ReviewError("by must name who wrote the note in 1 to 100 characters")
+    _, payload = _input("event_note", {"key": key, "text": text}, manifest)
+    agent = source != "human"
+    with transaction(run_path, manifest, expect_rev) as box:
+        e = _propose(box, kind="event_note", payload=payload, source=source, by=by.strip(),
+                     reason=f"note on {key}" if agent else None, job_id=(job_id or _job_id()) if agent else None,
+                     agent_version=(agent_version or _agent_version()) if agent else None)
+    return e
+
+
+def replace_edit(run_path: Path, manifest: dict, edit_id: str, payload: dict, expect_rev: int | None = None,
+                 by: str = "person") -> dict:
     """A person rewrites an accepted edit (for example a label): the old one is retired, the new one is in effect.
-    Any agent interpretation of the old text does not carry over."""
-    with transaction(run_path, expect_rev) as review:
-        old = next((e for e in review["edits"] if e["id"] == edit_id), None)
+    A reading of the old label does not carry over."""
+    with transaction(run_path, manifest, expect_rev) as box:
+        old = next((e for e in box["review"]["edits"] if e["edit_id"] == edit_id), None)
         if old is None or old["status"] != "accepted":
             raise ReviewError(f"no accepted edit {edit_id!r} on this run")
-        new_payload = check_payload(old["kind"], payload, manifest)
-        edit = {"id": uuid.uuid4().hex[:12], "kind": old["kind"], "payload": new_payload, "source": "human",
-                "reason": None, "status": "proposed", "created_at": _now(), "decided_at": None, "replaces": old["id"]}
-        old["status"], old["decided_at"], old["replaced_by"] = "rejected", _now(), edit["id"]
-        review["edits"].append(edit)
-        _accept(review, edit)
-    return edit
+        _, p = _input(old["kind"], payload, manifest)
+        base = _segment_names(box["review"], old["kind"], p)
+        box["review"], e = fmt.replace(base, edit_id, p, by=by, expect_rev=base["rev"], now=box["now"], t=box["t"],
+                                       what=box["what"])
+    return e
 
 
 def interpret(run_path: Path, edit_id: str, train: str, meaning: str, by: str = "agent",
-              expect_rev: int | None = None, replace: bool = False) -> dict:
-    """Record what a label means for training, as read by an agent: keep or exclude the span, and why.
-    A label that already has an interpretation is refused unless replace=True; the old one goes to history."""
+              expect_rev: int | None = None, replace: bool = False, source: str = "agent",
+              job_id: str | None = None, agent_version: str | None = None) -> dict:
+    """Record what a label means for training: keep or exclude the span, and why, as a reading edit. An agent's
+    reading is a proposal a person accepts or rejects; a person's applies at once. A label that already has a reading
+    in effect or an open one is refused unless replace=True."""
     if train not in TRAIN_USE:
         raise ReviewError(f"train must be one of {TRAIN_USE}")
     if not isinstance(meaning, str) or not meaning.strip() or len(meaning) > 500:
         raise ReviewError("meaning must be 1 to 500 characters")
-    with transaction(run_path, expect_rev) as review:
-        edit = next((e for e in review["edits"] if e["id"] == edit_id), None)
-        if edit is None or edit["kind"] != "label" or edit["status"] != "accepted":
+    if not isinstance(by, str) or not by.strip() or len(by) > 100:
+        raise ReviewError("by must name who reads it in 1 to 100 characters")
+    if source not in SOURCES:
+        raise ReviewError(f"source must be one of {SOURCES}")
+    agent = source != "human"
+    with transaction(run_path, expect_rev=expect_rev) as box:
+        r = box["review"]
+        label = next((e for e in r["edits"] if e["edit_id"] == edit_id), None)
+        if label is None or label["kind"] != "label" or label["status"] != "accepted":
             raise ReviewError(f"no accepted label {edit_id!r} on this run")
-        if edit.get("interpretation"):
-            if not replace:
-                raise ReviewError(f"label {edit_id} was already interpreted as {edit['interpretation']['train']!r} "
-                                  f"by {edit['interpretation']['by']}; pass replace to change it")
-            edit.setdefault("interpretation_history", []).append(edit["interpretation"])
-        if not isinstance(by, str) or not by.strip() or len(by) > 100:
-            raise ReviewError("by must name the agent in 1 to 100 characters")
-        edit["interpretation"] = {"train": train, "meaning": meaning.strip(), "by": by.strip(), "at": _now()}
-    return edit
+        now = fmt.reading_in_effect(r, edit_id)
+        open_ = [e for e in r["edits"] if e["kind"] == "reading" and e["status"] == "proposed"
+                 and e["payload"]["label_id"] == edit_id]
+        if (now or open_) and not replace:
+            what = f"read as {now['train']!r} by {now['by']}" if now else f"has an open reading by {open_[0]['by']}"
+            raise ReviewError(f"label {edit_id} was already {what}; pass replace to add another")
+        e = _propose(box, kind="reading", payload={"label_id": edit_id, "train": train, "meaning": meaning.strip()},
+                     source=source, by=by.strip(), reason=meaning.strip() if agent else None,
+                     job_id=(job_id or _job_id()) if agent else None,
+                     agent_version=(agent_version or _agent_version()) if agent else None)
+    return e
 
 
 def active_edits(review: dict) -> list[dict]:
     """Accepted edits that are in effect: all of the multi-valued kinds, the latest accepted per single slot."""
-    acc = sorted((e for e in review["edits"] if e["status"] == "accepted"), key=lambda e: e.get("accepted_seq", 0))
-    latest = {}
-    for e in acc:
-        if e["kind"] not in MULTI:
-            latest[_slot(e)] = e
-    return [e for e in acc if e["kind"] in MULTI or latest.get(_slot(e)) is e]
-
-
-def _valid_reading(it) -> bool:
-    """The same limits interpret() enforces when it writes a reading."""
-    def text(v, hi):
-        return isinstance(v, str) and 0 < len(v.strip()) and len(v) <= hi
-    return (isinstance(it, dict) and it.get("train") in TRAIN_USE and text(it.get("meaning"), 500)
-            and text(it.get("by"), 100) and text(it.get("at"), 40))
-
-
-def _valid_edit(e: dict, manifest: dict) -> bool:
-    """One stored edit as this code writes it (used for history snapshots)."""
-    if not EDIT_ID.match(str(e.get("id"))) or e.get("kind") not in KINDS or e.get("status") not in STATUSES \
-            or e.get("source") not in SOURCES:
-        return False
-    try:
-        if check_payload(e["kind"], e.get("payload"), manifest) != e.get("payload"):
-            return False
-    except ReviewError:
-        return False
-    if e["status"] == "accepted" and (isinstance(e.get("accepted_seq"), bool) or not isinstance(e.get("accepted_seq"), int)):
-        return False
-    readings = ([e["interpretation"]] if e.get("interpretation") is not None else []) + e.get("interpretation_history", [])
-    return isinstance(e.get("interpretation_history", []), list) and all(_valid_reading(x) for x in readings)
+    return fmt.active_edits(review)
 
 
 def check_review(manifest: dict, review: dict) -> None:
-    """Reject a stored review that this code would never have written: fail closed before it shapes training."""
-    for k in ("rev", "seq"):
-        if isinstance(review.get(k), bool) or not isinstance(review.get(k), int) or review[k] < 0:
-            raise ReviewError(f"review {k} must be a non-negative integer")
-    ids = set()
-    for e in review["edits"]:
-        if e["id"] in ids:
-            raise ReviewError(f"edit id {e['id']} appears twice")
-        ids.add(e["id"])
-        try:
-            if check_payload(e["kind"], e["payload"], manifest) != e["payload"]:
-                raise ReviewError("payload is not in canonical form")
-        except ReviewError as err:
-            raise ReviewError(f"edit {e['id']} ({e['kind']}): {err}") from None
-        if e["status"] == "accepted" and (isinstance(e.get("accepted_seq"), bool)
-                                          or not isinstance(e.get("accepted_seq"), int)):
-            raise ReviewError(f"edit {e['id']} is accepted without an accepted_seq")
-        for k in ("reason", "by"):
-            if e.get(k) is not None and not isinstance(e[k], str):
-                raise ReviewError(f"edit {e['id']} has a non-text {k}")
-        hist = e.get("interpretation_history", [])
-        if not isinstance(hist, list):
-            raise ReviewError(f"edit {e['id']} has a malformed interpretation history")
-        current = [e["interpretation"]] if "interpretation" in e and e["interpretation"] is not None else []
-        for it in current + hist:
-            if e["kind"] != "label" or not _valid_reading(it):
-                raise ReviewError(f"edit {e['id']} has a malformed interpretation")
-    hist = review.get("history", [])
-    if not isinstance(hist, list) or len(hist) > HISTORY_LIMIT or len(json.dumps(hist)) > HISTORY_BYTES:
-        raise ReviewError("review history must be a list of at most 200 steps and 2 MB")
-    step_ids = set()
-    for h in hist:
-        if not isinstance(h, dict) or not EDIT_ID.match(str(h.get("id"))) or h["id"] in step_ids \
-                or not isinstance(h.get("what"), str) or not isinstance(h.get("at"), str) \
-                or isinstance(h.get("t"), bool) or not isinstance(h.get("t"), int) or h["t"] <= 0 \
-                or not isinstance(h.get("undone"), bool) or not isinstance(h.get("changes"), list) or not h["changes"]:
-            raise ReviewError("review history has a malformed step")
-        step_ids.add(h["id"])
-        touched = set()
-        for c in h["changes"]:
-            if not isinstance(c, dict) or not EDIT_ID.match(str(c.get("id"))) or c["id"] in touched:
-                raise ReviewError("review history has a malformed change")
-            touched.add(c["id"])
-            for snap in (c.get("before"), c.get("after")):
-                if snap is not None and (not isinstance(snap, dict) or snap.get("id") != c["id"]
-                                         or not _valid_edit(snap, manifest)):
-                    raise ReviewError("review history has a malformed snapshot")
-    seqs = [e["accepted_seq"] for e in review["edits"] if "accepted_seq" in e]
-    if any(isinstance(q, bool) or not isinstance(q, int) or not 1 <= q <= review["seq"] for q in seqs) \
-            or len(seqs) != len(set(seqs)):
-        raise ReviewError("accepted_seq values must be unique integers between 1 and the review seq")
+    """Refuse a review this logger would never have written, or one that does not fit the recorded run: fail closed
+    before it shapes training."""
+    with _errors():
+        fmt.check_review(review)
+        fmt.check_against_manifest(review, manifest)
+
+
+def _who(e: dict) -> str:
+    return e["by"] or ("person" if e["source"] == "human" else "agent")
 
 
 def effective(manifest: dict, review: dict) -> dict:
-    """The run as training should see it after the edits in effect."""
+    """The run as training should see it after the edits in effect. A format 1 review is read through the migration.
+    For a review migrated from format 1 the result is the same as format 1 gave, so batch lock digests still match."""
+    if fmt.is_format1(review):
+        with _errors():
+            review = fmt.migrate_format1(review, manifest)
     check_review(manifest, review)
-    act = active_edits(review)
-    single = {e["kind"]: e["payload"] for e in act if e["kind"] not in MULTI and e["kind"] not in ("step_boundary", "event_note", "segment_edge", "drive_boundary",
-                                                                  "segment_plan")}
+    act = fmt.active_edits(review)
+    single = {e["kind"]: e["payload"] for e in act if e["kind"] in ("outcome", "failure_start", "reject_run",
+                                                                  "failure_type", "name")}
     out = {
         "termination_reason": manifest["termination_reason"], "failure_mode": manifest.get("failure_mode"),
         "failure_start": None, "excludes": [e["payload"] for e in act if e["kind"] == "exclude"],
         "rejected": "reject_run" in single, "notes": [e["payload"] for e in act if e["kind"] == "note"],
         "subgoals": [dict(s) for s in manifest.get("subgoals", [])], "reviewed": review["reviewed"],
-        "labels": [{"id": e["id"], **e["payload"], "interpretation": e.get("interpretation")}
+        "labels": [{"id": e["edit_id"], **e["payload"], "interpretation": fmt.reading_in_effect(review, e["edit_id"])}
                    for e in act if e["kind"] == "label"],
         "drive_edits": [e["payload"] for e in act if e["kind"] == "drive_boundary"],
-        "event_notes": {e["payload"]["key"]: {"text": e["payload"]["text"], "id": e["id"],
-                                              "by": e.get("by") or ("person" if e["source"] == "human" else "agent")}
+        "event_notes": {e["payload"]["key"]: {"text": e["payload"]["text"], "id": e["edit_id"], "by": _who(e)}
                         for e in act if e["kind"] == "event_note"},
     }
-    who = {e["kind"]: (e.get("by") or ("person" if e["source"] == "human" else "agent")) for e in act}
+    # "segment_plan" is the key format 1 used for who set the segments; it is kept so digests stay the same
+    who = {("segment_plan" if e["kind"] == "segments" else e["kind"]): _who(e) for e in act}
     out["set_by"] = {k: who[k] for k in ("outcome", "failure_start", "segment_plan", "drive_boundary") if k in who}
     if "outcome" in single:
-        out["termination_reason"] = single["outcome"]["termination_reason"]
-        out["failure_mode"] = single["outcome"]["failure_mode"]
+        o = single["outcome"]
+        out["termination_reason"] = o["termination_reason"] or o["outcome"]
+        out["failure_mode"] = o["failure_mode"]
     if "failure_start" in single and out["termination_reason"] != "success":
         out["failure_start"] = single["failure_start"]["frame"]
+    if "failure_type" in single:                # only when set, so reviews without one keep their digest
+        out["failure_type"] = dict(single["failure_type"])
+    if "name" in single:
+        out["name"] = single["name"]["text"]
     steps = out["subgoals"]
     for e in act:
         if e["kind"] == "step_boundary":
@@ -620,9 +605,11 @@ def effective(manifest: dict, review: dict) -> dict:
             else:
                 hi = steps[i + 1]["start_frame"] if i + 1 < len(steps) else manifest["length"]
                 st["end_frame"] = max(min(p["frame"], hi), st["start_frame"] + 1)
-    plan = next((e["payload"]["segments"] for e in reversed(act) if e["kind"] == "segment_plan"), None)
+    plan = next((e["payload"]["segments"] for e in reversed(act) if e["kind"] == "segments"), None)
     if plan is not None:                         # a person's segments replace the recorded ones
         recorded = out["subgoals"]
+        named = [{"name": x["legacy_name"] if x["legacy_name"] is not None else x["subtask_id"],
+                  "start": x["start"], "end": x["end"]} for x in plan]
 
         def match(x):
             best = max(recorded, key=lambda s: min(s["end_frame"], x["end"]) - max(s["start_frame"], x["start"])
@@ -631,14 +618,14 @@ def effective(manifest: dict, review: dict) -> dict:
                 min(best["end_frame"], x["end"]) > max(best["start_frame"], x["start"]) else None
         out["subgoals"] = [{"name": x["name"], "start_frame": x["start"], "end_frame": x["end"],
                             "status": (match(x) or {}).get("status", "completed"),
-                            "reason": (match(x) or {}).get("reason")} for x in plan]
+                            "reason": (match(x) or {}).get("reason")} for x in named]
     return out
 
 
 def train_mask(manifest: dict, review: dict, control_modes: list[str]) -> np.ndarray:
-    """Per-frame bool: False for a rejected run, excluded spans, labels an agent read as "exclude", and, on a failed
-    run, every frame from the accepted
-    failure start up to the next takeover (the first expert or blend frame), or to the end if none follows."""
+    """Per-frame bool: False for a rejected run, excluded spans, labels whose reading in effect is "exclude", and, on
+    a failed run, every frame from the accepted failure start up to the next takeover (the first expert or blend
+    frame), or to the end if none follows."""
     n = manifest["length"]
     eff = effective(manifest, review)
     mask = np.ones(n, dtype=bool)
@@ -655,6 +642,20 @@ def train_mask(manifest: dict, review: dict, control_modes: list[str]) -> np.nda
         end = next((i for i in range(fs, n) if control_modes[i] in TAKEOVER_MODES), n)
         mask[fs:end] = False
     return mask
+
+
+def migrate_file(run_path: Path, manifest: dict | None = None, task: dict | None = None) -> bool:
+    """Rewrite one run's format 1 review.json as format 2 now, under the run's lock (normally this happens at the
+    next change). Returns True if the file was rewritten. A run in a locked batch is refused like any change."""
+    if file_format(run_path) != 1:
+        return False
+    with transaction(run_path, manifest) as box:
+        if task is not None:
+            raw = json.loads(_path(run_path).read_text())
+            box["review"] = fmt.migrate_format1(raw, manifest or store.read_manifest(Path(run_path)), task)
+        box["review"] = dict(box["review"])          # a new object: written even though nothing else changed
+        box["force"] = True
+    return True
 
 
 # ── AI feature: find idle frames ───────────────────────────────────────────────
@@ -736,27 +737,32 @@ def find_idle(root: Path, run_path: Path, manifest: dict, by: str = "dataop idle
         who = {"base": "policy driving", "expert": "rescue driving", "blend": "shared control", "none": "nobody driving",
                "unknown": "driver not recorded"}.get(who, f"{who} driving")
         items.append({"start": a, "end": b, "reason": f"no movement for {(b - a) / rate:.1f} s {where}, {who}"})
-    return add_suggestions(run_path, manifest, items, by, expect_rev=expect_rev)
+    return add_suggestions(run_path, manifest, items, by, expect_rev=expect_rev, agent_version=_agent_version())
 
 
-def suggest_cut(run_path: Path, manifest: dict, start: int, end: int, reason: str, by: str = "agent") -> dict:
+def suggest_cut(run_path: Path, manifest: dict, start: int, end: int, reason: str, by: str = "agent",
+                job_id: str | None = None, agent_version: str | None = None) -> dict:
     """Any agent's suggestion to cut frames [start, end): shown in the viewer for a person to cut or keep.
     Returns {"status", "edit"} like add_suggestions."""
-    return add_suggestions(run_path, manifest, [{"start": start, "end": end, "reason": reason}], by)[0]
+    return add_suggestions(run_path, manifest, [{"start": start, "end": end, "reason": reason}], by,
+                           job_id=job_id, agent_version=agent_version)[0]
 
 
 def list_labels(root: Path, only_uninterpreted: bool = False) -> list[dict]:
-    """Every label in effect, with what was recorded in its span, for an agent to read."""
+    """Every label in effect, with what was recorded in its span, for an agent to read. only_uninterpreted leaves out
+    labels with a reading in effect or an open reading proposal."""
     out = []
     for run_path, m in store.iter_manifests(Path(root), "committed"):
-        r = load(run_path)
-        eff = effective(m, r)
+        eff = effective(m, load(run_path, m))
         if not eff["labels"]:
             continue
         rate = m["action_schema"]["rate_hz"]
         modes = pq.read_table(run_path / "ticks.parquet", columns=["control_mode"]).column("control_mode").to_pylist()
+        r = load(run_path, m)
         for lb in eff["labels"]:
-            if only_uninterpreted and lb["interpretation"]:
+            open_ = sum(e["kind"] == "reading" and e["status"] == "proposed" and e["payload"]["label_id"] == lb["id"]
+                        for e in r["edits"])
+            if only_uninterpreted and (lb["interpretation"] or open_):
                 continue
             span = modes[lb["start"]:lb["end"]]
             out.append({
@@ -764,7 +770,7 @@ def list_labels(root: Path, only_uninterpreted: bool = False) -> list[dict]:
                 "start_frame": lb["start"], "end_frame": lb["end"],
                 "start_s": round(lb["start"] / rate, 2), "end_s": round(lb["end"] / rate, 2),
                 "text": lb["text"], "driver": lb["driver"], "segment": lb["segment"],
-                "interpretation": lb["interpretation"],
+                "interpretation": lb["interpretation"], "open_readings": open_,
                 "recorded": {
                     "control_modes": {k: span.count(k) for k in sorted(set(span))},
                     "steps": [s["name"] for s in eff["subgoals"]

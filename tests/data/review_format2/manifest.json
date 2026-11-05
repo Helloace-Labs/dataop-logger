@@ -1,0 +1,29 @@
+{
+ "failure_mode": null,
+ "length": 120,
+ "run_id": "5b0c6a8e-1f2d-4c3b-9a7e-2d4f6b8a0c1e",
+ "subgoals": [
+  {
+   "end_frame": 30,
+   "name": "reach",
+   "reason": null,
+   "start_frame": 0,
+   "status": "completed"
+  },
+  {
+   "end_frame": 70,
+   "name": " Grasp ",
+   "reason": null,
+   "start_frame": 30,
+   "status": "completed"
+  },
+  {
+   "end_frame": 110,
+   "name": "lift",
+   "reason": "slipped",
+   "start_frame": 70,
+   "status": "failed"
+  }
+ ],
+ "termination_reason": "failure"
+}

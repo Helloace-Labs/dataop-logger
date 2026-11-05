@@ -1,0 +1,2667 @@
+{
+ "cases": {
+  "every_kind": [
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000001",
+    "op": "propose",
+    "rev": 1,
+    "sha": "140c52a6618fe294418e221f0ccec7eec57d2316b2a1a923b0e7eb9b2b56e24a",
+    "step": "abc000000002"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000003",
+    "op": "propose",
+    "rev": 2,
+    "sha": "fa8160c98cac5d02ce0cce6d12d557f17e396f75f7b7389f2a22d29222f5d4dd",
+    "step": "abc000000004"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000005",
+    "op": "propose",
+    "rev": 3,
+    "sha": "c76c3276f5563bbcbb8611214e273938566afa811e5bf57a4f714f180e042c14",
+    "step": "abc000000006"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000007",
+    "op": "propose",
+    "rev": 4,
+    "sha": "12ddf62f5923b1d335286860bb7c99cf69ae1229f71b6889a1fd036b31fcc109",
+    "step": "abc000000008"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000009",
+    "op": "propose",
+    "rev": 5,
+    "sha": "132c0e85d696bb72176dca296ab94077e2667a4e5d02400073662a47fd9652c1",
+    "step": "abc00000000a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000000b",
+    "op": "propose",
+    "rev": 6,
+    "sha": "0d090e111104f2a74879f257bb77d57204fea9265b8cee0a7d38d310c20c6ad1",
+    "step": "abc00000000c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000000d",
+    "op": "propose",
+    "rev": 7,
+    "sha": "78f1deca225c95495825c69832b9ad7b63c6c0a53b05c83f3adca7937145a2f7",
+    "step": "abc00000000e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000000f",
+    "op": "propose",
+    "rev": 8,
+    "sha": "967c12e4d397f21132bf449c1cdd029e4282461d953e808f9ef95055e64cfd59",
+    "step": "abc000000010"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000011",
+    "op": "propose",
+    "rev": 9,
+    "sha": "a08f9036ead0825e58878c99a895d3fb690e919116dbd129ccab8b3f922e954b",
+    "step": "abc000000012"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000013",
+    "op": "propose",
+    "rev": 10,
+    "sha": "0f34dde9305569e688c568584d6fa6f4929b86cef49fe391e73819a8a5b8390e",
+    "step": "abc000000014"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000015",
+    "op": "propose",
+    "rev": 11,
+    "sha": "380fbb0d081e2d6ad013656d00d4f7420ac6b40a9e480ef3b70dfe96161ac1b8",
+    "step": "abc000000016"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000017",
+    "op": "propose",
+    "rev": 12,
+    "sha": "4910dd2a8c8bda358c353c01307c16fe4658378e5867c1742bbb1e2465be9c49",
+    "step": "abc000000018"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000019",
+    "op": "propose",
+    "rev": 13,
+    "sha": "4495184f188155e0daae33e1c819a8bae69f5cf216f06f1fc73453af458055df",
+    "step": "abc00000001a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000001b",
+    "op": "propose",
+    "rev": 14,
+    "sha": "612376c576703d2a08f237606d8088791c63d765dc1dcc196da5a652b75e914f",
+    "step": "abc00000001c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000001d",
+    "op": "propose",
+    "rev": 15,
+    "sha": "6c92b72172f98b6fe5db95b834ad1e3364224a55cdcd839f79fe19fcbb7457d2",
+    "step": "abc00000001e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000007",
+    "op": "accept",
+    "rev": 16,
+    "sha": "af86d272aeaffa674b655aeab0ba74d3ebb9f5a0f8ac00cb22796700b51a123f",
+    "step": "abc00000001f"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000001b",
+    "op": "accept",
+    "rev": 17,
+    "sha": "94414344572dd999104e736a3ba83104b4886a455e2b246c600a363764b956b3",
+    "step": "abc000000020"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000000b",
+    "op": "reject",
+    "rev": 18,
+    "sha": "1534048871e0cb35561b8044c119c76637b2572e3e4ac86bc104dcffc462ef66",
+    "step": "abc000000021"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000011",
+    "op": "accept",
+    "rev": 19,
+    "sha": "5c4489e907858e1f78953556dda7578cf879d4baa5bf6c8715663fcd62f4cfcd",
+    "step": "abc000000022"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": null,
+    "op": "set_reviewed",
+    "rev": 20,
+    "sha": "06b1909d70cbf6f6188db47cb8a4fbe3e441616208b2d9e701e7a3953f09ce51",
+    "step": null
+   }
+  ],
+  "history_cap": [
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000001",
+    "op": "propose",
+    "rev": 1,
+    "sha": "124f4f6d1868a51341efc8d0279345aeb4971ee52f04a2e4ef50e947ca32944e",
+    "step": "abc000000002"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000003",
+    "op": "propose",
+    "rev": 2,
+    "sha": "03913b2ed7357fc748ca11bfc62f9f3f704681fa316bbfcca685d325cff87aee",
+    "step": "abc000000004"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000005",
+    "op": "propose",
+    "rev": 3,
+    "sha": "f74ecd6f3e112595936cba408f67733f73eb388c5ce89b042fc499b5774ae036",
+    "step": "abc000000006"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000007",
+    "op": "propose",
+    "rev": 4,
+    "sha": "10b8f57ccbe7b116511d6756b97bf177059a74c299c635eb7ac46bccb75e8c5c",
+    "step": "abc000000008"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000009",
+    "op": "propose",
+    "rev": 5,
+    "sha": "688d4ce2e705630654e44a5188e5d89385861e7b4826ee030b57d575841ec726",
+    "step": "abc00000000a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000000b",
+    "op": "propose",
+    "rev": 6,
+    "sha": "92ced45a918d9c001a16f61d506f036af097a3f9a0532b62d82790bea11f8e84",
+    "step": "abc00000000c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000000d",
+    "op": "propose",
+    "rev": 7,
+    "sha": "d37f7bc332f14775a69b61d61eff52e5ae4d50442178f995d8d6846bed5ba200",
+    "step": "abc00000000e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000000f",
+    "op": "propose",
+    "rev": 8,
+    "sha": "6d241027aa2217b775df0ecab5b09b0523a173d8591c58d8ed019f4a40ccbdcc",
+    "step": "abc000000010"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000011",
+    "op": "propose",
+    "rev": 9,
+    "sha": "ac3dcbe5a07d050cddf8712670827156ab8ca470fb2d4c52cb8742c2144e2e4e",
+    "step": "abc000000012"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000013",
+    "op": "propose",
+    "rev": 10,
+    "sha": "a064a2c910c7e0ba912dfa8df47f47964bda43933482eed9e713dbd2fae99d0f",
+    "step": "abc000000014"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000015",
+    "op": "propose",
+    "rev": 11,
+    "sha": "6bde45b6fb5d210f08209ca64e5cae386320ead5878dfbc4e94ce2a6fbf5ae19",
+    "step": "abc000000016"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000017",
+    "op": "propose",
+    "rev": 12,
+    "sha": "36a133dff67eee1e4cf5dafc9712d8bc03a59be8ccfb193a0e2fa883abcc4726",
+    "step": "abc000000018"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000019",
+    "op": "propose",
+    "rev": 13,
+    "sha": "36c8fe6724e5feac037bd9ce216077d94cf2437458f45d8afa7d5176074eed36",
+    "step": "abc00000001a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000001b",
+    "op": "propose",
+    "rev": 14,
+    "sha": "df939991aaa4f178037c63709b31d2bfe3db393e4a371a5b4fa99b08e463b2b1",
+    "step": "abc00000001c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000001d",
+    "op": "propose",
+    "rev": 15,
+    "sha": "ae449cf9ff8c5477297ffbab7710a3d9c10596083cd59ca3237de5a26d07d358",
+    "step": "abc00000001e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000001f",
+    "op": "propose",
+    "rev": 16,
+    "sha": "0258682896f13bf47493b8e613cf1f9f78b64220fd09185f9d36d66f0c6934a9",
+    "step": "abc000000020"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000021",
+    "op": "propose",
+    "rev": 17,
+    "sha": "df522dfd3dff63913705a9c9b59768cb0807cc734405f1e22891076996b22b98",
+    "step": "abc000000022"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000023",
+    "op": "propose",
+    "rev": 18,
+    "sha": "c4e0045056e512ab13257df021e4582ed218202b88114268bef048b89f40150e",
+    "step": "abc000000024"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000025",
+    "op": "propose",
+    "rev": 19,
+    "sha": "3931a1650ec9bf4f5c91426767da875de0eec7776b75246fc7d4f756c7446ab2",
+    "step": "abc000000026"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000027",
+    "op": "propose",
+    "rev": 20,
+    "sha": "30d3512b90a56b3a1bcaeb1edb909891be6adb058806f3771047cc7f43616728",
+    "step": "abc000000028"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000029",
+    "op": "propose",
+    "rev": 21,
+    "sha": "8dc747d5dfb50012cc5ebe757dd4d8efc5d88b6d5a6ec79b8c6495a8d95c4ad5",
+    "step": "abc00000002a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000002b",
+    "op": "propose",
+    "rev": 22,
+    "sha": "d68da754c635e867ef8dc006bfdd63062e208a25f1cc189194585e5b7c95d910",
+    "step": "abc00000002c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000002d",
+    "op": "propose",
+    "rev": 23,
+    "sha": "ed948fe7295d99195da0b06c653141d37ba2c72c5e30103e89e9ea35a0af277c",
+    "step": "abc00000002e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000002f",
+    "op": "propose",
+    "rev": 24,
+    "sha": "4426e3612c3fa3a04e0e162c46ead6a9cbc7d29d28bfb8f1c74d9d07acd13e06",
+    "step": "abc000000030"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000031",
+    "op": "propose",
+    "rev": 25,
+    "sha": "5a4ab6ee02c5e96d2f954a435a9d3015406e806b4bb394b98b635271d9fb5541",
+    "step": "abc000000032"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000033",
+    "op": "propose",
+    "rev": 26,
+    "sha": "2aa7f997bfb6af94380e32687afd7ad6af8e4b06ce9b0faa981d6576b33e3709",
+    "step": "abc000000034"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000035",
+    "op": "propose",
+    "rev": 27,
+    "sha": "2219d88b3ce1dfeb2781dfeb4b38e0bc3304a62a0d76558d7c1754ca6d6a8d53",
+    "step": "abc000000036"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000037",
+    "op": "propose",
+    "rev": 28,
+    "sha": "515eadda8e5b34e9b32bd9196404ba2f1706c29590dc53a64a7e2f0da57f4761",
+    "step": "abc000000038"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000039",
+    "op": "propose",
+    "rev": 29,
+    "sha": "f396df7d2b80c37e85b64b5d34440fc0c986f16d8404f1cac47c63a2e0a45f24",
+    "step": "abc00000003a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000003b",
+    "op": "propose",
+    "rev": 30,
+    "sha": "0faa9a2d6cd6a7d84b9652341417fe11b2230cf0a15af1ee0b2674ed3b4d3b5b",
+    "step": "abc00000003c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000003d",
+    "op": "propose",
+    "rev": 31,
+    "sha": "84a035a4f85b235f2fa6720d58830bd0f147db16a7b6c9600c613d20cc3e8290",
+    "step": "abc00000003e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000003f",
+    "op": "propose",
+    "rev": 32,
+    "sha": "48820ba0642b668b3f64eaabffdad1d775cff0d9f7e3ac155bca3f5d58943efe",
+    "step": "abc000000040"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000041",
+    "op": "propose",
+    "rev": 33,
+    "sha": "35bcb3ab7e6bb663b820203796227a20d89c8ec88a415b1e8ae075d36584d957",
+    "step": "abc000000042"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000043",
+    "op": "propose",
+    "rev": 34,
+    "sha": "b3e3f0c0c6c67fc1d87edf6840e58f8e6b161046a1130815a4410d831c4af845",
+    "step": "abc000000044"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000045",
+    "op": "propose",
+    "rev": 35,
+    "sha": "5800ff721d0cbee1155154335b805cca12851873a4f8a8d8b81fe734f8041089",
+    "step": "abc000000046"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000047",
+    "op": "propose",
+    "rev": 36,
+    "sha": "83688c25bbeb44fb7b0c90d6ba7504688a7e39ba2ed3017a90d2ec8016e91256",
+    "step": "abc000000048"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000049",
+    "op": "propose",
+    "rev": 37,
+    "sha": "234b4855866400792cffa3d9d6db1fcd12f54eef8ed1c0214aeb400afd5941ee",
+    "step": "abc00000004a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000004b",
+    "op": "propose",
+    "rev": 38,
+    "sha": "f4f3161404431221c3554f72b293b074d2270b6eb17953b0d7cbc179c4626594",
+    "step": "abc00000004c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000004d",
+    "op": "propose",
+    "rev": 39,
+    "sha": "284651fd4424cdc042c5e4837c183f27597cb27e78b2955796943bc90b32cfea",
+    "step": "abc00000004e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000004f",
+    "op": "propose",
+    "rev": 40,
+    "sha": "b5ee19bcc7afc03a904de678a0a88b6926a99df751bbfa547263fd88325d8ebf",
+    "step": "abc000000050"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000051",
+    "op": "propose",
+    "rev": 41,
+    "sha": "de3dd60227eb7aa2ec2970ad678042fe40b36a852a3712204a38b7001812ad0a",
+    "step": "abc000000052"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000053",
+    "op": "propose",
+    "rev": 42,
+    "sha": "fd9dba0b1ea0f6b420cfbe6c61706d30147b6a1c67b22b05cf225b15dea54581",
+    "step": "abc000000054"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000055",
+    "op": "propose",
+    "rev": 43,
+    "sha": "9e96cbaee47d2a7d116e8ebd947545c38da2e6c9c060cce73e091af1d3dfdf3b",
+    "step": "abc000000056"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000057",
+    "op": "propose",
+    "rev": 44,
+    "sha": "e225ade3cf3e8c02366f24f8beb8f0feb9b1b75ed4f99a5e67f9438aeb18d8e4",
+    "step": "abc000000058"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000059",
+    "op": "propose",
+    "rev": 45,
+    "sha": "2b3d9c79aafff945c7f2633a37889896f7ea2c93eb059b32300d975090ba8c21",
+    "step": "abc00000005a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000005b",
+    "op": "propose",
+    "rev": 46,
+    "sha": "3515c9f48de935674039517b1aa3e3b75e1ca233361309c3a10182134da0aa7d",
+    "step": "abc00000005c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000005d",
+    "op": "propose",
+    "rev": 47,
+    "sha": "7dcd87b3893c8430a9753359f27521bf6fae17536e579ab9c0fa72619193a802",
+    "step": "abc00000005e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000005f",
+    "op": "propose",
+    "rev": 48,
+    "sha": "92bbb7995a6f47bb2c303f0c63ecd5dcd126250bac51b55d9de7aebb40b1a32e",
+    "step": "abc000000060"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000061",
+    "op": "propose",
+    "rev": 49,
+    "sha": "6c17348c4f27decfbf331be0ea7d72482bd2ea8a785c465e23825e7ec90292ea",
+    "step": "abc000000062"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000063",
+    "op": "propose",
+    "rev": 50,
+    "sha": "a140c2e33bf65fab914cb4106bb998589dbd52eff6c5900f81fd1d3352c34021",
+    "step": "abc000000064"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000065",
+    "op": "propose",
+    "rev": 51,
+    "sha": "be0922d3d203ecebc7021334b28f103368e0c3e22fcea0d952da3ecffc49900d",
+    "step": "abc000000066"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000067",
+    "op": "propose",
+    "rev": 52,
+    "sha": "55fcfd69a1c6ceea62f00266512dd382091a272b87f41df39d82836933fe45dd",
+    "step": "abc000000068"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000069",
+    "op": "propose",
+    "rev": 53,
+    "sha": "4d953c8458ba6088c8131a22bcfe3ccbb4ed34aa7115244708c39adf167410fd",
+    "step": "abc00000006a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000006b",
+    "op": "propose",
+    "rev": 54,
+    "sha": "6983c7c12df278e9f1a42e645080d2c418aeb8b2dd49821b1c8bd6df2d2bc9eb",
+    "step": "abc00000006c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000006d",
+    "op": "propose",
+    "rev": 55,
+    "sha": "6640733ecf1f1a875e64adaf238a879d9ed403c71159bc58839905f3d6a74027",
+    "step": "abc00000006e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000006f",
+    "op": "propose",
+    "rev": 56,
+    "sha": "d1e33961ad05e26a10e99e01c83edac545ce9704758aa08b2dadae1f79e4fd03",
+    "step": "abc000000070"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000071",
+    "op": "propose",
+    "rev": 57,
+    "sha": "3d1530c64f1db715acd079e4fc1c094dbb2f9fe9106229738f705f2d096f7a49",
+    "step": "abc000000072"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000073",
+    "op": "propose",
+    "rev": 58,
+    "sha": "6d93d225eb459b8ad2e750e25154191a1d8bf1e30f95a5c32007ae808af501b8",
+    "step": "abc000000074"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000075",
+    "op": "propose",
+    "rev": 59,
+    "sha": "091137849e758418f2470a2c9b19d6f6e60beabb0ddeb9b3243a96dc26ed68dd",
+    "step": "abc000000076"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000077",
+    "op": "propose",
+    "rev": 60,
+    "sha": "f0fec6708a9cfd0c7a700815cd9f86a755ff786ba78da551a6a3c028ffb96b32",
+    "step": "abc000000078"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000079",
+    "op": "propose",
+    "rev": 61,
+    "sha": "64536784a0aae7efcaed63009b2a223fa1e4a01a0718eb2c9c387c3e9bb2da6a",
+    "step": "abc00000007a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000007b",
+    "op": "propose",
+    "rev": 62,
+    "sha": "73543b467e7b16f7c0462dd2b20eb4e11a4170e87c6116a0ccb44d4f8ee9b949",
+    "step": "abc00000007c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000007d",
+    "op": "propose",
+    "rev": 63,
+    "sha": "10a540c3b304f7b93e9cca9e86ae0963c9572195332b78213389f412cde2fd9c",
+    "step": "abc00000007e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000007f",
+    "op": "propose",
+    "rev": 64,
+    "sha": "f9eaf7082891fbda5c97b15a29a1a2cc379d60fcbcc5a0ae49235f9854f6f779",
+    "step": "abc000000080"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000081",
+    "op": "propose",
+    "rev": 65,
+    "sha": "79bb43a0d1c7f145e672ed56c0a7713db61b1b1fa090ff0c4b6a001826248700",
+    "step": "abc000000082"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000083",
+    "op": "propose",
+    "rev": 66,
+    "sha": "f0210ede67dbe63a50c2a9b863daad36d397331aa1c4c90c7faa80bd09ae8254",
+    "step": "abc000000084"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000085",
+    "op": "propose",
+    "rev": 67,
+    "sha": "1b6aac08f3a1368efc597e05187dda24f7c780c9f6d9c66b87be9a3afdc93a68",
+    "step": "abc000000086"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000087",
+    "op": "propose",
+    "rev": 68,
+    "sha": "b8221b7a1a966310c7cfff53d4e1ebc58b3056f02d465d66b2ea38b502240b9f",
+    "step": "abc000000088"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000089",
+    "op": "propose",
+    "rev": 69,
+    "sha": "cac395b097317baf1bd01084703849a0d0d3ab95766c781b1868f8f211a03fdb",
+    "step": "abc00000008a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000008b",
+    "op": "propose",
+    "rev": 70,
+    "sha": "ae3fb021019e372806d571d1ad6d689b4d01c08a7edb1e05cded419b149e2f93",
+    "step": "abc00000008c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000008d",
+    "op": "propose",
+    "rev": 71,
+    "sha": "b271c47355ab32aeb9345cf57c59dc3d60d52e92b39395ac357629ff050300b6",
+    "step": "abc00000008e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000008f",
+    "op": "propose",
+    "rev": 72,
+    "sha": "c8183dc453825360056fad9da8dba0640bb3bb5762981afdfa19088b0983ef4f",
+    "step": "abc000000090"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000091",
+    "op": "propose",
+    "rev": 73,
+    "sha": "328aee1aa5e50f3605086daf10c46e41001300b5ede5ea975ff7234af0efd372",
+    "step": "abc000000092"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000093",
+    "op": "propose",
+    "rev": 74,
+    "sha": "1ca284109c97f5aa3cc88454ce8eb3d113adf384b61d7275ec6a6e8ed6bb2e19",
+    "step": "abc000000094"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000095",
+    "op": "propose",
+    "rev": 75,
+    "sha": "26409712c55e574450fe06f7e208c97e3bec610ccb8c73b1ed0cffe7b239570f",
+    "step": "abc000000096"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000097",
+    "op": "propose",
+    "rev": 76,
+    "sha": "637f1fd8638e3c9fb069f0b8eaa838705d120d5c1ff72f5fb9f50db4c38f8883",
+    "step": "abc000000098"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000099",
+    "op": "propose",
+    "rev": 77,
+    "sha": "628e3a8675d51cd91744487da7b00ba3b37a7ca0173a0a412f122816443fef8a",
+    "step": "abc00000009a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000009b",
+    "op": "propose",
+    "rev": 78,
+    "sha": "8ef49e168ad4aacd308055507af03ddab050d151b130ada883444098f644fa25",
+    "step": "abc00000009c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000009d",
+    "op": "propose",
+    "rev": 79,
+    "sha": "df245ab95998a280d21d1ac7c9f271ebb8a259105970d81c99a5006b950de3d6",
+    "step": "abc00000009e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000009f",
+    "op": "propose",
+    "rev": 80,
+    "sha": "05a31c3a2d5973b8df2423c06ba74442e7238c73eb468bb4d521c85c53799591",
+    "step": "abc0000000a0"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000a1",
+    "op": "propose",
+    "rev": 81,
+    "sha": "ed2d4cbe3b524a55633c1989c299f9745dd6919f13724fa36b54e1f845536ce7",
+    "step": "abc0000000a2"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000a3",
+    "op": "propose",
+    "rev": 82,
+    "sha": "267d622c7e96f0d483e5e553771ac05b96a087382bfcac933a1c5e32b49225e2",
+    "step": "abc0000000a4"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000a5",
+    "op": "propose",
+    "rev": 83,
+    "sha": "e499c3938ede6eb15af1d4624eff14a3a4d4e537b2e134695c3e5682ded4fd3d",
+    "step": "abc0000000a6"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000a7",
+    "op": "propose",
+    "rev": 84,
+    "sha": "30474e496d3f19f5d612ed1c3b67711c19d9dfb9ffd3878908f3d71236e3b610",
+    "step": "abc0000000a8"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000a9",
+    "op": "propose",
+    "rev": 85,
+    "sha": "847aaa1104a5c4d2047304dfb51a8e00bf2c40e070cbb19be181846fdcd36c1b",
+    "step": "abc0000000aa"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000ab",
+    "op": "propose",
+    "rev": 86,
+    "sha": "84efce99d6d3dcc6ae44f70b3038999e239bb796ebe111901614401ffa718623",
+    "step": "abc0000000ac"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000ad",
+    "op": "propose",
+    "rev": 87,
+    "sha": "2c5d4ba9ec0e36bbee419e79ef3e3329c343b988fa80905a389fd6faf716766f",
+    "step": "abc0000000ae"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000af",
+    "op": "propose",
+    "rev": 88,
+    "sha": "2b1be6f4d8b858b2262ee88f89fbae8f864c5f24679129cacad45496930b3545",
+    "step": "abc0000000b0"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000b1",
+    "op": "propose",
+    "rev": 89,
+    "sha": "55783eca51d1cfcffe990bfb941a90613fa781e9b44c349c220d936649321fe4",
+    "step": "abc0000000b2"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000b3",
+    "op": "propose",
+    "rev": 90,
+    "sha": "dd3ceb57254b1036810ce4ebd1c426e6947bad098f33bdfbba9ccc3c1eb76c2e",
+    "step": "abc0000000b4"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000b5",
+    "op": "propose",
+    "rev": 91,
+    "sha": "b0fcc3742831308e8dbc24cd8ce0237a78eb6fbed869bc502a6afacbb252e94a",
+    "step": "abc0000000b6"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000b7",
+    "op": "propose",
+    "rev": 92,
+    "sha": "db3326ce4ea88982c5b1191a8d04923efbb09ae408325ff1d84551d448c5e7f6",
+    "step": "abc0000000b8"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000b9",
+    "op": "propose",
+    "rev": 93,
+    "sha": "60015ccfbc43eaea7b8dac5d74189c1030e0f77ccc16d413914f0ea9683a1df9",
+    "step": "abc0000000ba"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000bb",
+    "op": "propose",
+    "rev": 94,
+    "sha": "6198d06f33c0f7986eb28e71875587ab7dbb94e89ba48e84c978e191b7ff5caf",
+    "step": "abc0000000bc"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000bd",
+    "op": "propose",
+    "rev": 95,
+    "sha": "befe3304a7c199e0fcfe0167fab19f77df457bfb731ce8428b45a730964828ed",
+    "step": "abc0000000be"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000bf",
+    "op": "propose",
+    "rev": 96,
+    "sha": "79e571e115508f90dcc4f850bdc4351adb2cb51c4a7e5f7b0ef13826a296649b",
+    "step": "abc0000000c0"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000c1",
+    "op": "propose",
+    "rev": 97,
+    "sha": "63da805c3532c3f39217e6d0c7e275441538a807c1570a7ebd2b8381251d4c79",
+    "step": "abc0000000c2"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000c3",
+    "op": "propose",
+    "rev": 98,
+    "sha": "018a9a68568e6f5e87bfd21ad02d75a0a694b5b7103a3e3313332fb74678a7cc",
+    "step": "abc0000000c4"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000c5",
+    "op": "propose",
+    "rev": 99,
+    "sha": "b0575e2155f60e2a1dad3c345abf034e15d8101175fcbdcf77fa4c6985a6eb85",
+    "step": "abc0000000c6"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000c7",
+    "op": "propose",
+    "rev": 100,
+    "sha": "2c1caaf19985eff3f2dc8afd34a2d027dd5d1b31545458e87a11838283441397",
+    "step": "abc0000000c8"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000c9",
+    "op": "propose",
+    "rev": 101,
+    "sha": "35bd3d0a6568add566cb41585a9a0103bcf2a6aaebc6cefd31253a42e640bff2",
+    "step": "abc0000000ca"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000cb",
+    "op": "propose",
+    "rev": 102,
+    "sha": "b5c08974e7a314821c1026f0f88f328aa5152bf5a8522f2cffc9a692a1623629",
+    "step": "abc0000000cc"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000cd",
+    "op": "propose",
+    "rev": 103,
+    "sha": "7770ca3718393099bb03a4977b502e4eed4cb37e252af6c66077e689ec716acc",
+    "step": "abc0000000ce"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000cf",
+    "op": "propose",
+    "rev": 104,
+    "sha": "46e36e4da017225aea56a8b123c15c52764f8bd8f2fab1922dee42dc12d0415c",
+    "step": "abc0000000d0"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000d1",
+    "op": "propose",
+    "rev": 105,
+    "sha": "e0c9ab0a3c018c62bd559bc7f52f3b2f8fa75d22ef36384a1a43d8e0f84b224a",
+    "step": "abc0000000d2"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000d3",
+    "op": "propose",
+    "rev": 106,
+    "sha": "3116f47b3ad11b79de03d0969b08b3b07b4a3436356e1c866c2cb0297ae2c1d9",
+    "step": "abc0000000d4"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000d5",
+    "op": "propose",
+    "rev": 107,
+    "sha": "8d8ed18b2febbaa071a2c5912ec4a114cabe725f064cf9e78dcf1bc6aa6d55db",
+    "step": "abc0000000d6"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000d7",
+    "op": "propose",
+    "rev": 108,
+    "sha": "d2d060422a585ef47439e09f48fc1fbdc62f398c2de186e9cd45c12d33cdff04",
+    "step": "abc0000000d8"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000d9",
+    "op": "propose",
+    "rev": 109,
+    "sha": "261cb4f86824b4de9376b0d7022b78d295be7c6e660de2d1c3dd246500f63048",
+    "step": "abc0000000da"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000db",
+    "op": "propose",
+    "rev": 110,
+    "sha": "596aec7708e724308690166063d706ec951e4860222c8288fd3d428e7d3684a9",
+    "step": "abc0000000dc"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000dd",
+    "op": "propose",
+    "rev": 111,
+    "sha": "1a81081d95b4da53c33085c93d6fc6ebf72f1c87ec0941bb0e1e938e8e188f1b",
+    "step": "abc0000000de"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000df",
+    "op": "propose",
+    "rev": 112,
+    "sha": "84535e198b32aa18ab943f9eb0b8a5a2874b9a770846570eec9ab8edd66cf017",
+    "step": "abc0000000e0"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000e1",
+    "op": "propose",
+    "rev": 113,
+    "sha": "c83553224592cbafec8c0733bde7b9dc526b758d36e5b6ab288c0769be5b4318",
+    "step": "abc0000000e2"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000e3",
+    "op": "propose",
+    "rev": 114,
+    "sha": "916c0c64077393c2444d03266c8d7d82ed02cfade6e542c4f329baf6691c6675",
+    "step": "abc0000000e4"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000e5",
+    "op": "propose",
+    "rev": 115,
+    "sha": "e5da4c48bc780dcbd356e387eaed7d214a73967206c03ea6352e6cf505441fc1",
+    "step": "abc0000000e6"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000e7",
+    "op": "propose",
+    "rev": 116,
+    "sha": "f85170777dce804c2ca172c971f3078802dba2c275dc2c05e7e2ae4b7a8b662f",
+    "step": "abc0000000e8"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000e9",
+    "op": "propose",
+    "rev": 117,
+    "sha": "6c6c25404c72005c975988946c721f19b047900e6e6412c43ceb5e25cf094fe1",
+    "step": "abc0000000ea"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000eb",
+    "op": "propose",
+    "rev": 118,
+    "sha": "8ee685979edcd83bcfa3bf303dcf316b2578664340a94a2bb04d18b3666874e6",
+    "step": "abc0000000ec"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000ed",
+    "op": "propose",
+    "rev": 119,
+    "sha": "5699b6370bddd1333ea999b0f5fb617b8f81aea025911b0e59a94d6ce02c3ea5",
+    "step": "abc0000000ee"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000ef",
+    "op": "propose",
+    "rev": 120,
+    "sha": "821a24b8879dd392f952ddc701bcf9fb6f0b814e9734aaa88cb2a4ace4725e8f",
+    "step": "abc0000000f0"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000f1",
+    "op": "propose",
+    "rev": 121,
+    "sha": "4515eb3647b6ac9763be386443a21fa441116093b5b33fe7e428a954a2a62303",
+    "step": "abc0000000f2"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000f3",
+    "op": "propose",
+    "rev": 122,
+    "sha": "22d90c0bb9a9e2392276479cb7361631a3127fd6cf86651667f3954434b5e997",
+    "step": "abc0000000f4"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000f5",
+    "op": "propose",
+    "rev": 123,
+    "sha": "b9c986e66fca7165ac5dc8c8248f26e49a3d37778b67281539d8e8513048e760",
+    "step": "abc0000000f6"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000f7",
+    "op": "propose",
+    "rev": 124,
+    "sha": "1972095c895092454a436091a573f4b4dfc73820b953ed32927bde4207248d78",
+    "step": "abc0000000f8"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000f9",
+    "op": "propose",
+    "rev": 125,
+    "sha": "49eced7e34cb609b7fe129b8a28df7e7db52f11e88c9a73f2924e0897583ff23",
+    "step": "abc0000000fa"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000fb",
+    "op": "propose",
+    "rev": 126,
+    "sha": "959f3ad186edf5aecfae66fdc6e7e4cc91ab6346767f9438e9c3333154826f4b",
+    "step": "abc0000000fc"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000fd",
+    "op": "propose",
+    "rev": 127,
+    "sha": "f2ceeb1ed1bc4e8cb37686d752b12d3160f93cba80d373d130d450bea3384456",
+    "step": "abc0000000fe"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc0000000ff",
+    "op": "propose",
+    "rev": 128,
+    "sha": "d4f5837220556c6a2df000a6298c540637aa698f2bd6768ea4ac0d1bd4efefa6",
+    "step": "abc000000100"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000101",
+    "op": "propose",
+    "rev": 129,
+    "sha": "385358c37a7cf403df0cce78e129c4be38a349675c2d39ae02c5f14c9c65b05d",
+    "step": "abc000000102"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000103",
+    "op": "propose",
+    "rev": 130,
+    "sha": "8a458d756a7b753b2c261b7599eb757eeeea666d87a4dd929cdf463d097fe443",
+    "step": "abc000000104"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000105",
+    "op": "propose",
+    "rev": 131,
+    "sha": "e0eb293a42a9b198b9a2ea556257fb463cd8b85574339b4e412c9fa5b0d695ef",
+    "step": "abc000000106"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000107",
+    "op": "propose",
+    "rev": 132,
+    "sha": "9e233fe5fb4370d5569b6f5b44f06f3ce8ae308b575e221d8e09214a24474bf3",
+    "step": "abc000000108"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000109",
+    "op": "propose",
+    "rev": 133,
+    "sha": "163e4d32844f0a41eb6a774e42205d095a6f4e0bfddde3c0e04024d00c82cc5b",
+    "step": "abc00000010a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000010b",
+    "op": "propose",
+    "rev": 134,
+    "sha": "58c8d3bb973a9ccf8952b525fdb84f0f80deba387da84f98dd9e3a04eb66d4fe",
+    "step": "abc00000010c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000010d",
+    "op": "propose",
+    "rev": 135,
+    "sha": "84e53025855e3b3fc60341b6b7d74831371fa9d4a1278235a150818e57d7308e",
+    "step": "abc00000010e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000010f",
+    "op": "propose",
+    "rev": 136,
+    "sha": "254b96030b8efd96560783ecf309ed221c91230212e25ddf2b14e6168a25a84e",
+    "step": "abc000000110"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000111",
+    "op": "propose",
+    "rev": 137,
+    "sha": "ce620f775f4adb5b0e5cbc1be4a30908c61d1bd744976fe7c2ecd12a8f8a72bd",
+    "step": "abc000000112"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000113",
+    "op": "propose",
+    "rev": 138,
+    "sha": "6f09fd8dbe5e0f9b47515fbc1d823f4fdfb4669ff59da36bf69ffdae71013284",
+    "step": "abc000000114"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000115",
+    "op": "propose",
+    "rev": 139,
+    "sha": "e7fe58ce16f02eac372be837d7ce07404e8e2ada4a8cecbda49cdc10c4e59fe2",
+    "step": "abc000000116"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000117",
+    "op": "propose",
+    "rev": 140,
+    "sha": "cb66cefe4b777329decd74c9c15bf14df12d0aa87774c290a051fa716844c9e2",
+    "step": "abc000000118"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000119",
+    "op": "propose",
+    "rev": 141,
+    "sha": "360c0e62c574f22743160809efe4e37402f855dd73a34dfaf314df01f2d032ca",
+    "step": "abc00000011a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000011b",
+    "op": "propose",
+    "rev": 142,
+    "sha": "5d6938c067f1126961f29cbbf865d0f000f983941f042388c4c11ead32f56bd5",
+    "step": "abc00000011c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000011d",
+    "op": "propose",
+    "rev": 143,
+    "sha": "ba31229f4dfe77dcb609b7c330f5dd77baef838a3430f1affad006725f8b9940",
+    "step": "abc00000011e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000011f",
+    "op": "propose",
+    "rev": 144,
+    "sha": "15a4b42d38ea1f1ae44c52b1f5f969c600e0b80087d31c246988aa0e86f3cae0",
+    "step": "abc000000120"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000121",
+    "op": "propose",
+    "rev": 145,
+    "sha": "211c5d0b520330e3f4bb87560a34846b504d4593d80ac01788a564b89bb80c8a",
+    "step": "abc000000122"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000123",
+    "op": "propose",
+    "rev": 146,
+    "sha": "b8eba101c82cef37a90538aa63388cb1bda141f4cee467bfbd818a209a90e29c",
+    "step": "abc000000124"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000125",
+    "op": "propose",
+    "rev": 147,
+    "sha": "08daa8c096514b69b7cad08469012217a555006c109450a4d2c04b3ac801eeea",
+    "step": "abc000000126"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000127",
+    "op": "propose",
+    "rev": 148,
+    "sha": "435a49d73e09043302958034b512183bc37de8c9e3cba1d12b7467e41dc4ff0e",
+    "step": "abc000000128"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000129",
+    "op": "propose",
+    "rev": 149,
+    "sha": "8c1cbbfc8c6a6c8a00c58f5376a7d9692713d2fab930e0c9e7707da0774cf238",
+    "step": "abc00000012a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000012b",
+    "op": "propose",
+    "rev": 150,
+    "sha": "b1c73735a906b81ae7a5bd1c1a47aa61ef8ced75ed13167c480d6785e164f808",
+    "step": "abc00000012c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000012d",
+    "op": "propose",
+    "rev": 151,
+    "sha": "dedb85b465b35ff2844c9bdcb46709f97ba9ed2b1aa3345792db108b38a2b00d",
+    "step": "abc00000012e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000012f",
+    "op": "propose",
+    "rev": 152,
+    "sha": "b54bbe5196ff3a53091e0397fac9d9b43f271ee0ef8521255315612e34068951",
+    "step": "abc000000130"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000131",
+    "op": "propose",
+    "rev": 153,
+    "sha": "6a252a9a6243dc9048be47cde8d0bc7083a1dc87de2d289082217b61078a7008",
+    "step": "abc000000132"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000133",
+    "op": "propose",
+    "rev": 154,
+    "sha": "d964d286b7443861e1083389e5bf7f47e074258cef58fded4a15698dfb6ae06d",
+    "step": "abc000000134"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000135",
+    "op": "propose",
+    "rev": 155,
+    "sha": "ebe1248b53849957f5343dbbe54f811fc71c01f9a81b670f0acd020e04cf5feb",
+    "step": "abc000000136"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000137",
+    "op": "propose",
+    "rev": 156,
+    "sha": "60bab2ea678ffd2be3a68c4a57d58d6d59f3f7a8997ec5aab4aa2cb649cc5aaa",
+    "step": "abc000000138"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000139",
+    "op": "propose",
+    "rev": 157,
+    "sha": "dfd803b2768dc9dfd0be37dbdf45351a628adffb877faf647ffa39a660808cb7",
+    "step": "abc00000013a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000013b",
+    "op": "propose",
+    "rev": 158,
+    "sha": "491db0a083847cd25f09d714e4b448f85999a55a455010dc4cb7155282603200",
+    "step": "abc00000013c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000013d",
+    "op": "propose",
+    "rev": 159,
+    "sha": "c494135264b04339d49ebf2ab4abff4ddaaff0c698f4e27cbc0fc7fa5a382451",
+    "step": "abc00000013e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000013f",
+    "op": "propose",
+    "rev": 160,
+    "sha": "648516b41a6bdd263184fe02aac051b247c9617a795a748819c53d0ef503d1ff",
+    "step": "abc000000140"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000141",
+    "op": "propose",
+    "rev": 161,
+    "sha": "4ee0214270442af8b1554a9047703acf00e9fe31508592bab80cc5a8c5c597e7",
+    "step": "abc000000142"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000143",
+    "op": "propose",
+    "rev": 162,
+    "sha": "a21580b3b1f590d479f6949048112afdda51bbf24ba2b2fa16862964add5aeae",
+    "step": "abc000000144"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000145",
+    "op": "propose",
+    "rev": 163,
+    "sha": "435c7ea3a3aafa31632f8d906e3d46f2d2e923b1e9bcd174144e9d363f20bf53",
+    "step": "abc000000146"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000147",
+    "op": "propose",
+    "rev": 164,
+    "sha": "878e18f4a66a6bc60f073df088765532598a4b593b7b690e624ed93efc9b8ec8",
+    "step": "abc000000148"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000149",
+    "op": "propose",
+    "rev": 165,
+    "sha": "a819d02f05a699cb95e53ea08bdc80bb88cbd23d1a8f6a66a49cfbb2e78b4e79",
+    "step": "abc00000014a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000014b",
+    "op": "propose",
+    "rev": 166,
+    "sha": "8d2fc8ce7d6252c845ce7d8e545e546828aad5245a52f9f3ec43392ace4a336c",
+    "step": "abc00000014c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000014d",
+    "op": "propose",
+    "rev": 167,
+    "sha": "2ba54665eb639325163d32ef490e38a296246da552c6cca97beb3250027f47b1",
+    "step": "abc00000014e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000014f",
+    "op": "propose",
+    "rev": 168,
+    "sha": "6ba9d577023a58e9851eda60e1e90c129bd7e733488c24c11854608696554305",
+    "step": "abc000000150"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000151",
+    "op": "propose",
+    "rev": 169,
+    "sha": "cefdaf069433ed5bb65460458a569cfeea2019ba08b714c5c8a80e9ee465de76",
+    "step": "abc000000152"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000153",
+    "op": "propose",
+    "rev": 170,
+    "sha": "550dd5793ab8d1d2fdea3509e52f75cc1cf553f876678e14cc10e3476d08aced",
+    "step": "abc000000154"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000155",
+    "op": "propose",
+    "rev": 171,
+    "sha": "4bb092dbaa83121b6d53117f1ca3759209000eeb50349c9119815d037ed0201a",
+    "step": "abc000000156"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000157",
+    "op": "propose",
+    "rev": 172,
+    "sha": "df47f34346db13ebc3458c754786f63a49a9fdb3b9eca2a1f1794e422a2f50fb",
+    "step": "abc000000158"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000159",
+    "op": "propose",
+    "rev": 173,
+    "sha": "5fe5ed949860a102e71c526931bcc253ec68e65c2fc351988125aba952ed6d8c",
+    "step": "abc00000015a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000015b",
+    "op": "propose",
+    "rev": 174,
+    "sha": "dd3098c158c55ca93cba903eebd0869961f6936da72aa12d4c3fda2d1930f8e2",
+    "step": "abc00000015c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000015d",
+    "op": "propose",
+    "rev": 175,
+    "sha": "ac9df74bae0182bcabc82809ac7dc92766f4a24a2318bfdd1b8d3c2c79918c38",
+    "step": "abc00000015e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000015f",
+    "op": "propose",
+    "rev": 176,
+    "sha": "e78c7c5ecc1cc7f86277b9173db3399f7f8f069609beb89bb07f00223d5eeecb",
+    "step": "abc000000160"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000161",
+    "op": "propose",
+    "rev": 177,
+    "sha": "ca4f1325bf183b11fd67933f83a3ffe84d95dbe1ab41a2a85761c906c9467fb5",
+    "step": "abc000000162"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000163",
+    "op": "propose",
+    "rev": 178,
+    "sha": "0d0cfb38916a3717e32a98435a46c58bdf25e52edffb2f231e2416f53d49c871",
+    "step": "abc000000164"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000165",
+    "op": "propose",
+    "rev": 179,
+    "sha": "6469826c97d1435cc87030bd90a02e9f97f4a69a072e0c4006c4f1197429b85b",
+    "step": "abc000000166"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000167",
+    "op": "propose",
+    "rev": 180,
+    "sha": "e02730169f3d94c7a356400480bed47ce55e0338d11a0393e6033c9ac9f9f79c",
+    "step": "abc000000168"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000169",
+    "op": "propose",
+    "rev": 181,
+    "sha": "95ba1ae8f1e6f0f3305f431bc00a5c9d676a4e29a6d50af0eb32013e1bb92ab3",
+    "step": "abc00000016a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000016b",
+    "op": "propose",
+    "rev": 182,
+    "sha": "8d98088030b51aa2b8f101abbb3edc83d81d9d6139c7a2155aa82ebeee5cd8d6",
+    "step": "abc00000016c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000016d",
+    "op": "propose",
+    "rev": 183,
+    "sha": "18f718d6532bb80193f38580d4787267bedb5fcd6d96b01f1aee8cfb854b63e1",
+    "step": "abc00000016e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000016f",
+    "op": "propose",
+    "rev": 184,
+    "sha": "da1d2bc851a9c54e9662963590cfbd681e0e3ba456a87dd94e7fd360ce009e44",
+    "step": "abc000000170"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000171",
+    "op": "propose",
+    "rev": 185,
+    "sha": "9583cbb2e0d8f25f18238b36374afe0a7cb40b4a06e474b745aec37eb2fc9533",
+    "step": "abc000000172"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000173",
+    "op": "propose",
+    "rev": 186,
+    "sha": "303a68be452eef0410de3ab1b56e34bd84925208685603541657b2cb94c3ae9e",
+    "step": "abc000000174"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000175",
+    "op": "propose",
+    "rev": 187,
+    "sha": "50bcdd887a473470a5e0d9115152448adb18730614f5d9daa129f51834092956",
+    "step": "abc000000176"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000177",
+    "op": "propose",
+    "rev": 188,
+    "sha": "d525ac008608b9a0f2c15418bdc5846906df22486644bc77efcff3554ff79b92",
+    "step": "abc000000178"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000179",
+    "op": "propose",
+    "rev": 189,
+    "sha": "03d907a99d14bf0e2242da847736f78630f0ec69baeb7a395cd4b5a8b938c340",
+    "step": "abc00000017a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000017b",
+    "op": "propose",
+    "rev": 190,
+    "sha": "e6cfe38be7361eb07623d80624fd3534ad185b69625efac7fc8826aad8af077e",
+    "step": "abc00000017c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000017d",
+    "op": "propose",
+    "rev": 191,
+    "sha": "cb2ab1ae8d74fec490bbdafdc4291eb76ecfdbf0842823f0a71910c52253ebc6",
+    "step": "abc00000017e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000017f",
+    "op": "propose",
+    "rev": 192,
+    "sha": "61eda93a2ee1a70c96d868a23abe99d09ab021e09473a9bbd232cee02ef66589",
+    "step": "abc000000180"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000181",
+    "op": "propose",
+    "rev": 193,
+    "sha": "5e67cd4fb7903655ba7cf1b90eab4c9a1e330ea6ccb92bdc83533f5fa5842c9c",
+    "step": "abc000000182"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000183",
+    "op": "propose",
+    "rev": 194,
+    "sha": "7c0e046e55a683e204b85ee8dd16c9cbbc883caf4d526eb10e28f135f9822918",
+    "step": "abc000000184"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000185",
+    "op": "propose",
+    "rev": 195,
+    "sha": "ca5e6d823247a5d88bca87345cfc064004d4cf5479967f41fe4b6f90e66a407f",
+    "step": "abc000000186"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000187",
+    "op": "propose",
+    "rev": 196,
+    "sha": "3e3781822a81d1206386ac110c12c467fc7b43637224dbb316d4e7df8f9149a0",
+    "step": "abc000000188"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000189",
+    "op": "propose",
+    "rev": 197,
+    "sha": "e6327b673942114344b963814f7f152c85d399634e4b05484f51eec58722e89e",
+    "step": "abc00000018a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000018b",
+    "op": "propose",
+    "rev": 198,
+    "sha": "6e627f4de159830f66e594f9ab456c77dd3ab6a6b7735e16451410a4a38c6c35",
+    "step": "abc00000018c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000018d",
+    "op": "propose",
+    "rev": 199,
+    "sha": "eaab359140f487a25844561faf1cc17ed029613b9d2f8cd1e80b22d2a5514ce5",
+    "step": "abc00000018e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000018f",
+    "op": "propose",
+    "rev": 200,
+    "sha": "30c11058337d4680146258a30ed7538dceea19fc04cdaa59e34628d229fb160f",
+    "step": "abc000000190"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000191",
+    "op": "propose",
+    "rev": 201,
+    "sha": "64d30b0ee6c1d895ed0d0ec27ab6ddb307c3e8f9c8d5a57bf52354199205386b",
+    "step": "abc000000192"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000193",
+    "op": "propose",
+    "rev": 202,
+    "sha": "87e150ec7d8ae18f7aa03c73e27ad8a24a503ff25991b675c3cae52d36a5b0f8",
+    "step": "abc000000194"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000195",
+    "op": "propose",
+    "rev": 203,
+    "sha": "b3c0227013fdda764168adc7c0160221c34ac2802bda2671279b0cfbda93ec36",
+    "step": "abc000000196"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000197",
+    "op": "propose",
+    "rev": 204,
+    "sha": "b4d0c62a6f8534733d3b12d65fab1b75c8a6829a4f9f846b184772c61106ab89",
+    "step": "abc000000198"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000199",
+    "op": "propose",
+    "rev": 205,
+    "sha": "fe6c58d1bd38143627aaa26baa523a79fe7a7a48d49a3b8bfb7e4a51d055ba16",
+    "step": "abc00000019a"
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "undo",
+    "rev": 205,
+    "sha": "fe6c58d1bd38143627aaa26baa523a79fe7a7a48d49a3b8bfb7e4a51d055ba16",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000019a",
+    "op": "undo",
+    "rev": 206,
+    "sha": "98dcdd027d60af461561475b74e54acc303b93815351e3018894facee483e8aa",
+    "step": null
+   }
+  ],
+  "large_steps": [
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000001",
+    "op": "propose",
+    "rev": 1,
+    "sha": "ace4098c1f5b78bd7ba19f39319aa96150085c0c7f57a50a1a0c5ec910a16f53",
+    "step": "abc000000002"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000003",
+    "op": "propose",
+    "rev": 2,
+    "sha": "53d11d1beedf2b1f3ccc324e95ceff11998a0bf7daf8002b16b1edc5866cbe45",
+    "step": "abc000000004"
+   }
+  ],
+  "lock_and_unlock": [
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000001",
+    "op": "propose",
+    "rev": 1,
+    "sha": "8b54c11a325dc12d3c0b6c020b32d755988ab26cb0c628690ed80b05ce1e11eb",
+    "step": "abc000000002"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": null,
+    "op": "lock",
+    "rev": 2,
+    "sha": "56eef9b5a1ca020165a33b092268a242205ca56aab70dbe09c538c2c12a65ea3",
+    "step": null
+   },
+   {
+    "error": "ReviewLocked",
+    "fits_run": true,
+    "id": null,
+    "op": "lock",
+    "rev": 2,
+    "sha": "56eef9b5a1ca020165a33b092268a242205ca56aab70dbe09c538c2c12a65ea3",
+    "step": null
+   },
+   {
+    "error": "ReviewLocked",
+    "fits_run": true,
+    "id": null,
+    "op": "propose",
+    "rev": 2,
+    "sha": "56eef9b5a1ca020165a33b092268a242205ca56aab70dbe09c538c2c12a65ea3",
+    "step": null
+   },
+   {
+    "error": "ReviewLocked",
+    "fits_run": true,
+    "id": null,
+    "op": "set_reviewed",
+    "rev": 2,
+    "sha": "56eef9b5a1ca020165a33b092268a242205ca56aab70dbe09c538c2c12a65ea3",
+    "step": null
+   },
+   {
+    "error": "ReviewLocked",
+    "fits_run": true,
+    "id": null,
+    "op": "undo",
+    "rev": 2,
+    "sha": "56eef9b5a1ca020165a33b092268a242205ca56aab70dbe09c538c2c12a65ea3",
+    "step": null
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "unlock",
+    "rev": 2,
+    "sha": "56eef9b5a1ca020165a33b092268a242205ca56aab70dbe09c538c2c12a65ea3",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": null,
+    "op": "unlock",
+    "rev": 3,
+    "sha": "831ba032ac960b8b1f1f30242da2937c12406f9864d2cde72f028631661ed73d",
+    "step": null
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "unlock",
+    "rev": 3,
+    "sha": "831ba032ac960b8b1f1f30242da2937c12406f9864d2cde72f028631661ed73d",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000003",
+    "op": "propose",
+    "rev": 4,
+    "sha": "beba745fe72084a0912e356d3bf5a54a8009e6872533c33629969c50f008459c",
+    "step": "abc000000004"
+   }
+  ],
+  "migrated_minimal": [
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "000000000015",
+    "op": "accept",
+    "rev": 1,
+    "sha": "4e03d426b7fe4485700b38945af0d0f4558a0733634c945075540405a3c4eb52",
+    "step": "abc000000001"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000001",
+    "op": "undo",
+    "rev": 2,
+    "sha": "c15dde5e91802c75e50b17b486dba1aaca56ab6f6985f6cc9eb1ee74d56195f4",
+    "step": null
+   }
+  ],
+  "migrated_with_task": [
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000001",
+    "op": "propose",
+    "rev": 24,
+    "sha": "16b15d648b10b3c60e58e3fe304447408f2a2d35a26fb5cfc4ef64f2a6b32310",
+    "step": "abc000000002"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000001",
+    "op": "accept",
+    "rev": 25,
+    "sha": "a330ef6affe8f447482cc6c942cd92a63c2cbaa65ed5363e68d21a28b274530f",
+    "step": "abc000000003"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "000000000004",
+    "op": "accept",
+    "rev": 26,
+    "sha": "829f59ea6ec317bd9b2368ce4942063b2fd457ec281fd277dc9bb7061432e20d",
+    "step": "abc000000004"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000005",
+    "op": "replace",
+    "rev": 27,
+    "sha": "5905515cf7c5e0145055a51462055a38d2c943a3806272eb934f7ad54f59e737",
+    "step": "abc000000006"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000007",
+    "op": "replace",
+    "rev": 28,
+    "sha": "440e1def81fdc7a93c6ac97b9b64c2bf64d688f4a7d8951b1b00cb6be3c34c77",
+    "step": "abc000000008"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000009",
+    "op": "propose",
+    "rev": 29,
+    "sha": "6e151e8d6c7fac76b7563e22f57978231487b539765ecea5f2aa3e721fc1bd1f",
+    "step": "abc00000000a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "aaaaaaaaaaaa",
+    "op": "undo",
+    "rev": 30,
+    "sha": "4971b47151f0598c3ac4b7cf98b4d8a9ae01de34acd68a1f58984ff5bfe94169",
+    "step": null
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "undo",
+    "rev": 30,
+    "sha": "4971b47151f0598c3ac4b7cf98b4d8a9ae01de34acd68a1f58984ff5bfe94169",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000008",
+    "op": "undo",
+    "rev": 31,
+    "sha": "bc4e5aff968b3a9bce77c1ea5a24e380c392ee873ed78362c6b77016c163901f",
+    "step": null
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "undo",
+    "rev": 31,
+    "sha": "bc4e5aff968b3a9bce77c1ea5a24e380c392ee873ed78362c6b77016c163901f",
+    "step": null
+   }
+  ],
+  "migrated_without_task": [
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000001",
+    "op": "propose",
+    "rev": 24,
+    "sha": "eb87bb394e6237aeb45a8c7abcd458c22fcc6a4412ddc4113b5966fab7cccb3b",
+    "step": "abc000000002"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000001",
+    "op": "accept",
+    "rev": 25,
+    "sha": "095fcf09b27bebc7a93ffb5dc3aa520600b0022604200553219fc6a1dc7f1573",
+    "step": "abc000000003"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "000000000004",
+    "op": "accept",
+    "rev": 26,
+    "sha": "0df88d5243e5828c0c3a138592878e034abfce9e46d9f4890159d8bb33663e26",
+    "step": "abc000000004"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000005",
+    "op": "replace",
+    "rev": 27,
+    "sha": "92a79a1d62dbc923a08af51762ae87e993013d03f390e3bc6dc913e752df38d0",
+    "step": "abc000000006"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000007",
+    "op": "replace",
+    "rev": 28,
+    "sha": "081e50d3818ed6ce79965b86c43f72b75c041e87b8212a7821a2bf5eab45df37",
+    "step": "abc000000008"
+   }
+  ],
+  "proposals_and_corrections": [
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000001",
+    "op": "propose",
+    "rev": 1,
+    "sha": "fdc0630dd07aff8b7e7ed78175206761bbd2ca281228f8bc100aedb0bcf513e2",
+    "step": "abc000000002"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000001",
+    "op": "propose",
+    "rev": 1,
+    "sha": "fdc0630dd07aff8b7e7ed78175206761bbd2ca281228f8bc100aedb0bcf513e2",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000003",
+    "op": "propose",
+    "rev": 2,
+    "sha": "b372d9d5e268ff8224e0336af8b2bcb83a81ec1160faa923fd2752c5da2e7548",
+    "step": "abc000000004"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000005",
+    "op": "propose",
+    "rev": 3,
+    "sha": "37561b22271f678e0ef5ed86a2b53521c226c428189557711894cd39987dfc49",
+    "step": "abc000000006"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000007",
+    "op": "propose",
+    "rev": 4,
+    "sha": "c494c966a3a230eaee9069059ccc8270660d1f1cc52a34053126022cf95539c7",
+    "step": "abc000000008"
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "accept",
+    "rev": 4,
+    "sha": "c494c966a3a230eaee9069059ccc8270660d1f1cc52a34053126022cf95539c7",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000005",
+    "op": "accept",
+    "rev": 5,
+    "sha": "368d6991b1cfc5cc3a304ec2320114b29f870380874ee659b758b2ef697abd3f",
+    "step": "abc000000009"
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "propose",
+    "rev": 5,
+    "sha": "368d6991b1cfc5cc3a304ec2320114b29f870380874ee659b758b2ef697abd3f",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000000b",
+    "op": "replace",
+    "rev": 6,
+    "sha": "92bae9a35de4627aeb368b8c7eb09e35350b343e6c22ae4ed577bb6f902af801",
+    "step": "abc00000000c"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc00000000d",
+    "op": "replace",
+    "rev": 7,
+    "sha": "b31a1889e83e7b511c2c9b6322f0cd83000825735e583051d411f0fc9a0c9a11",
+    "step": "abc00000000e"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000003",
+    "op": "reject",
+    "rev": 8,
+    "sha": "29dd4ad5fe959efda1c769d0676ecc8d19b0cf860aa1470b39fc93b7475c65d1",
+    "step": "abc00000000f"
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "reject",
+    "rev": 8,
+    "sha": "29dd4ad5fe959efda1c769d0676ecc8d19b0cf860aa1470b39fc93b7475c65d1",
+    "step": null
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "propose",
+    "rev": 8,
+    "sha": "29dd4ad5fe959efda1c769d0676ecc8d19b0cf860aa1470b39fc93b7475c65d1",
+    "step": null
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "propose",
+    "rev": 8,
+    "sha": "29dd4ad5fe959efda1c769d0676ecc8d19b0cf860aa1470b39fc93b7475c65d1",
+    "step": null
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "propose",
+    "rev": 8,
+    "sha": "29dd4ad5fe959efda1c769d0676ecc8d19b0cf860aa1470b39fc93b7475c65d1",
+    "step": null
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "propose",
+    "rev": 8,
+    "sha": "29dd4ad5fe959efda1c769d0676ecc8d19b0cf860aa1470b39fc93b7475c65d1",
+    "step": null
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "propose",
+    "rev": 8,
+    "sha": "29dd4ad5fe959efda1c769d0676ecc8d19b0cf860aa1470b39fc93b7475c65d1",
+    "step": null
+   },
+   {
+    "error": "ReviewConflict",
+    "fits_run": true,
+    "id": null,
+    "op": "propose",
+    "rev": 8,
+    "sha": "29dd4ad5fe959efda1c769d0676ecc8d19b0cf860aa1470b39fc93b7475c65d1",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": null,
+    "op": "set_reviewed",
+    "rev": 9,
+    "sha": "0985f1cd1e984014b0fdd6f64c11722c3d2b6a148a56111cf88f50950b1fe75f",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": null,
+    "op": "set_reviewed",
+    "rev": 10,
+    "sha": "857b455e4039e3d2a4866e820c3eeaea56730cb6acc4487d14e2f7b6725d0837",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000010",
+    "op": "propose",
+    "rev": 11,
+    "sha": "cc99a2d7f366fc5de2baf002b6af0016acd60047be8019325d1de40c3422082e",
+    "step": "abc000000011"
+   }
+  ],
+  "undo_and_readings": [
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000001",
+    "op": "propose",
+    "rev": 1,
+    "sha": "a398c1eddd317288da3716c869ecd06a2c006305df9c0994a3b91ac03783c1eb",
+    "step": "abc000000002"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000003",
+    "op": "propose",
+    "rev": 2,
+    "sha": "9e05c4a9f0a2546a645f26517bdc87de3c93af303a533eb420117fda3b8d6598",
+    "step": "abc000000004"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000005",
+    "op": "propose",
+    "rev": 3,
+    "sha": "11208f78f1236625ea8205e345b9fe8e308dbf5884cbc7fec163d20be3f7597f",
+    "step": "abc000000006"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000003",
+    "op": "accept",
+    "rev": 4,
+    "sha": "34ea0402c0acd76cf33e309506d5c9cb77cb7db9a73f56b0eb2f63359d18cd37",
+    "step": "abc000000007"
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "undo",
+    "rev": 4,
+    "sha": "34ea0402c0acd76cf33e309506d5c9cb77cb7db9a73f56b0eb2f63359d18cd37",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000008",
+    "op": "replace",
+    "rev": 5,
+    "sha": "840ba2467a0bf40a2824dd9308d2a0812e3556c5d1cd65b569ca6f237bb96a97",
+    "step": "abc000000009"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000009",
+    "op": "undo",
+    "rev": 6,
+    "sha": "1241e5ff18e5610d7ebbd5d5dd580230fe437732052555f80d63ada4e4ab18b0",
+    "step": null
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "undo",
+    "rev": 6,
+    "sha": "1241e5ff18e5610d7ebbd5d5dd580230fe437732052555f80d63ada4e4ab18b0",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000007",
+    "op": "undo",
+    "rev": 7,
+    "sha": "0b8813efa75c4bb5cce3d69e0ef4a2da96ac37711d9e2d79d509f8e21e8c27d5",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000006",
+    "op": "undo",
+    "rev": 8,
+    "sha": "9acd807d9b6e892de5843e0b867bf1e0c892e816e7229f2fb1052cc2010bf19a",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000004",
+    "op": "undo",
+    "rev": 9,
+    "sha": "a0e83d0d567238c97a7b1e525bf0eb77ed577316b46fd829df34a6f41cf89847",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000002",
+    "op": "undo",
+    "rev": 10,
+    "sha": "ef3826e686385a83a1a12b1dd745950215b7a79dba0102ead58c8445583f9c2f",
+    "step": null
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "undo",
+    "rev": 10,
+    "sha": "ef3826e686385a83a1a12b1dd745950215b7a79dba0102ead58c8445583f9c2f",
+    "step": null
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "propose",
+    "rev": 10,
+    "sha": "ef3826e686385a83a1a12b1dd745950215b7a79dba0102ead58c8445583f9c2f",
+    "step": null
+   }
+  ]
+ },
+ "migration": {
+  "format1_all_kinds.json no task": {
+   "format1": "{\n \"edits\": [\n  {\n   \"accepted_seq\": 1,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000001\",\n   \"kind\": \"outcome\",\n   \"payload\": {\n    \"failure_mode\": \"dropped after lift\",\n    \"termination_reason\": \"timeout\"\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 2,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000002\",\n   \"kind\": \"failure_start\",\n   \"payload\": {\n    \"frame\": 80\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"by\": \"idle finder (commands)\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000003\",\n   \"kind\": \"exclude\",\n   \"payload\": {\n    \"end\": 12,\n    \"start\": 0\n   },\n   \"reason\": \"no movement for 0.4 s at the start, policy driving\",\n   \"source\": \"agent\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"by\": \"idle finder (commands)\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": null,\n   \"id\": \"000000000004\",\n   \"kind\": \"exclude\",\n   \"payload\": {\n    \"end\": 120,\n    \"start\": 112\n   },\n   \"reason\": \"idle\",\n   \"source\": \"agent\",\n   \"status\": \"proposed\"\n  },\n  {\n   \"accepted_seq\": 3,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000005\",\n   \"kind\": \"step_boundary\",\n   \"payload\": {\n    \"after\": \" Grasp \",\n    \"before\": \"reach\",\n    \"frame\": 32,\n    \"index\": 0\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 4,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000006\",\n   \"kind\": \"segment_edge\",\n   \"payload\": {\n    \"edge\": \"end\",\n    \"frame\": 112,\n    \"index\": 2\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 5,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000007\",\n   \"kind\": \"drive_boundary\",\n   \"payload\": {\n    \"frame\": 90,\n    \"index\": 0\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 6,\n   \"by\": \"segmenter\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000008\",\n   \"kind\": \"segment_plan\",\n   \"payload\": {\n    \"segments\": [\n     {\n      \"end\": 28,\n      \"name\": \"reach\",\n      \"start\": 0\n     },\n     {\n      \"end\": 72,\n      \"name\": \"Grasp\",\n      \"start\": 28\n     },\n     {\n      \"end\": 110,\n      \"name\": \"wiggle\",\n      \"start\": 72\n     }\n    ]\n   },\n   \"reason\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 7,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000009\",\n   \"kind\": \"reject_run\",\n   \"payload\": {},\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": 8,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000a\",\n   \"kind\": \"note\",\n   \"payload\": {\n    \"frame\": 10,\n    \"text\": \"slips at the rim\"\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 9,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000b\",\n   \"kind\": \"label\",\n   \"payload\": {\n    \"driver\": \"policy\",\n    \"end\": 50,\n    \"segment\": \"lift\",\n    \"start\": 40,\n    \"text\": \"hesitates\"\n   },\n   \"reason\": null,\n   \"replaced_by\": \"00000000000c\",\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": 10,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000c\",\n   \"interpretation\": {\n    \"at\": \"2026-10-20T09:15:00Z\",\n    \"by\": \"reader-agent\",\n    \"meaning\": \"hesitation\",\n    \"train\": \"exclude\"\n   },\n   \"interpretation_history\": [\n    {\n     \"at\": \"2026-10-20T09:15:00Z\",\n     \"by\": \"reader-agent\",\n     \"meaning\": \"fine\",\n     \"train\": \"keep\"\n    }\n   ],\n   \"kind\": \"label\",\n   \"payload\": {\n    \"driver\": null,\n    \"end\": 55,\n    \"segment\": null,\n    \"start\": 40,\n    \"text\": \"hesitates over the cap\"\n   },\n   \"reason\": null,\n   \"replaces\": \"00000000000b\",\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 11,\n   \"by\": \"notes-agent\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000d\",\n   \"kind\": \"event_note\",\n   \"payload\": {\n    \"key\": \"takeover:90\",\n    \"text\": \"operator saw a slip\"\n   },\n   \"reason\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 12,\n   \"adjusted\": true,\n   \"by\": \"idle\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000e\",\n   \"kind\": \"exclude\",\n   \"payload\": {\n    \"end\": 26,\n    \"start\": 20\n   },\n   \"reason\": \"idle\",\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 13,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000f\",\n   \"kind\": \"outcome\",\n   \"payload\": {\n    \"failure_mode\": null,\n    \"termination_reason\": \"failure\"\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  }\n ],\n \"history\": [\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 2,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"id\": \"000000000002\",\n      \"kind\": \"failure_start\",\n      \"payload\": {\n       \"frame\": 80\n      },\n      \"reason\": null,\n      \"source\": \"human\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"id\": \"000000000002\"\n    }\n   ],\n   \"id\": \"aaaaaaaaaaaa\",\n   \"t\": 1792400100000000000,\n   \"undone\": false,\n   \"what\": \"fail start\"\n  },\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 14,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"id\": \"cccccccccccc\",\n      \"kind\": \"note\",\n      \"payload\": {\n       \"frame\": 1,\n       \"text\": \"x\"\n      },\n      \"reason\": null,\n      \"source\": \"human\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"id\": \"cccccccccccc\"\n    }\n   ],\n   \"id\": \"bbbbbbbbbbbb\",\n   \"t\": 1792400100000001000,\n   \"undone\": true,\n   \"undone_at\": \"2026-10-20T09:15:00Z\",\n   \"what\": \"add note\"\n  },\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 6,\n      \"by\": \"segmenter\",\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"id\": \"000000000008\",\n      \"kind\": \"segment_plan\",\n      \"payload\": {\n       \"segments\": [\n        {\n         \"end\": 28,\n         \"name\": \"reach\",\n         \"start\": 0\n        },\n        {\n         \"end\": 72,\n         \"name\": \"Grasp\",\n         \"start\": 28\n        },\n        {\n         \"end\": 110,\n         \"name\": \"wiggle\",\n         \"start\": 72\n        }\n       ]\n      },\n      \"reason\": null,\n      \"source\": \"agent\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"id\": \"000000000008\"\n    }\n   ],\n   \"id\": \"dddddddddddd\",\n   \"undone\": false,\n   \"what\": \"older logger step, no t\"\n  }\n ],\n \"rev\": 23,\n \"reviewed\": true,\n \"reviewed_at\": \"2026-10-20T09:15:00Z\",\n \"reviewed_by\": \"reviewer-1\",\n \"seq\": 14,\n \"version\": 1\n}\n",
+   "format2": "{\n \"edits\": [\n  {\n   \"accepted_seq\": 1,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000001\",\n   \"job_id\": null,\n   \"kind\": \"outcome\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"failure_mode\": \"dropped after lift\",\n    \"outcome\": \"failure\",\n    \"termination_reason\": \"timeout\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 2,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000002\",\n   \"job_id\": null,\n   \"kind\": \"failure_start\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"frame\": 80\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": null,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": \"idle finder (commands)\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000003\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"exclude\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"end\": 12,\n    \"start\": 0\n   },\n   \"reason\": \"no movement for 0.4 s at the start, policy driving\",\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": null,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": \"idle finder (commands)\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": null,\n   \"decided_by\": null,\n   \"edit_id\": \"000000000004\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"exclude\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"end\": 120,\n    \"start\": 112\n   },\n   \"reason\": \"idle\",\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"proposed\"\n  },\n  {\n   \"accepted_seq\": 3,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000005\",\n   \"job_id\": null,\n   \"kind\": \"step_boundary\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"after\": \" Grasp \",\n    \"before\": \"reach\",\n    \"frame\": 32,\n    \"index\": 0\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 4,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000006\",\n   \"job_id\": null,\n   \"kind\": \"segment_edge\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"edge\": \"end\",\n    \"frame\": 112,\n    \"index\": 2\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 5,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000007\",\n   \"job_id\": null,\n   \"kind\": \"drive_boundary\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"frame\": 90,\n    \"index\": 0\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 6,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": \"segmenter\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000008\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"segments\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"segments\": [\n     {\n      \"end\": 28,\n      \"legacy_name\": \"reach\",\n      \"start\": 0,\n      \"subtask_id\": \"unresolved\"\n     },\n     {\n      \"end\": 72,\n      \"legacy_name\": \"Grasp\",\n      \"start\": 28,\n      \"subtask_id\": \"unresolved\"\n     },\n     {\n      \"end\": 110,\n      \"legacy_name\": \"wiggle\",\n      \"start\": 72,\n      \"subtask_id\": \"unresolved\"\n     }\n    ]\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 7,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000009\",\n   \"job_id\": null,\n   \"kind\": \"reject_run\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {},\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": 8,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000a\",\n   \"job_id\": null,\n   \"kind\": \"note\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"frame\": 10,\n    \"text\": \"slips at the rim\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 9,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000b\",\n   \"job_id\": null,\n   \"kind\": \"label\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"driver\": \"policy\",\n    \"end\": 50,\n    \"segment\": \"lift\",\n    \"start\": 40,\n    \"text\": \"hesitates\"\n   },\n   \"reason\": null,\n   \"replaced_by\": \"00000000000c\",\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": 10,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000c\",\n   \"job_id\": null,\n   \"kind\": \"label\",\n   \"legacy_reading\": {\n    \"at\": \"2026-10-20T09:15:00Z\",\n    \"by\": \"reader-agent\",\n    \"meaning\": \"hesitation\",\n    \"train\": \"exclude\"\n   },\n   \"legacy_reading_history\": [\n    {\n     \"at\": \"2026-10-20T09:15:00Z\",\n     \"by\": \"reader-agent\",\n     \"meaning\": \"fine\",\n     \"train\": \"keep\"\n    }\n   ],\n   \"payload\": {\n    \"driver\": null,\n    \"end\": 55,\n    \"segment\": null,\n    \"start\": 40,\n    \"text\": \"hesitates over the cap\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": \"00000000000b\",\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 11,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": \"notes-agent\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000d\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"event_note\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"key\": \"takeover:90\",\n    \"text\": \"operator saw a slip\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 12,\n   \"adjusted\": true,\n   \"agent_version\": \"unknown\",\n   \"by\": \"idle\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000e\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"exclude\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"end\": 26,\n    \"start\": 20\n   },\n   \"reason\": \"idle\",\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 13,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000f\",\n   \"job_id\": null,\n   \"kind\": \"outcome\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"failure_mode\": null,\n    \"outcome\": \"failure\",\n    \"termination_reason\": \"failure\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  }\n ],\n \"history\": [\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 2,\n      \"adjusted\": false,\n      \"agent_version\": null,\n      \"by\": null,\n      \"corrects\": null,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_by\": null,\n      \"edit_id\": \"000000000002\",\n      \"job_id\": null,\n      \"kind\": \"failure_start\",\n      \"legacy_reading\": null,\n      \"legacy_reading_history\": [],\n      \"payload\": {\n       \"frame\": 80\n      },\n      \"reason\": null,\n      \"replaced_by\": null,\n      \"replaces\": null,\n      \"source\": \"human\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"edit_id\": \"000000000002\"\n    }\n   ],\n   \"step_id\": \"aaaaaaaaaaaa\",\n   \"t\": 1792400100000000000,\n   \"undone\": false,\n   \"undone_at\": null,\n   \"what\": \"fail start\"\n  },\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 14,\n      \"adjusted\": false,\n      \"agent_version\": null,\n      \"by\": null,\n      \"corrects\": null,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_by\": null,\n      \"edit_id\": \"cccccccccccc\",\n      \"job_id\": null,\n      \"kind\": \"note\",\n      \"legacy_reading\": null,\n      \"legacy_reading_history\": [],\n      \"payload\": {\n       \"frame\": 1,\n       \"text\": \"x\"\n      },\n      \"reason\": null,\n      \"replaced_by\": null,\n      \"replaces\": null,\n      \"source\": \"human\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"edit_id\": \"cccccccccccc\"\n    }\n   ],\n   \"step_id\": \"bbbbbbbbbbbb\",\n   \"t\": 1792400100000001000,\n   \"undone\": true,\n   \"undone_at\": \"2026-10-20T09:15:00Z\",\n   \"what\": \"add note\"\n  },\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 6,\n      \"adjusted\": false,\n      \"agent_version\": \"unknown\",\n      \"by\": \"segmenter\",\n      \"corrects\": null,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_by\": null,\n      \"edit_id\": \"000000000008\",\n      \"job_id\": \"unknown\",\n      \"kind\": \"segments\",\n      \"legacy_reading\": null,\n      \"legacy_reading_history\": [],\n      \"payload\": {\n       \"segments\": [\n        {\n         \"end\": 28,\n         \"legacy_name\": \"reach\",\n         \"start\": 0,\n         \"subtask_id\": \"unresolved\"\n        },\n        {\n         \"end\": 72,\n         \"legacy_name\": \"Grasp\",\n         \"start\": 28,\n         \"subtask_id\": \"unresolved\"\n        },\n        {\n         \"end\": 110,\n         \"legacy_name\": \"wiggle\",\n         \"start\": 72,\n         \"subtask_id\": \"unresolved\"\n        }\n       ]\n      },\n      \"reason\": null,\n      \"replaced_by\": null,\n      \"replaces\": null,\n      \"source\": \"agent\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"edit_id\": \"000000000008\"\n    }\n   ],\n   \"step_id\": \"dddddddddddd\",\n   \"t\": null,\n   \"undone\": false,\n   \"undone_at\": null,\n   \"what\": \"older logger step, no t\"\n  }\n ],\n \"legacy_subtask_map\": {\n  \"entries\": [\n   {\n    \"recorded_name\": \"reach\",\n    \"step_index\": 0,\n    \"subtask_id\": \"unresolved\"\n   },\n   {\n    \"recorded_name\": \" Grasp \",\n    \"step_index\": 1,\n    \"subtask_id\": \"unresolved\"\n   },\n   {\n    \"recorded_name\": \"lift\",\n    \"step_index\": 2,\n    \"subtask_id\": \"unresolved\"\n   },\n   {\n    \"recorded_name\": \"Grasp\",\n    \"step_index\": null,\n    \"subtask_id\": \"unresolved\"\n   },\n   {\n    \"recorded_name\": \"reach\",\n    \"step_index\": null,\n    \"subtask_id\": \"unresolved\"\n   },\n   {\n    \"recorded_name\": \"wiggle\",\n    \"step_index\": null,\n    \"subtask_id\": \"unresolved\"\n   }\n  ],\n  \"run_id\": \"5b0c6a8e-1f2d-4c3b-9a7e-2d4f6b8a0c1e\",\n  \"task_id\": null\n },\n \"lock_log\": [],\n \"locked\": null,\n \"rev\": 23,\n \"review_format\": 2,\n \"reviewed\": true,\n \"reviewed_at\": \"2026-10-20T09:15:00Z\",\n \"reviewed_by\": \"reviewer-1\",\n \"run_id\": \"5b0c6a8e-1f2d-4c3b-9a7e-2d4f6b8a0c1e\",\n \"seq\": 14\n}\n"
+  },
+  "format1_all_kinds.json task": {
+   "format1": "{\n \"edits\": [\n  {\n   \"accepted_seq\": 1,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000001\",\n   \"kind\": \"outcome\",\n   \"payload\": {\n    \"failure_mode\": \"dropped after lift\",\n    \"termination_reason\": \"timeout\"\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 2,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000002\",\n   \"kind\": \"failure_start\",\n   \"payload\": {\n    \"frame\": 80\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"by\": \"idle finder (commands)\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000003\",\n   \"kind\": \"exclude\",\n   \"payload\": {\n    \"end\": 12,\n    \"start\": 0\n   },\n   \"reason\": \"no movement for 0.4 s at the start, policy driving\",\n   \"source\": \"agent\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"by\": \"idle finder (commands)\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": null,\n   \"id\": \"000000000004\",\n   \"kind\": \"exclude\",\n   \"payload\": {\n    \"end\": 120,\n    \"start\": 112\n   },\n   \"reason\": \"idle\",\n   \"source\": \"agent\",\n   \"status\": \"proposed\"\n  },\n  {\n   \"accepted_seq\": 3,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000005\",\n   \"kind\": \"step_boundary\",\n   \"payload\": {\n    \"after\": \" Grasp \",\n    \"before\": \"reach\",\n    \"frame\": 32,\n    \"index\": 0\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 4,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000006\",\n   \"kind\": \"segment_edge\",\n   \"payload\": {\n    \"edge\": \"end\",\n    \"frame\": 112,\n    \"index\": 2\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 5,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000007\",\n   \"kind\": \"drive_boundary\",\n   \"payload\": {\n    \"frame\": 90,\n    \"index\": 0\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 6,\n   \"by\": \"segmenter\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000008\",\n   \"kind\": \"segment_plan\",\n   \"payload\": {\n    \"segments\": [\n     {\n      \"end\": 28,\n      \"name\": \"reach\",\n      \"start\": 0\n     },\n     {\n      \"end\": 72,\n      \"name\": \"Grasp\",\n      \"start\": 28\n     },\n     {\n      \"end\": 110,\n      \"name\": \"wiggle\",\n      \"start\": 72\n     }\n    ]\n   },\n   \"reason\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 7,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000009\",\n   \"kind\": \"reject_run\",\n   \"payload\": {},\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": 8,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000a\",\n   \"kind\": \"note\",\n   \"payload\": {\n    \"frame\": 10,\n    \"text\": \"slips at the rim\"\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 9,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000b\",\n   \"kind\": \"label\",\n   \"payload\": {\n    \"driver\": \"policy\",\n    \"end\": 50,\n    \"segment\": \"lift\",\n    \"start\": 40,\n    \"text\": \"hesitates\"\n   },\n   \"reason\": null,\n   \"replaced_by\": \"00000000000c\",\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": 10,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000c\",\n   \"interpretation\": {\n    \"at\": \"2026-10-20T09:15:00Z\",\n    \"by\": \"reader-agent\",\n    \"meaning\": \"hesitation\",\n    \"train\": \"exclude\"\n   },\n   \"interpretation_history\": [\n    {\n     \"at\": \"2026-10-20T09:15:00Z\",\n     \"by\": \"reader-agent\",\n     \"meaning\": \"fine\",\n     \"train\": \"keep\"\n    }\n   ],\n   \"kind\": \"label\",\n   \"payload\": {\n    \"driver\": null,\n    \"end\": 55,\n    \"segment\": null,\n    \"start\": 40,\n    \"text\": \"hesitates over the cap\"\n   },\n   \"reason\": null,\n   \"replaces\": \"00000000000b\",\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 11,\n   \"by\": \"notes-agent\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000d\",\n   \"kind\": \"event_note\",\n   \"payload\": {\n    \"key\": \"takeover:90\",\n    \"text\": \"operator saw a slip\"\n   },\n   \"reason\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 12,\n   \"adjusted\": true,\n   \"by\": \"idle\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000e\",\n   \"kind\": \"exclude\",\n   \"payload\": {\n    \"end\": 26,\n    \"start\": 20\n   },\n   \"reason\": \"idle\",\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 13,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000f\",\n   \"kind\": \"outcome\",\n   \"payload\": {\n    \"failure_mode\": null,\n    \"termination_reason\": \"failure\"\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  }\n ],\n \"history\": [\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 2,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"id\": \"000000000002\",\n      \"kind\": \"failure_start\",\n      \"payload\": {\n       \"frame\": 80\n      },\n      \"reason\": null,\n      \"source\": \"human\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"id\": \"000000000002\"\n    }\n   ],\n   \"id\": \"aaaaaaaaaaaa\",\n   \"t\": 1792400100000000000,\n   \"undone\": false,\n   \"what\": \"fail start\"\n  },\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 14,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"id\": \"cccccccccccc\",\n      \"kind\": \"note\",\n      \"payload\": {\n       \"frame\": 1,\n       \"text\": \"x\"\n      },\n      \"reason\": null,\n      \"source\": \"human\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"id\": \"cccccccccccc\"\n    }\n   ],\n   \"id\": \"bbbbbbbbbbbb\",\n   \"t\": 1792400100000001000,\n   \"undone\": true,\n   \"undone_at\": \"2026-10-20T09:15:00Z\",\n   \"what\": \"add note\"\n  },\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 6,\n      \"by\": \"segmenter\",\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"id\": \"000000000008\",\n      \"kind\": \"segment_plan\",\n      \"payload\": {\n       \"segments\": [\n        {\n         \"end\": 28,\n         \"name\": \"reach\",\n         \"start\": 0\n        },\n        {\n         \"end\": 72,\n         \"name\": \"Grasp\",\n         \"start\": 28\n        },\n        {\n         \"end\": 110,\n         \"name\": \"wiggle\",\n         \"start\": 72\n        }\n       ]\n      },\n      \"reason\": null,\n      \"source\": \"agent\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"id\": \"000000000008\"\n    }\n   ],\n   \"id\": \"dddddddddddd\",\n   \"undone\": false,\n   \"what\": \"older logger step, no t\"\n  }\n ],\n \"rev\": 23,\n \"reviewed\": true,\n \"reviewed_at\": \"2026-10-20T09:15:00Z\",\n \"reviewed_by\": \"reviewer-1\",\n \"seq\": 14,\n \"version\": 1\n}\n",
+   "format2": "{\n \"edits\": [\n  {\n   \"accepted_seq\": 1,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000001\",\n   \"job_id\": null,\n   \"kind\": \"outcome\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"failure_mode\": \"dropped after lift\",\n    \"outcome\": \"failure\",\n    \"termination_reason\": \"timeout\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 2,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000002\",\n   \"job_id\": null,\n   \"kind\": \"failure_start\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"frame\": 80\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": null,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": \"idle finder (commands)\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000003\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"exclude\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"end\": 12,\n    \"start\": 0\n   },\n   \"reason\": \"no movement for 0.4 s at the start, policy driving\",\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": null,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": \"idle finder (commands)\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": null,\n   \"decided_by\": null,\n   \"edit_id\": \"000000000004\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"exclude\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"end\": 120,\n    \"start\": 112\n   },\n   \"reason\": \"idle\",\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"proposed\"\n  },\n  {\n   \"accepted_seq\": 3,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000005\",\n   \"job_id\": null,\n   \"kind\": \"step_boundary\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"after\": \" Grasp \",\n    \"before\": \"reach\",\n    \"frame\": 32,\n    \"index\": 0\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 4,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000006\",\n   \"job_id\": null,\n   \"kind\": \"segment_edge\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"edge\": \"end\",\n    \"frame\": 112,\n    \"index\": 2\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 5,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000007\",\n   \"job_id\": null,\n   \"kind\": \"drive_boundary\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"frame\": 90,\n    \"index\": 0\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 6,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": \"segmenter\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000008\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"segments\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"segments\": [\n     {\n      \"end\": 28,\n      \"legacy_name\": \"reach\",\n      \"start\": 0,\n      \"subtask_id\": \"s-reach\"\n     },\n     {\n      \"end\": 72,\n      \"legacy_name\": \"Grasp\",\n      \"start\": 28,\n      \"subtask_id\": \"s-grasp\"\n     },\n     {\n      \"end\": 110,\n      \"legacy_name\": \"wiggle\",\n      \"start\": 72,\n      \"subtask_id\": \"unresolved\"\n     }\n    ]\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 7,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000009\",\n   \"job_id\": null,\n   \"kind\": \"reject_run\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {},\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": 8,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000a\",\n   \"job_id\": null,\n   \"kind\": \"note\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"frame\": 10,\n    \"text\": \"slips at the rim\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 9,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000b\",\n   \"job_id\": null,\n   \"kind\": \"label\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"driver\": \"policy\",\n    \"end\": 50,\n    \"segment\": \"lift\",\n    \"start\": 40,\n    \"text\": \"hesitates\"\n   },\n   \"reason\": null,\n   \"replaced_by\": \"00000000000c\",\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": 10,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000c\",\n   \"job_id\": null,\n   \"kind\": \"label\",\n   \"legacy_reading\": {\n    \"at\": \"2026-10-20T09:15:00Z\",\n    \"by\": \"reader-agent\",\n    \"meaning\": \"hesitation\",\n    \"train\": \"exclude\"\n   },\n   \"legacy_reading_history\": [\n    {\n     \"at\": \"2026-10-20T09:15:00Z\",\n     \"by\": \"reader-agent\",\n     \"meaning\": \"fine\",\n     \"train\": \"keep\"\n    }\n   ],\n   \"payload\": {\n    \"driver\": null,\n    \"end\": 55,\n    \"segment\": null,\n    \"start\": 40,\n    \"text\": \"hesitates over the cap\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": \"00000000000b\",\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 11,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": \"notes-agent\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000d\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"event_note\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"key\": \"takeover:90\",\n    \"text\": \"operator saw a slip\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 12,\n   \"adjusted\": true,\n   \"agent_version\": \"unknown\",\n   \"by\": \"idle\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000e\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"exclude\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"end\": 26,\n    \"start\": 20\n   },\n   \"reason\": \"idle\",\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 13,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000f\",\n   \"job_id\": null,\n   \"kind\": \"outcome\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"failure_mode\": null,\n    \"outcome\": \"failure\",\n    \"termination_reason\": \"failure\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  }\n ],\n \"history\": [\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 2,\n      \"adjusted\": false,\n      \"agent_version\": null,\n      \"by\": null,\n      \"corrects\": null,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_by\": null,\n      \"edit_id\": \"000000000002\",\n      \"job_id\": null,\n      \"kind\": \"failure_start\",\n      \"legacy_reading\": null,\n      \"legacy_reading_history\": [],\n      \"payload\": {\n       \"frame\": 80\n      },\n      \"reason\": null,\n      \"replaced_by\": null,\n      \"replaces\": null,\n      \"source\": \"human\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"edit_id\": \"000000000002\"\n    }\n   ],\n   \"step_id\": \"aaaaaaaaaaaa\",\n   \"t\": 1792400100000000000,\n   \"undone\": false,\n   \"undone_at\": null,\n   \"what\": \"fail start\"\n  },\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 14,\n      \"adjusted\": false,\n      \"agent_version\": null,\n      \"by\": null,\n      \"corrects\": null,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_by\": null,\n      \"edit_id\": \"cccccccccccc\",\n      \"job_id\": null,\n      \"kind\": \"note\",\n      \"legacy_reading\": null,\n      \"legacy_reading_history\": [],\n      \"payload\": {\n       \"frame\": 1,\n       \"text\": \"x\"\n      },\n      \"reason\": null,\n      \"replaced_by\": null,\n      \"replaces\": null,\n      \"source\": \"human\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"edit_id\": \"cccccccccccc\"\n    }\n   ],\n   \"step_id\": \"bbbbbbbbbbbb\",\n   \"t\": 1792400100000001000,\n   \"undone\": true,\n   \"undone_at\": \"2026-10-20T09:15:00Z\",\n   \"what\": \"add note\"\n  },\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 6,\n      \"adjusted\": false,\n      \"agent_version\": \"unknown\",\n      \"by\": \"segmenter\",\n      \"corrects\": null,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_by\": null,\n      \"edit_id\": \"000000000008\",\n      \"job_id\": \"unknown\",\n      \"kind\": \"segments\",\n      \"legacy_reading\": null,\n      \"legacy_reading_history\": [],\n      \"payload\": {\n       \"segments\": [\n        {\n         \"end\": 28,\n         \"legacy_name\": \"reach\",\n         \"start\": 0,\n         \"subtask_id\": \"s-reach\"\n        },\n        {\n         \"end\": 72,\n         \"legacy_name\": \"Grasp\",\n         \"start\": 28,\n         \"subtask_id\": \"s-grasp\"\n        },\n        {\n         \"end\": 110,\n         \"legacy_name\": \"wiggle\",\n         \"start\": 72,\n         \"subtask_id\": \"unresolved\"\n        }\n       ]\n      },\n      \"reason\": null,\n      \"replaced_by\": null,\n      \"replaces\": null,\n      \"source\": \"agent\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"edit_id\": \"000000000008\"\n    }\n   ],\n   \"step_id\": \"dddddddddddd\",\n   \"t\": null,\n   \"undone\": false,\n   \"undone_at\": null,\n   \"what\": \"older logger step, no t\"\n  }\n ],\n \"legacy_subtask_map\": {\n  \"entries\": [\n   {\n    \"recorded_name\": \"reach\",\n    \"step_index\": 0,\n    \"subtask_id\": \"s-reach\"\n   },\n   {\n    \"recorded_name\": \" Grasp \",\n    \"step_index\": 1,\n    \"subtask_id\": \"s-grasp\"\n   },\n   {\n    \"recorded_name\": \"lift\",\n    \"step_index\": 2,\n    \"subtask_id\": \"s-lift\"\n   },\n   {\n    \"recorded_name\": \"Grasp\",\n    \"step_index\": null,\n    \"subtask_id\": \"s-grasp\"\n   },\n   {\n    \"recorded_name\": \"reach\",\n    \"step_index\": null,\n    \"subtask_id\": \"s-reach\"\n   },\n   {\n    \"recorded_name\": \"wiggle\",\n    \"step_index\": null,\n    \"subtask_id\": \"unresolved\"\n   }\n  ],\n  \"run_id\": \"5b0c6a8e-1f2d-4c3b-9a7e-2d4f6b8a0c1e\",\n  \"task_id\": \"demo-task\"\n },\n \"lock_log\": [],\n \"locked\": null,\n \"rev\": 23,\n \"review_format\": 2,\n \"reviewed\": true,\n \"reviewed_at\": \"2026-10-20T09:15:00Z\",\n \"reviewed_by\": \"reviewer-1\",\n \"run_id\": \"5b0c6a8e-1f2d-4c3b-9a7e-2d4f6b8a0c1e\",\n \"seq\": 14\n}\n"
+  },
+  "format1_all_kinds.json task reordered": {
+   "format1": "{\n \"edits\": [\n  {\n   \"accepted_seq\": 1,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000001\",\n   \"kind\": \"outcome\",\n   \"payload\": {\n    \"failure_mode\": \"dropped after lift\",\n    \"termination_reason\": \"timeout\"\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 2,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000002\",\n   \"kind\": \"failure_start\",\n   \"payload\": {\n    \"frame\": 80\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"by\": \"idle finder (commands)\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000003\",\n   \"kind\": \"exclude\",\n   \"payload\": {\n    \"end\": 12,\n    \"start\": 0\n   },\n   \"reason\": \"no movement for 0.4 s at the start, policy driving\",\n   \"source\": \"agent\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"by\": \"idle finder (commands)\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": null,\n   \"id\": \"000000000004\",\n   \"kind\": \"exclude\",\n   \"payload\": {\n    \"end\": 120,\n    \"start\": 112\n   },\n   \"reason\": \"idle\",\n   \"source\": \"agent\",\n   \"status\": \"proposed\"\n  },\n  {\n   \"accepted_seq\": 3,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000005\",\n   \"kind\": \"step_boundary\",\n   \"payload\": {\n    \"after\": \" Grasp \",\n    \"before\": \"reach\",\n    \"frame\": 32,\n    \"index\": 0\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 4,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000006\",\n   \"kind\": \"segment_edge\",\n   \"payload\": {\n    \"edge\": \"end\",\n    \"frame\": 112,\n    \"index\": 2\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 5,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000007\",\n   \"kind\": \"drive_boundary\",\n   \"payload\": {\n    \"frame\": 90,\n    \"index\": 0\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 6,\n   \"by\": \"segmenter\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000008\",\n   \"kind\": \"segment_plan\",\n   \"payload\": {\n    \"segments\": [\n     {\n      \"end\": 28,\n      \"name\": \"reach\",\n      \"start\": 0\n     },\n     {\n      \"end\": 72,\n      \"name\": \"Grasp\",\n      \"start\": 28\n     },\n     {\n      \"end\": 110,\n      \"name\": \"wiggle\",\n      \"start\": 72\n     }\n    ]\n   },\n   \"reason\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 7,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"000000000009\",\n   \"kind\": \"reject_run\",\n   \"payload\": {},\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": 8,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000a\",\n   \"kind\": \"note\",\n   \"payload\": {\n    \"frame\": 10,\n    \"text\": \"slips at the rim\"\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 9,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000b\",\n   \"kind\": \"label\",\n   \"payload\": {\n    \"driver\": \"policy\",\n    \"end\": 50,\n    \"segment\": \"lift\",\n    \"start\": 40,\n    \"text\": \"hesitates\"\n   },\n   \"reason\": null,\n   \"replaced_by\": \"00000000000c\",\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": 10,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000c\",\n   \"interpretation\": {\n    \"at\": \"2026-10-20T09:15:00Z\",\n    \"by\": \"reader-agent\",\n    \"meaning\": \"hesitation\",\n    \"train\": \"exclude\"\n   },\n   \"interpretation_history\": [\n    {\n     \"at\": \"2026-10-20T09:15:00Z\",\n     \"by\": \"reader-agent\",\n     \"meaning\": \"fine\",\n     \"train\": \"keep\"\n    }\n   ],\n   \"kind\": \"label\",\n   \"payload\": {\n    \"driver\": null,\n    \"end\": 55,\n    \"segment\": null,\n    \"start\": 40,\n    \"text\": \"hesitates over the cap\"\n   },\n   \"reason\": null,\n   \"replaces\": \"00000000000b\",\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 11,\n   \"by\": \"notes-agent\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000d\",\n   \"kind\": \"event_note\",\n   \"payload\": {\n    \"key\": \"takeover:90\",\n    \"text\": \"operator saw a slip\"\n   },\n   \"reason\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 12,\n   \"adjusted\": true,\n   \"by\": \"idle\",\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000e\",\n   \"kind\": \"exclude\",\n   \"payload\": {\n    \"end\": 26,\n    \"start\": 20\n   },\n   \"reason\": \"idle\",\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 13,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"id\": \"00000000000f\",\n   \"kind\": \"outcome\",\n   \"payload\": {\n    \"failure_mode\": null,\n    \"termination_reason\": \"failure\"\n   },\n   \"reason\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  }\n ],\n \"history\": [\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 2,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"id\": \"000000000002\",\n      \"kind\": \"failure_start\",\n      \"payload\": {\n       \"frame\": 80\n      },\n      \"reason\": null,\n      \"source\": \"human\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"id\": \"000000000002\"\n    }\n   ],\n   \"id\": \"aaaaaaaaaaaa\",\n   \"t\": 1792400100000000000,\n   \"undone\": false,\n   \"what\": \"fail start\"\n  },\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 14,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"id\": \"cccccccccccc\",\n      \"kind\": \"note\",\n      \"payload\": {\n       \"frame\": 1,\n       \"text\": \"x\"\n      },\n      \"reason\": null,\n      \"source\": \"human\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"id\": \"cccccccccccc\"\n    }\n   ],\n   \"id\": \"bbbbbbbbbbbb\",\n   \"t\": 1792400100000001000,\n   \"undone\": true,\n   \"undone_at\": \"2026-10-20T09:15:00Z\",\n   \"what\": \"add note\"\n  },\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 6,\n      \"by\": \"segmenter\",\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"id\": \"000000000008\",\n      \"kind\": \"segment_plan\",\n      \"payload\": {\n       \"segments\": [\n        {\n         \"end\": 28,\n         \"name\": \"reach\",\n         \"start\": 0\n        },\n        {\n         \"end\": 72,\n         \"name\": \"Grasp\",\n         \"start\": 28\n        },\n        {\n         \"end\": 110,\n         \"name\": \"wiggle\",\n         \"start\": 72\n        }\n       ]\n      },\n      \"reason\": null,\n      \"source\": \"agent\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"id\": \"000000000008\"\n    }\n   ],\n   \"id\": \"dddddddddddd\",\n   \"undone\": false,\n   \"what\": \"older logger step, no t\"\n  }\n ],\n \"rev\": 23,\n \"reviewed\": true,\n \"reviewed_at\": \"2026-10-20T09:15:00Z\",\n \"reviewed_by\": \"reviewer-1\",\n \"seq\": 14,\n \"version\": 1\n}\n",
+   "format2": "{\n \"edits\": [\n  {\n   \"accepted_seq\": 1,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000001\",\n   \"job_id\": null,\n   \"kind\": \"outcome\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"failure_mode\": \"dropped after lift\",\n    \"outcome\": \"failure\",\n    \"termination_reason\": \"timeout\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 2,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000002\",\n   \"job_id\": null,\n   \"kind\": \"failure_start\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"frame\": 80\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": null,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": \"idle finder (commands)\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000003\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"exclude\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"end\": 12,\n    \"start\": 0\n   },\n   \"reason\": \"no movement for 0.4 s at the start, policy driving\",\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": null,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": \"idle finder (commands)\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": null,\n   \"decided_by\": null,\n   \"edit_id\": \"000000000004\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"exclude\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"end\": 120,\n    \"start\": 112\n   },\n   \"reason\": \"idle\",\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"proposed\"\n  },\n  {\n   \"accepted_seq\": 3,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000005\",\n   \"job_id\": null,\n   \"kind\": \"step_boundary\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"after\": \" Grasp \",\n    \"before\": \"reach\",\n    \"frame\": 32,\n    \"index\": 0\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 4,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000006\",\n   \"job_id\": null,\n   \"kind\": \"segment_edge\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"edge\": \"end\",\n    \"frame\": 112,\n    \"index\": 2\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 5,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000007\",\n   \"job_id\": null,\n   \"kind\": \"drive_boundary\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"frame\": 90,\n    \"index\": 0\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 6,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": \"segmenter\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000008\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"segments\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"segments\": [\n     {\n      \"end\": 28,\n      \"legacy_name\": \"reach\",\n      \"start\": 0,\n      \"subtask_id\": \"s-reach\"\n     },\n     {\n      \"end\": 72,\n      \"legacy_name\": \"Grasp\",\n      \"start\": 28,\n      \"subtask_id\": \"s-grasp\"\n     },\n     {\n      \"end\": 110,\n      \"legacy_name\": \"wiggle\",\n      \"start\": 72,\n      \"subtask_id\": \"unresolved\"\n     }\n    ]\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 7,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"000000000009\",\n   \"job_id\": null,\n   \"kind\": \"reject_run\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {},\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": 8,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000a\",\n   \"job_id\": null,\n   \"kind\": \"note\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"frame\": 10,\n    \"text\": \"slips at the rim\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 9,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000b\",\n   \"job_id\": null,\n   \"kind\": \"label\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"driver\": \"policy\",\n    \"end\": 50,\n    \"segment\": \"lift\",\n    \"start\": 40,\n    \"text\": \"hesitates\"\n   },\n   \"reason\": null,\n   \"replaced_by\": \"00000000000c\",\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  },\n  {\n   \"accepted_seq\": 10,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000c\",\n   \"job_id\": null,\n   \"kind\": \"label\",\n   \"legacy_reading\": {\n    \"at\": \"2026-10-20T09:15:00Z\",\n    \"by\": \"reader-agent\",\n    \"meaning\": \"hesitation\",\n    \"train\": \"exclude\"\n   },\n   \"legacy_reading_history\": [\n    {\n     \"at\": \"2026-10-20T09:15:00Z\",\n     \"by\": \"reader-agent\",\n     \"meaning\": \"fine\",\n     \"train\": \"keep\"\n    }\n   ],\n   \"payload\": {\n    \"driver\": null,\n    \"end\": 55,\n    \"segment\": null,\n    \"start\": 40,\n    \"text\": \"hesitates over the cap\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": \"00000000000b\",\n   \"source\": \"human\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 11,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": \"notes-agent\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000d\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"event_note\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"key\": \"takeover:90\",\n    \"text\": \"operator saw a slip\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 12,\n   \"adjusted\": true,\n   \"agent_version\": \"unknown\",\n   \"by\": \"idle\",\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000e\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"exclude\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"end\": 26,\n    \"start\": 20\n   },\n   \"reason\": \"idle\",\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"accepted\"\n  },\n  {\n   \"accepted_seq\": 13,\n   \"adjusted\": false,\n   \"agent_version\": null,\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_by\": null,\n   \"edit_id\": \"00000000000f\",\n   \"job_id\": null,\n   \"kind\": \"outcome\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"failure_mode\": null,\n    \"outcome\": \"failure\",\n    \"termination_reason\": \"failure\"\n   },\n   \"reason\": null,\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"human\",\n   \"status\": \"rejected\"\n  }\n ],\n \"history\": [\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 2,\n      \"adjusted\": false,\n      \"agent_version\": null,\n      \"by\": null,\n      \"corrects\": null,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_by\": null,\n      \"edit_id\": \"000000000002\",\n      \"job_id\": null,\n      \"kind\": \"failure_start\",\n      \"legacy_reading\": null,\n      \"legacy_reading_history\": [],\n      \"payload\": {\n       \"frame\": 80\n      },\n      \"reason\": null,\n      \"replaced_by\": null,\n      \"replaces\": null,\n      \"source\": \"human\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"edit_id\": \"000000000002\"\n    }\n   ],\n   \"step_id\": \"aaaaaaaaaaaa\",\n   \"t\": 1792400100000000000,\n   \"undone\": false,\n   \"undone_at\": null,\n   \"what\": \"fail start\"\n  },\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 14,\n      \"adjusted\": false,\n      \"agent_version\": null,\n      \"by\": null,\n      \"corrects\": null,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_by\": null,\n      \"edit_id\": \"cccccccccccc\",\n      \"job_id\": null,\n      \"kind\": \"note\",\n      \"legacy_reading\": null,\n      \"legacy_reading_history\": [],\n      \"payload\": {\n       \"frame\": 1,\n       \"text\": \"x\"\n      },\n      \"reason\": null,\n      \"replaced_by\": null,\n      \"replaces\": null,\n      \"source\": \"human\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"edit_id\": \"cccccccccccc\"\n    }\n   ],\n   \"step_id\": \"bbbbbbbbbbbb\",\n   \"t\": 1792400100000001000,\n   \"undone\": true,\n   \"undone_at\": \"2026-10-20T09:15:00Z\",\n   \"what\": \"add note\"\n  },\n  {\n   \"at\": \"2026-10-20T09:15:00Z\",\n   \"changes\": [\n    {\n     \"after\": {\n      \"accepted_seq\": 6,\n      \"adjusted\": false,\n      \"agent_version\": \"unknown\",\n      \"by\": \"segmenter\",\n      \"corrects\": null,\n      \"created_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_at\": \"2026-10-20T09:15:00Z\",\n      \"decided_by\": null,\n      \"edit_id\": \"000000000008\",\n      \"job_id\": \"unknown\",\n      \"kind\": \"segments\",\n      \"legacy_reading\": null,\n      \"legacy_reading_history\": [],\n      \"payload\": {\n       \"segments\": [\n        {\n         \"end\": 28,\n         \"legacy_name\": \"reach\",\n         \"start\": 0,\n         \"subtask_id\": \"s-reach\"\n        },\n        {\n         \"end\": 72,\n         \"legacy_name\": \"Grasp\",\n         \"start\": 28,\n         \"subtask_id\": \"s-grasp\"\n        },\n        {\n         \"end\": 110,\n         \"legacy_name\": \"wiggle\",\n         \"start\": 72,\n         \"subtask_id\": \"unresolved\"\n        }\n       ]\n      },\n      \"reason\": null,\n      \"replaced_by\": null,\n      \"replaces\": null,\n      \"source\": \"agent\",\n      \"status\": \"accepted\"\n     },\n     \"before\": null,\n     \"edit_id\": \"000000000008\"\n    }\n   ],\n   \"step_id\": \"dddddddddddd\",\n   \"t\": null,\n   \"undone\": false,\n   \"undone_at\": null,\n   \"what\": \"older logger step, no t\"\n  }\n ],\n \"legacy_subtask_map\": {\n  \"entries\": [\n   {\n    \"recorded_name\": \"reach\",\n    \"step_index\": 0,\n    \"subtask_id\": \"s-reach\"\n   },\n   {\n    \"recorded_name\": \" Grasp \",\n    \"step_index\": 1,\n    \"subtask_id\": \"s-grasp\"\n   },\n   {\n    \"recorded_name\": \"lift\",\n    \"step_index\": 2,\n    \"subtask_id\": \"s-lift\"\n   },\n   {\n    \"recorded_name\": \"Grasp\",\n    \"step_index\": null,\n    \"subtask_id\": \"s-grasp\"\n   },\n   {\n    \"recorded_name\": \"reach\",\n    \"step_index\": null,\n    \"subtask_id\": \"s-reach\"\n   },\n   {\n    \"recorded_name\": \"wiggle\",\n    \"step_index\": null,\n    \"subtask_id\": \"unresolved\"\n   }\n  ],\n  \"run_id\": \"5b0c6a8e-1f2d-4c3b-9a7e-2d4f6b8a0c1e\",\n  \"task_id\": \"demo-task\"\n },\n \"lock_log\": [],\n \"locked\": null,\n \"rev\": 23,\n \"review_format\": 2,\n \"reviewed\": true,\n \"reviewed_at\": \"2026-10-20T09:15:00Z\",\n \"reviewed_by\": \"reviewer-1\",\n \"run_id\": \"5b0c6a8e-1f2d-4c3b-9a7e-2d4f6b8a0c1e\",\n \"seq\": 14\n}\n"
+  },
+  "format1_minimal.json no task": {
+   "format1": "{\n \"edits\": [\n  {\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": null,\n   \"id\": \"000000000015\",\n   \"kind\": \"exclude\",\n   \"payload\": {\n    \"end\": 9,\n    \"start\": 5\n   },\n   \"reason\": \"idle\",\n   \"source\": \"agent\",\n   \"status\": \"proposed\"\n  }\n ],\n \"rev\": 0,\n \"reviewed\": false,\n \"reviewed_at\": null,\n \"seq\": 0,\n \"version\": 1\n}\n",
+   "format2": "{\n \"edits\": [\n  {\n   \"accepted_seq\": null,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": null,\n   \"decided_by\": null,\n   \"edit_id\": \"000000000015\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"exclude\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"end\": 9,\n    \"start\": 5\n   },\n   \"reason\": \"idle\",\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"proposed\"\n  }\n ],\n \"history\": [],\n \"legacy_subtask_map\": {\n  \"entries\": [\n   {\n    \"recorded_name\": \"reach\",\n    \"step_index\": 0,\n    \"subtask_id\": \"unresolved\"\n   },\n   {\n    \"recorded_name\": \" Grasp \",\n    \"step_index\": 1,\n    \"subtask_id\": \"unresolved\"\n   },\n   {\n    \"recorded_name\": \"lift\",\n    \"step_index\": 2,\n    \"subtask_id\": \"unresolved\"\n   }\n  ],\n  \"run_id\": \"5b0c6a8e-1f2d-4c3b-9a7e-2d4f6b8a0c1e\",\n  \"task_id\": null\n },\n \"lock_log\": [],\n \"locked\": null,\n \"rev\": 0,\n \"review_format\": 2,\n \"reviewed\": false,\n \"reviewed_at\": null,\n \"reviewed_by\": null,\n \"run_id\": \"5b0c6a8e-1f2d-4c3b-9a7e-2d4f6b8a0c1e\",\n \"seq\": 0\n}\n"
+  },
+  "format1_minimal.json task": {
+   "format1": "{\n \"edits\": [\n  {\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": null,\n   \"id\": \"000000000015\",\n   \"kind\": \"exclude\",\n   \"payload\": {\n    \"end\": 9,\n    \"start\": 5\n   },\n   \"reason\": \"idle\",\n   \"source\": \"agent\",\n   \"status\": \"proposed\"\n  }\n ],\n \"rev\": 0,\n \"reviewed\": false,\n \"reviewed_at\": null,\n \"seq\": 0,\n \"version\": 1\n}\n",
+   "format2": "{\n \"edits\": [\n  {\n   \"accepted_seq\": null,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": null,\n   \"decided_by\": null,\n   \"edit_id\": \"000000000015\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"exclude\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"end\": 9,\n    \"start\": 5\n   },\n   \"reason\": \"idle\",\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"proposed\"\n  }\n ],\n \"history\": [],\n \"legacy_subtask_map\": {\n  \"entries\": [\n   {\n    \"recorded_name\": \"reach\",\n    \"step_index\": 0,\n    \"subtask_id\": \"s-reach\"\n   },\n   {\n    \"recorded_name\": \" Grasp \",\n    \"step_index\": 1,\n    \"subtask_id\": \"s-grasp\"\n   },\n   {\n    \"recorded_name\": \"lift\",\n    \"step_index\": 2,\n    \"subtask_id\": \"s-lift\"\n   }\n  ],\n  \"run_id\": \"5b0c6a8e-1f2d-4c3b-9a7e-2d4f6b8a0c1e\",\n  \"task_id\": \"demo-task\"\n },\n \"lock_log\": [],\n \"locked\": null,\n \"rev\": 0,\n \"review_format\": 2,\n \"reviewed\": false,\n \"reviewed_at\": null,\n \"reviewed_by\": null,\n \"run_id\": \"5b0c6a8e-1f2d-4c3b-9a7e-2d4f6b8a0c1e\",\n \"seq\": 0\n}\n"
+  },
+  "format1_minimal.json task reordered": {
+   "format1": "{\n \"edits\": [\n  {\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": null,\n   \"id\": \"000000000015\",\n   \"kind\": \"exclude\",\n   \"payload\": {\n    \"end\": 9,\n    \"start\": 5\n   },\n   \"reason\": \"idle\",\n   \"source\": \"agent\",\n   \"status\": \"proposed\"\n  }\n ],\n \"rev\": 0,\n \"reviewed\": false,\n \"reviewed_at\": null,\n \"seq\": 0,\n \"version\": 1\n}\n",
+   "format2": "{\n \"edits\": [\n  {\n   \"accepted_seq\": null,\n   \"adjusted\": false,\n   \"agent_version\": \"unknown\",\n   \"by\": null,\n   \"corrects\": null,\n   \"created_at\": \"2026-10-20T09:15:00Z\",\n   \"decided_at\": null,\n   \"decided_by\": null,\n   \"edit_id\": \"000000000015\",\n   \"job_id\": \"unknown\",\n   \"kind\": \"exclude\",\n   \"legacy_reading\": null,\n   \"legacy_reading_history\": [],\n   \"payload\": {\n    \"end\": 9,\n    \"start\": 5\n   },\n   \"reason\": \"idle\",\n   \"replaced_by\": null,\n   \"replaces\": null,\n   \"source\": \"agent\",\n   \"status\": \"proposed\"\n  }\n ],\n \"history\": [],\n \"legacy_subtask_map\": {\n  \"entries\": [\n   {\n    \"recorded_name\": \"reach\",\n    \"step_index\": 0,\n    \"subtask_id\": \"s-reach\"\n   },\n   {\n    \"recorded_name\": \" Grasp \",\n    \"step_index\": 1,\n    \"subtask_id\": \"s-grasp\"\n   },\n   {\n    \"recorded_name\": \"lift\",\n    \"step_index\": 2,\n    \"subtask_id\": \"s-lift\"\n   }\n  ],\n  \"run_id\": \"5b0c6a8e-1f2d-4c3b-9a7e-2d4f6b8a0c1e\",\n  \"task_id\": \"demo-task\"\n },\n \"lock_log\": [],\n \"locked\": null,\n \"rev\": 0,\n \"review_format\": 2,\n \"reviewed\": false,\n \"reviewed_at\": null,\n \"reviewed_by\": null,\n \"run_id\": \"5b0c6a8e-1f2d-4c3b-9a7e-2d4f6b8a0c1e\",\n \"seq\": 0\n}\n"
+  }
+ }
+}

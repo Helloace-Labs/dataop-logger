@@ -128,7 +128,7 @@ People label spans in the viewer in plain language. When the user asks you to re
 
 1. Run `aftershock-logger labels <dataset_root> --uninterpreted`. Each entry has the label's text, driver and segment, and what was recorded in that span (control modes, task steps, the run's outcome).
 2. Decide for each label whether its frames should train the model. Read `exclude` into anything that says the frames are wrong, unsafe, blocked, a mistake or not to be used. Read `keep` into descriptions of normal or good behaviour, segment names and driver corrections.
-3. Record it: `aftershock-logger interpret <dataset_root> <run_id> <label_id> --train keep|exclude --meaning "<one short sentence>"`.
+3. Record it: `aftershock-logger interpret <dataset_root> <run_id> <label_id> --train keep|exclude --meaning "<one short sentence>" --by <your name>`. Your reading is a proposal: it shapes training once a person accepts it in the viewer.
 4. If a label is ambiguous, ask the user instead of guessing, and quote it.
 
 ## Use the dataset's lists
@@ -142,7 +142,7 @@ When the user asks you to annotate runs, fill in the schema; don't write free te
 1. `aftershock-logger runs <dataset_root>` lists every run with its task segments, drive mode spans, failure moment and type, and the video files (with where each episode starts inside its file).
 2. `aftershock-logger lists <dataset_root>` gives the allowed task segment and failure type names.
 3. Watch each run's video and decide: the task segments (name, start and end in seconds), when the policy started to fail, how it failed (one failure type), and, if the recorded takeover time is wrong, when control really switched.
-4. Write it: `aftershock-logger annotate <dataset_root> <run_id> --segments '[{"name": "...", "start_s": 0, "end_s": 3.1}, ...]' --failure-at 11.2 --failure-type <name> --takeover-at 12.8 --by <your name>`. Use only list names. Each change applies at once, shows "set by <your name>" in the viewer, and a person can review, change or undo it.
+4. Write it: `aftershock-logger annotate <dataset_root> <run_id> --segments '[{"name": "...", "start_s": 0, "end_s": 3.1}, ...]' --failure-at 11.2 --failure-type <name> --takeover-at 12.8 --by <your name>`. Use only list names. Each value is a proposal marked "by <your name>": a person accepts, changes or rejects it in the viewer, and only accepted values shape training.
 5. Report what you set per run, and anything you were unsure about.
 
 ## Describing major events (AI feature)
