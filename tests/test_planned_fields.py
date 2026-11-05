@@ -387,9 +387,18 @@ def test_import_watcher_style_without_policy_mapping_keeps_policy_unknown(tmp_pa
     assert V.validate(ds.root)["ok"]
 
 
-def test_import_demos_know_no_policy_or_planner_ran(tmp_path):
-    ds = _plain(tmp_path)
-    importer.import_dataset(str(ds.root), preset="demos")
+def test_import_demos_need_an_explicit_declaration_for_null(tmp_path):
+    ds = make_ds(tmp_path, "demo")
+    for i in range(6):
+        a = np.arange(6, dtype=np.float32) + i
+        ds.add_frame({"observation.state": a, "action": a, "task": TASK})
+    ds.save_episode()
+    ds.finalize()
+    assert importer.detect(ds.root) == "demos"                  # auto-detection: nothing says a policy drove
+    importer.import_dataset(str(ds.root), preset="auto", into=str(tmp_path / "auto"))
+    m, t = _imported(tmp_path / "auto")
+    assert m["policy"] == UNKNOWN and m["planner"] == UNKNOWN   # not evidence that none ran
+    importer.import_dataset(str(ds.root), preset="demos", mapping={"policy": None, "planner": None})
     m, t = _imported(ds.root)
     assert m["policy"] is None and m["planner"] is None and "task_rev" in m
     assert manifest_fields(m)["policy"] is None                 # not legacy: null stays "no policy"
@@ -539,5 +548,32 @@ def test_viewer_lists_imports_with_unknown_and_null_policy(tmp_path):
     runs = viewer.collect(ds.root)["runs"]
     assert len(runs) == 1 and runs[0]["policy"] is None
     ds2 = _plain(tmp_path / "b")
-    importer.import_dataset(str(ds2.root), preset="demos")
+    importer.import_dataset(str(ds2.root), preset="demos", mapping={"policy": None})
     assert viewer.collect(ds2.root)["runs"][0]["policy"] is None
+
+
+# ── round 3 review ─────────────────────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize("shadow", [False, True])
+def test_validate_refuses_a_null_policy_beside_policy_evidence(tmp_path, shadow):
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        with log.run(task=TASK, policy=PolicyInfo("smolvla", "x")) as run:
+            a = np.zeros(6, np.float32)
+            if shadow:                                           # a person drove, the policy ran in shadow
+                run.add_frame({"observation.state": a, "task": TASK}, sent_action=a, expert_action=a,
+                              expert_source="human", base_action=a, inference_id=0, chunk_offset=0,
+                              control_mode="expert", **ts())
+            else:
+                add(run, 0)
+            run.end(termination_reason="success")
+    ds.finalize()
+    m = store.read_manifest(run.run_path)
+    m["policy"] = None
+    store.atomic_write_json(run.run_path / "manifest.json", m)
+    assert any("policy is null" in e for e in V.validate(ds.root)["errors"])
+    del m["task_rev"]                                            # a legacy manifest: its null policy reads as unknown
+    store.atomic_write_json(run.run_path / "manifest.json", m)
+    res = V.validate(ds.root)
+    assert res["ok"], res["errors"]

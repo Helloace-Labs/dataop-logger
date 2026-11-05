@@ -54,8 +54,9 @@ from .schema import (KNOWN_SPACES, SCHEMA_VERSION, TERMINAL_FLAG, TERMINATION_RE
 PRESETS = {
     "plain": {},
     # teleoperated (or scripted) demonstrations: a person drove every frame and every episode is a good demo
-    "demos": {"control": {"constant": "expert"}, "expert_source": "human", "outcome": {"constant": "success"},
-              "policy": None, "planner": None},
+    # it does not declare that no policy or planner ran: auto-detection picks it when nothing says a policy drove,
+    # which is not evidence of absence. Add {"policy": null, "planner": null} to the mapping to declare that.
+    "demos": {"control": {"constant": "expert"}, "expert_source": "human", "outcome": {"constant": "success"}},
     # LeRobot's human-in-the-loop recordings (gym_manipulator / HIL-SERL)
     "lerobot-hil": {"control": {"column": "complementary_info.is_intervention"}, "expert_source": "human",
                     "base_action": "sent_on_policy_frames", "outcome": {"column": "next.success"},
@@ -392,8 +393,8 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
         term[-1] = True
     elif flag == "truncated":
         trunc[-1] = True
-    # null policy or planner means none ran, which an import knows only when the mapping says so (the demos preset
-    # does); left out of the mapping, it was not recorded
+    # null policy or planner means none ran, which an import knows only when the mapping says so explicitly; left
+    # out of the mapping (every preset leaves them out), it was not recorded
     no_policy = "policy" in mp and mp["policy"] is None
     if no_policy and (np.isin(mapped_mode, ("base", "blend")).any() or bv.any()):
         raise ImportError_(f"episode {e}: the mapping says no policy ran, but the data has policy-driven frames "

@@ -17,7 +17,7 @@ import pyarrow.parquet as pq
 from . import adapter, store
 from .fingerprint import fingerprint
 from .schema import (CONTROL_MODES, OBS_TIMESTAMP_KINDS, PLANNED_TICK_COLUMNS, TERMINAL_FLAG, TERMINATION_REASONS,
-                     UNKNOWN, ActionSchema, manifest_problems, tick_sequence_problems)
+                     UNKNOWN, ActionSchema, manifest_fields, manifest_problems, tick_sequence_problems)
 
 TICK_COLUMNS = ("frame_index", "control_mode", "expert_source", "blend_weight", "base_action", "base_valid",
                 "expert_action", "expert_valid", "sent_action", "safety_modified", "inference_id", "chunk_offset",
@@ -129,6 +129,8 @@ def _check_run(run_path: Path, m: dict, episodes: dict, errors: list) -> bool:
         if not np.all(np.isfinite(a)):
             err(f"{name} has NaN or Inf")
     bv, ev = np.array(col["base_valid"], bool), np.array(col["expert_valid"], bool)
+    if manifest_fields(m)["policy"] is None and (bv.any() or any(x in ("base", "blend") for x in col["control_mode"])):
+        err("policy is null (no policy ran), but some ticks were driven by the policy or carry a base_action")
     if np.any(base[~bv] != 0) or np.any(expert[~ev] != 0):
         err("an invalid base_action/expert_action row is not zero-filled")
     for i in range(n):
