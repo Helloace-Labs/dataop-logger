@@ -111,7 +111,7 @@ function batchBar() {            // which batch the list shows, its review progr
   const span = times.length ? (day(times[0]) === day(times[times.length - 1]) ? `${day(times[0])} ${clock(times[0])}–${clock(times[times.length - 1])}`
     : `${day(times[0])} – ${day(times[times.length - 1])}`) : "";
   const btime = b ? `<div class="btime">${span ? `Runs recorded ${runs.some(r => r.time_estimated && b.runs.includes(r.run_id)) ? "about " : ""}${esc(span)} · ` : ""}batch created ${esc(day(b.created_at))} ${esc(clock(b.created_at))}</div>` : "";
-  const warn = b && b.mixed_policy ? `<span class="pill warn" title="Runs in this batch were recorded with different policies">mixed policies</span>` : "";
+  const warn = b && b.mixed_policy ? `<span class="pill warn" title="Runs in this batch differ in station, task, policy or planner">mixed policies</span>` : "";
   const lineage = b && b.parent ? `<div class="blin">Collected with the model trained from ${esc((batches.find(x => x.batch_id === b.parent.batch_id) || {}).name || "an earlier batch")}</div>` : "";
   return `<div class="bbar">
     <div class="brow"><label class="blabel" for="bsel">Batch</label><select id="bsel" class="bsel">${opts}<option value="all" ${batchSel === "all" ? "selected" : ""}>All runs</option></select></div>

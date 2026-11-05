@@ -151,8 +151,11 @@ with log.run(task="pick up the tube", policy=policy_info, env=env) as run:
 
 ## Batches, import and export (v0.4)
 
-See `docs/DESIGN_batches_import_export.md` and `reviews/round17_decisions.md`. In short: `dataop/batches.json` holds
-every batch and the run-to-batch map under one lock (collecting, reviewing, locked; locked runs refuse review edits).
+See `docs/DESIGN_batches_import_export.md` and `reviews/round17_decisions.md`. In short: each batch (a pack in
+Aftershock) is one file, `dataop/batches/<batch_id>.json`, holding its runs, its identity (station, task, policy,
+planner) and `mixed_policy`; all batch files change under one lock (collecting, reviewing, locked; locked runs refuse
+review edits, and a locked batch's membership is frozen until it is unlocked with a reason). A dataset written before
+logger task L3 keeps one `dataop/batches.json`; it reads the same, and the first change moves it to per-batch files.
 Import binds runs to an existing LeRobot v3.0 dataset; control mode and outcome may be `unknown` and timestamps
 `from_dataset_timestamp` for imported runs, and a known base action may have no inference record. Export writes a new
 LeRobot dataset from locked batches with the `filtered`, `dagger` or `residual` recipe and records its provenance in

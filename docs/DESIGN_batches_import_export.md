@@ -31,17 +31,37 @@ So a batch is a round, export is the build script, and import is what the backfi
 **Definition.** A batch is a set of runs collected with one policy version and reviewed together, so that one
 training set can be generated from it. In DAgger it is one round.
 
-**Storage.** `dataop/batches/<batch_id>.json`, one file per batch, under the same lock rules as `lists.json`:
+**Storage.** `dataop/batches/<batch_id>.json`, one file per batch (logger task L3). In the Aftershock app a batch is
+a pack, and this file is the pack record:
 
 ```
-{version: 1, batch_id, name, purpose: free text, status, created_at,
+{version: 1, registry_rev, seq, batch_id, name, purpose: free text, status, created_at,
  policy: {family, source, revision} | null,     # the policy the runs were collected with (from run manifests)
- parent_export: {batch_id, export_id} | null,     # the training set whose model collected this batch (lineage)
+ identity: {station, task, policy, planner} | null,   # what every run in the batch should share
+ mixed_policy: bool,                              # some run's identity differs from the batch's
+ parent: {batch_id, export_id} | null,            # the training set whose model collected this batch (lineage)
+ model: source@revision | null,                   # the model trained from this batch's export
  runs: [run_id],                                  # membership; manifests stay immutable
- locked: {at, by, runs: {run_id: {review_rev, review_digest}}} | null,
+ locked: {at, by, runs: {run_id: {review_rev, review_digest}}, forced} | null,
  exports: [export record, see section 3],
  history: [{at, by, what}]}
 ```
+
+- **Identity.** `station` (the manifest's station, `unknown` until the logger records one), `task` (the run's
+  `task_id`), `policy` (`{family, source, revision}`, null when no policy ran, `unknown` when not recorded) and
+  `planner` (the planner id, null or `unknown`). Null and `unknown` stay apart. A batch takes the identity of its first
+  run; a batch moved from the old single file takes the identity most of its runs share.
+- **One lock, all or nothing.** Every change runs under `dataop/batches.lock`. A change to several files (a move, or
+  opening a new collecting batch, which closes the old one) first writes every new file into
+  `dataop/batches/.journal.json`, then the files, then removes the journal. Readers overlay a journal left by a crash,
+  and the next writer finishes it, so a run is never seen in two batches or in none. `registry_rev` is the registry's
+  revision when the file was last written; the registry's revision is the highest one, and every change raises it by
+  one. Callers pass the revision they read, and a stale one is refused.
+- **Older datasets.** A dataset written before L3 keeps every batch in one `dataop/batches.json`
+  (`{version: 1, rev, batches, members: {run_id: batch_id}}`). Readers accept it unchanged, including on a read-only
+  dataset. The first change (or first read of a writable dataset) writes the per-batch files with every field kept, and
+  renames the old file to `batches.json.migrated`; nothing is deleted. Loggers older than L3 do not read the per-batch
+  files.
 
 **Lifecycle.** `collecting -> reviewing -> locked`. Export is allowed only from `locked`.
 
@@ -51,17 +71,23 @@ training set can be generated from it. In DAgger it is one round.
   batch). Locking records each run's review `rev` and a digest of its effective review, so an export can prove which
   review it was built from. `unlock` is allowed, needs a reason, is written to `history`, and marks earlier exports
   as `stale` (still listed, flagged as built from an older review).
+- **A locked batch's membership is frozen.** No run moves into or out of it, no import adds to it and no unplaced run
+  is placed into it; each attempt fails with an error naming the batch. Unlock it first, with a reason. The lock check
+  and the move happen under the same lock, so a batch cannot be locked or unlocked halfway through a move. A move
+  marks the training sets made from the batch the run left as out of date, and is written to both batches' history.
 
 **How runs join.**
 
 - Logger: `RunLogger(dataset, ..., batch="round 3")` opens or continues that batch; each committed run is added at
-  commit. Without `batch=`, a run joins the collecting batch, or a new one is opened and named after the run's
-  policy (`smolvla @ <revision>`). A run whose policy differs from the batch's policy is still added but flagged
+  commit. Without `batch=`, a run joins the collecting batch when its identity matches the batch's; otherwise the
+  collecting batch is closed and a new one is opened, named after the run's policy (`smolvla @ <revision>`, with a
+  number added if that name is taken). A run added by name to a batch with another identity is still added but flags
   `mixed_policy` on the batch (shown as a data warning), because mixing policies in one DAgger round is usually a
   mistake but sometimes intended.
 - Import: imported runs join the batch named with `--batch` (section 2).
-- Existing datasets with no batches: on first read, every committed run with no batch goes into one batch per policy
-  (source + revision), status `reviewing`. Nothing is moved; this is just grouping.
+- Existing datasets with no batches: on first read, every committed run with no batch goes into one batch per
+  identity (station, task, policy, planner), status `reviewing`, never into a locked batch. Nothing is moved; this is
+  just grouping.
 - CLI: `aftershock-logger batches <root> list | show <b> | new <name> | add <b> <run>... | move <run> <b> | close <b> |
   lock <b> | unlock <b> --reason ... | rename <b> <name> | link <b> --model <source@revision>`. All print JSON with
   `--json` for agents.
