@@ -5,6 +5,7 @@ State machine per run: active -> staged -> committed, with terminal discarded, s
 from __future__ import annotations
 
 import datetime as _dt
+from pathlib import Path
 import shutil
 import time
 import uuid
@@ -61,17 +62,29 @@ class RunError(RuntimeError):
     pass
 
 
+def default_spill_dir() -> Path:
+    """A persistent per-user folder: $XDG_DATA_HOME/aftershock-logger/spill, else ~/.local/share/aftershock-logger/spill.
+    It survives reboots, but is usually on the same disk as the dataset; set RunLogger(spill_dir=...) on a robot."""
+    import os
+    base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    return Path(base) / "aftershock-logger" / "spill"
+
+
 class RunLogger:
     """One per dataset root. Holds the single-writer lock until close()."""
 
     def __init__(self, dataset, action_schema: ActionSchema, obs_timestamp_kind: str = "bundle_completion",
                  action_key: str = "action", batch: str | None = None,
-                 planner: PlannerInfo | dict | None | str = UNKNOWN):
+                 planner: PlannerInfo | dict | None | str = UNKNOWN, spill_dir: str | None = None):
         """batch: the batch new runs join (opened if it does not exist). Without it, runs join the batch that is
         collecting, or a new batch named after the policy.
 
         planner: the planner that picks subtasks in every run of this writer: PlannerInfo(name, id), None when no
-        planner runs, or "unknown" (the default) when the caller does not say. A run can override it."""
+        planner runs, or "unknown" (the default) when the caller does not say. A run can override it.
+
+        spill_dir: where close() writes a stopped run's frames when they still cannot be written to the dataset's
+        quarantine folder. On a robot, set it to a persistent folder on a different disk from the dataset. The
+        default is a per-user folder (default_spill_dir()), which is usually on the same disk as the dataset."""
         if obs_timestamp_kind not in ("capture", "bundle_completion"):
             raise ValueError("obs_timestamp_kind must be 'capture' or 'bundle_completion'")
         self.dataset = dataset
@@ -84,17 +97,64 @@ class RunLogger:
         self.broken: str | None = None                   # set after a mid-save failure; no more runs
         self._lock = store.WriterLock(self.root)
         self._active: Run | None = None
+        self.spill_dir = spill_dir
+        self._unsaved_runs: list[Run] = []                # stopped runs whose frames are only in memory
 
     def close(self) -> None:
-        if self._active is not None and self._active.state == "active":
-            self._active.discard()
-        self._lock.release()
+        """Release the writer lock. A stopped run whose frames are still only in memory is written to quarantine
+        once more, then to spill_dir; a RunError names where they went, or that they were not written at all."""
+        try:
+            if self._active is not None and self._active.state == "active":
+                self._active.discard()
+        finally:
+            self._lock.release()
+        problems = []
+        for run in list(self._unsaved_runs):
+            try:
+                run.retry_quarantine()
+                continue
+            except Exception as e:
+                first = f"{type(e).__name__}: {e}"
+            from .frame_queue import write_partial
+            spill = Path(self.spill_dir) if self.spill_dir else default_spill_dir()
+            rows, observations, info = run._unsaved_quarantine
+            try:
+                spill.mkdir(parents=True, exist_ok=True)
+                path = write_partial(run, rows, observations, info, qdir=spill)
+            except Exception as e:
+                problems.append(f"run {run.run_id}: {len(rows)} frames were NOT written anywhere (quarantine: {first}; "
+                                f"spill folder {spill}: {type(e).__name__}: {e}); they are lost when this process ends")
+                continue
+            run.quarantine_path, run._unsaved_quarantine = path, None
+            self._unsaved_runs.remove(run)
+            if run._stop is not None:
+                run._stop.quarantine_path, run._stop.spilled = path, True
+                run._stop._settle()
+            hint = "" if self.spill_dir else (" (the default spill folder, usually on the same disk as the dataset; "
+                                              "set spill_dir to a persistent folder on a different disk)")
+            problems.append(f"run {run.run_id}: {len(rows)} frames could not be written to the dataset's quarantine "
+                            f"({first}) and were spilled to {path}{hint}; move that folder to "
+                            f"{store.quarantine_dir(self.root)} when there is space")
+        if problems:
+            raise RunError("; ".join(problems))
 
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
-        self.close()
+    def __exit__(self, exc_type, exc, tb):
+        """A close() error never hides the exception that is leaving the block: a ControlledStop gets it attached
+        (close_error, and in its message) and a warning repeats it; the original exception keeps propagating."""
+        try:
+            self.close()
+        except RunError as e:
+            if exc is None:
+                raise
+            from .frame_queue import ControlledStop
+            if isinstance(exc, ControlledStop):
+                exc.close_error = str(e)
+                exc._settle()
+            warnings.warn(f"closing the logger: {e}")
+        return False
 
     @contextmanager
     def run(self, task: str, policy: PolicyInfo | None | str = UNKNOWN, env: EnvInfo | None = None,
@@ -127,7 +187,12 @@ class RunLogger:
         self._active = r
         try:
             yield r
-        except BaseException:
+        except BaseException as exc:
+            if r.state == "active" and r._queue is not None and r._queue.stopped is not None:
+                stop = r._quarantine_stopped()                 # keep every accepted frame, never discard them
+                if exc is not stop:
+                    warnings.warn(f"{stop}; frames: {stop.quarantine_path or stop.quarantine_error}")
+                raise
             if r.state == "active":
                 r.discard()
             elif r.state == "staged":
@@ -135,6 +200,8 @@ class RunLogger:
             raise
         if r.state == "discarded":
             return
+        if r.state == "active" and r._queue is not None and r._queue.stopped is not None:
+            raise r._quarantine_stopped()                      # the caller caught ControlledStop and left the block
         if r.state != "staged":
             r.discard()
             raise RunError("the run block ended without run.end(); the episode was discarded, not saved")
@@ -165,6 +232,13 @@ class Run:
         self._prediction_ids: set[int] = set()
         self._end: dict | None = None
         self._integrity: dict | None = None
+        self._count = 0                                    # frames accepted (queued or written)
+        self._last: dict | None = None                     # the last accepted tick row
+        self._queue = None                                 # a FrameQueue when frames go through run.queue()
+        self.quarantine_path = None                        # set when this run's partial record is quarantined
+        self._unsaved_quarantine = None                    # a partial record that could not be written yet
+        self._blocks_logger = False                        # True while that record stops the logger
+        self._stop = None                                  # the ControlledStop that ended this run
 
     # ── recording ────────────────────────────────────────────────────────────
 
@@ -186,6 +260,32 @@ class Run:
         commanded, or None when no planner commanded one).
         """
         self._require("active")
+        if self._queue is not None:
+            raise RunError("this run records through run.queue(); add frames with queue.put()")
+        frame, row = self._prepare(frame, sent_action=sent_action, control_mode=control_mode, obs_ns=obs_ns,
+                                   sent_ns=sent_ns, base_action=base_action, expert_action=expert_action,
+                                   expert_source=expert_source, blend_weight=blend_weight,
+                                   safety_modified=safety_modified, obs_skew_ns=obs_skew_ns,
+                                   inference_id=inference_id, chunk_offset=chunk_offset, reward=reward,
+                                   terminated=terminated, truncated=truncated, prompt=prompt, prompt_rev=prompt_rev,
+                                   subtask_cmd=subtask_cmd, control_gen=control_gen)
+        try:
+            self._write_frame(frame, row)
+        except BaseException:
+            self.discard()                                     # a partial add can leave LeRobot's buffer misaligned
+            raise
+        self._rows.append(row)
+        return row["frame_index"]
+
+    def _prepare(self, frame: dict, *, sent_action, control_mode: str, obs_ns: int, sent_ns: int,
+                 base_action=None, expert_action=None, expert_source: str | None = None,
+                 blend_weight: float | None = None, safety_modified: bool = False, obs_skew_ns: int = -1,
+                 inference_id: int = -1, chunk_offset: int = -1, reward: float | None = None,
+                 terminated: bool = False, truncated: bool = False, prompt: str = UNKNOWN,
+                 prompt_rev: int | str = UNKNOWN, subtask_cmd=_AUTO,
+                 control_gen: int | str = UNKNOWN) -> tuple[dict, dict]:
+        """Check one frame against the rules and the frames accepted before it. Returns the frame for LeRobot and
+        the sidecar row, and counts the frame as accepted. Touches neither LeRobot nor the disk."""
         if subtask_cmd is _AUTO:
             subtask_cmd = UNKNOWN
         if self.policy is None and (base_action is not None or control_mode in ("base", "blend")):
@@ -225,7 +325,7 @@ class Run:
                 raise ValueError(f"{name} must be a non-negative int from time.monotonic_ns()")
         if obs_ns > sent_ns:
             raise ValueError("obs_ns is after sent_ns")
-        if self._rows and (obs_ns < self._rows[-1]["obs_ns"] or sent_ns < self._rows[-1]["sent_ns"]):
+        if self._last and (obs_ns < self._last["obs_ns"] or sent_ns < self._last["sent_ns"]):
             raise ValueError("timestamps went backwards")
         if obs_skew_ns < -1:
             raise ValueError("obs_skew_ns must be >= 0, or -1 when unknown")
@@ -233,7 +333,7 @@ class Run:
             raise ValueError("reward must be finite")
         if terminated and truncated:
             raise ValueError("a tick cannot be both terminated and truncated")
-        if self._rows and (self._rows[-1]["terminated"] or self._rows[-1]["truncated"]):
+        if self._last and (self._last["terminated"] or self._last["truncated"]):
             raise RunError("the previous tick ended the episode (terminated or truncated)")
         task = frame.get("task", self.task)
         if task != self.task:
@@ -243,22 +343,12 @@ class Run:
         base = self.schema.coerce(base_action, "base_action") if base_action is not None else None
         expert = self.schema.coerce(expert_action, "expert_action") if expert_action is not None else None
 
-        expected = len(self._rows)
-        before = adapter.buffer_size(self.dataset)
-        if before is not None and before != expected:
-            raise RunError(f"episode buffer has {before} frames but this run added {expected}; "
-                           "add frames only through run.add_frame()")
         frame = dict(frame)
         frame["task"] = self.task
         frame[self.logger.action_key] = sent                  # the same canonical (read-only) array goes to LeRobot
-        try:
-            self.dataset.add_frame(frame)
-        except BaseException:
-            self.discard()                                     # a partial add can leave LeRobot's buffer misaligned
-            raise
         n = self.schema.dim
-        self._rows.append({
-            "frame_index": expected,
+        row = {
+            "frame_index": self._count,
             "control_mode": control_mode,
             "expert_source": expert_source,
             "blend_weight": float(blend_weight),
@@ -278,18 +368,48 @@ class Run:
             "terminated": bool(terminated),
             "truncated": bool(truncated),
             **planned,
-        })
+        }
         self._seq.accept(planned)
-        return expected
+        self._last = row
+        self._count += 1
+        return frame, row
+
+    def _write_frame(self, frame: dict, row: dict) -> None:
+        """Hand one prepared frame to LeRobot. The caller appends the row once this returns."""
+        expected = row["frame_index"]
+        if expected != len(self._rows):
+            raise RunError(f"frame {expected} is out of order; the run has written {len(self._rows)}")
+        before = adapter.buffer_size(self.dataset)
+        if before is not None and before != expected:
+            raise RunError(f"episode buffer has {before} frames but this run added {expected}; "
+                           "add frames only through run.add_frame()")
+        self.dataset.add_frame(frame)
+
+    def queue(self, max_seconds: float = 2.0, max_frames: int | None = None, stall_timeout: float | None = None,
+              stop_timeout: float | None = None):
+        """Record through a bounded queue: queue.put() takes a frame without waiting for LeRobot, and a writer thread
+        adds it. If the queue is full or a write fails, put() raises ControlledStop and the run is quarantined when
+        the run block exits. stall_timeout: how long run.end() waits with no frame finishing before it calls the
+        writer hung; stop_timeout: how long a stop waits for the frame being written (both 10 s by default).
+        See frame_queue.FrameQueue."""
+        self._require("active")
+        if self._queue is not None:
+            raise RunError("this run already has a queue")
+        if self._count:
+            raise RunError("start the queue before the first frame")
+        from .frame_queue import FrameQueue
+        self._queue = FrameQueue(self, max_seconds=max_seconds, max_frames=max_frames, stall_timeout=stall_timeout,
+                                 stop_timeout=stop_timeout)
+        return self._queue
 
     def complete_transition(self, reward: float, terminated: bool = False, truncated: bool = False) -> None:
         """Attach a reward (and done flags) that arrived one loop late to the previous tick."""
         self._require("active")
-        if not self._rows:
+        if self._last is None:
             raise RunError("no tick to complete")
         if not np.isfinite(reward):
             raise ValueError("reward must be finite")
-        row = self._rows[-1]
+        row = self._last                                       # the same dict, queued or written
         if row["reward_valid"]:
             raise RunError("the previous tick already has a reward")
         term, trunc = row["terminated"] or bool(terminated), row["truncated"] or bool(truncated)
@@ -301,7 +421,7 @@ class Run:
         """A typed event at the current tick; frame_index is -1 before the first frame."""
         self._require("active")
         self._events.append({"event_id": len(self._events), "ns": time.monotonic_ns(),
-                             "frame_index": len(self._rows) - 1, "kind": kind, "source": source,
+                             "frame_index": self._count - 1, "kind": kind, "source": source,
                              "reason": reason, "text": text})
 
     def subgoal(self, name: str, status: str, reason: str | None = None) -> None:
@@ -327,7 +447,7 @@ class Run:
             raise ValueError(f"inference_id {inference_id} must be >= 0 and unique in the run")
         if not 0 <= infer_start_ns <= infer_end_ns:
             raise ValueError("need 0 <= infer_start_ns <= infer_end_ns")
-        if not -1 <= obs_frame_index <= len(self._rows):
+        if not -1 <= obs_frame_index <= self._count:
             raise ValueError("obs_frame_index must be -1 (before the first frame) or a frame of this run")
         chunk = np.asarray(action_chunk, dtype=np.float32)
         if chunk.ndim != 2 or chunk.shape[1] != self.schema.dim:
@@ -354,6 +474,9 @@ class Run:
         self._require("active")
         if termination_reason not in TERMINATION_REASONS:
             raise ValueError(f"termination_reason must be one of {TERMINATION_REASONS}")
+        if self._queue is not None:
+            self._queue.drain()                                # every queued frame written, or ControlledStop
+            self._queue = None
         if not self._rows:
             self.discard()
             raise RunError("a run with no frames is discarded, never saved")
@@ -381,10 +504,91 @@ class Run:
         """Re-record: drop the LeRobot episode buffer and everything this run logged."""
         if self.state in ("committed", "discarded", "quarantined", "save_failed"):
             return
+        if self._queue is not None:
+            if self._queue.stopped is not None:
+                raise RunError("the queue stopped (ControlledStop); the run is quarantined when its block exits, "
+                               "not discarded")
+            if not self._queue.close():                        # the writer may still be inside LeRobot
+                self.logger.broken = "a frame writer did not finish within its timeout"
+                self.state = "discarded"
+                raise RunError(f"run discarded, but {self.logger.broken}; open a new dataset writer")
+            self._queue = None
         adapter.reset_episode_buffer(self.dataset)
         if self.run_path.exists():
             shutil.rmtree(self.run_path)
         self.state = "discarded"
+
+    def _quarantine_stopped(self):
+        """After a ControlledStop: wait for the writer, reset the LeRobot buffer, write every accepted frame to
+        dataop/quarantine/<run_id>/ and return the ControlledStop to raise, carrying where the frames went."""
+        from .frame_queue import write_partial
+        q = self._queue
+        stop = q.stopped
+        joined = q.close()
+        written, pending, observations, dropped = q.snapshot()
+        reset_error = None
+        if joined:
+            try:
+                adapter.reset_episode_buffer(self.dataset)
+            except Exception as e:
+                reset_error = f"{type(e).__name__}: {e}"
+        else:
+            reset_error = "the frame writer did not finish within its timeout, so the LeRobot buffer was left alone"
+        if reset_error:
+            self.logger.broken = f"run {self.run_id} stopped and its LeRobot buffer could not be reset ({reset_error})"
+        rows = written + pending
+        self._end = {"termination_reason": "system_error", "task_success": None, "failure_mode": None,
+                     "labels": [], "rl_ready": all(r["reward_valid"] for r in rows)}
+        self.ended_at = _now_iso()
+        info = {"reason": stop.reason, "detail": stop.detail, "frames": len(rows),
+                "frames_written_to_lerobot": len(written), "frames_queued": len(pending),
+                "queue_capacity": q.capacity, "dropped_features": dropped,
+                "lerobot_buffer_reset": reset_error is None, "lerobot_buffer_error": reset_error,
+                "stopped_at": self.ended_at}
+        self._unsaved_quarantine = (rows, observations, info)
+        self._queue = None
+        self.state = "quarantined"
+        stop.frames = len(rows)
+        self._stop = stop
+        try:
+            self.quarantine_path = write_partial(self, rows, observations, info)
+        except BaseException as e:                     # an interrupt must not leave the frames unreported either
+            stop.quarantine_error = f"{type(e).__name__}: {e}"
+            self._blocks_logger = reset_error is None
+            self.logger._unsaved_runs.append(self)
+            unsaved = (f"run {self.run_id} stopped and its {len(rows)} frames were NOT written to quarantine "
+                       f"({stop.quarantine_error}); they are only in memory: free space and call "
+                       "run.retry_quarantine(), or close the RunLogger, which retries and then spills them")
+            self.logger.broken = f"{self.logger.broken}; {unsaved}" if reset_error else unsaved
+            stop._settle()
+            if not isinstance(e, Exception):
+                raise
+        else:
+            self._unsaved_quarantine = None
+            stop.quarantine_path = self.quarantine_path
+            stop._settle()
+        return stop
+
+    def retry_quarantine(self):
+        """Write a stopped run's frames to quarantine again, after a failed first try (for example a full disk).
+        Returns the quarantine path; raises if the write fails again, keeping the frames in memory."""
+        if self._unsaved_quarantine is None:
+            if self.quarantine_path is not None:
+                return self.quarantine_path
+            raise RunError("this run has no frames waiting for quarantine")
+        from .frame_queue import write_partial
+        rows, observations, info = self._unsaved_quarantine
+        self.quarantine_path = write_partial(self, rows, observations, info)
+        self._unsaved_quarantine = None
+        if self in self.logger._unsaved_runs:
+            self.logger._unsaved_runs.remove(self)
+        if self._stop is not None:
+            self._stop.quarantine_path, self._stop.quarantine_error = self.quarantine_path, None
+            self._stop._settle()
+        if self._blocks_logger:
+            self.logger.broken = None
+            self._blocks_logger = False
+        return self.quarantine_path
 
     def _abandon_staged(self, reason: str) -> None:
         adapter.reset_episode_buffer(self.dataset)
@@ -430,11 +634,12 @@ class Run:
         if any(t != self.task for t in snap["tasks"]):
             raise RunError("a buffered frame has a different task from the run")
 
-    def _ticks_table(self) -> pa.Table:
+    def _ticks_table(self, rows: list[dict] | None = None) -> pa.Table:
+        rows = self._rows if rows is None else rows
         n = self.schema.dim
         cols = {}
-        for k in self._rows[0]:
-            vals = [r[k] for r in self._rows]
+        for k in rows[0]:
+            vals = [r[k] for r in rows]
             if k.endswith("_action"):
                 flat = np.concatenate(vals).astype(np.float32)
                 cols[k] = pa.FixedSizeListArray.from_arrays(pa.array(flat, pa.float32()), n)
@@ -446,17 +651,18 @@ class Run:
                 cols[k] = pa.array(vals)
         return pa.table(cols)
 
-    def _manifest(self, status: str, **extra) -> dict:
-        sent = np.stack([r["sent_action"] for r in self._rows])
+    def _manifest(self, status: str, rows: list[dict] | None = None, **extra) -> dict:
+        rows = self._rows if rows is None else rows
+        sent = np.stack([r["sent_action"] for r in rows])
         return {
             "schema_version": SCHEMA_VERSION, "run_id": self.run_id, "status": status,
-            "episode_index": self.episode_index, "length": len(self._rows), "task": self.task,
+            "episode_index": self.episode_index, "length": len(rows), "task": self.task,
             "task_id": self.task_id, "task_rev": self.task_rev, "planner": self.planner,
             "started_at": self.started_at, "ended_at": self.ended_at,
             **self._end,
             "fingerprint": fingerprint(self.schema.id, self.task, sent),
-            "events": self._events, "takeovers": derive_takeovers(self._rows),
-            "subgoals": derive_subgoals(self._events, len(self._rows)),
+            "events": self._events, "takeovers": derive_takeovers(rows),
+            "subgoals": derive_subgoals(self._events, len(rows)),
             "policy": asdict(self.policy) if isinstance(self.policy, PolicyInfo) else self.policy,
             "env": {**asdict(self.env), "software": {"lerobot": _lerobot_version(), "dataop_logger": _DATAOP_VERSION}},
             "action_schema": {**self.schema.to_dict(), "id": self.schema.id},
