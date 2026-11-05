@@ -510,6 +510,17 @@ def test_import_declarations_for_policy_and_planner(tmp_path):
     rep = importer.import_dataset(str(ds.root), mapping={"control": {"column": "intervention"},
                                                          "base_action": "sent_on_policy_frames", "policy": None})
     assert rep["runs"] == [] and "no policy ran" in rep["skipped"][0]["why"]     # the policy drove frames 0 to 3
+    # policy frames with no base action to back them read as unknown, but still contradict "no policy ran"
+    rep = importer.import_dataset(str(ds.root), mapping={"control": {"column": "intervention"}, "policy": None},
+                                  dry_run=True)
+    assert rep["runs"] == [] and "no policy ran" in rep["skipped"][0]["why"]
+    # every frame a person's, but a shadow policy's actions are in the data
+    rep = importer.import_dataset(str(ds.root), mapping={"control": {"constant": "expert"}, "policy": None,
+                                                         "base_action": {"column": "action"}}, dry_run=True)
+    assert rep["runs"] == [] and "no policy ran" in rep["skipped"][0]["why"]
+    rep = importer.import_dataset(str(ds.root), mapping={"control": {"constant": "expert"}, "policy": None},
+                                  dry_run=True)
+    assert len(rep["runs"]) == 1                                                   # no policy evidence: accepted
     importer.import_dataset(str(ds.root), mapping={"control": {"column": "intervention"},
                                                    "base_action": "sent_on_policy_frames",
                                                    "planner": {"name": "Rules", "id": "rules-v3"}})

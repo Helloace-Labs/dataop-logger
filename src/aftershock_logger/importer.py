@@ -288,6 +288,8 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
     else:
         mode = np.array(["unknown"] * n, dtype=object)
 
+    mapped_mode = mode.copy()                      # before frames without the matching action become unknown
+
     def actions(spec, which):
         if spec is None:
             return np.zeros((n, dim), np.float32), np.zeros(n, bool)
@@ -393,8 +395,9 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
     # null policy or planner means none ran, which an import knows only when the mapping says so (the demos preset
     # does); left out of the mapping, it was not recorded
     no_policy = "policy" in mp and mp["policy"] is None
-    if no_policy and np.isin(mode, ("base", "blend")).any():
-        raise ImportError_(f"episode {e}: the mapping says no policy ran, but the policy drove some frames")
+    if no_policy and (np.isin(mapped_mode, ("base", "blend")).any() or bv.any()):
+        raise ImportError_(f"episode {e}: the mapping says no policy ran, but the data has policy-driven frames "
+                           "or policy actions")
     planner = planner_value(mp["planner"]) if "planner" in mp else UNKNOWN
     fixed = lambda a: pa.FixedSizeListArray.from_arrays(pa.array(a.reshape(-1), pa.float32()), dim)
     table = pa.table({
