@@ -281,9 +281,9 @@ def _main(argv=None) -> int:
         from . import batches, review, store
         done, locked, bad = 0, 0, 0
         for run_path, m in store.iter_manifests(Path(a.root), "committed"):
-            if review.file_format(run_path) != 1:
-                continue
             try:
+                if review.file_format(run_path) != 1:   # no review file, or already format 2
+                    continue
                 review.load(run_path, m)
                 try:
                     b = batches.batch_of(Path(a.root), m["run_id"])

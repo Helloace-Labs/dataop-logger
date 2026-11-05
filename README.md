@@ -266,7 +266,7 @@ aftershock-logger labels <dataset_root> --uninterpreted      # JSON: each label 
 aftershock-logger interpret <dataset_root> <run_id> <label_id> --train exclude --meaning "camera blocked by a hand" --by my-agent
 ```
 
-A label that already has a reading (in effect or proposed) is refused unless you pass `--replace`, which adds another proposal next to it. Changing a label's text or span clears its reading until it is read again.
+A label that already has a reading (in effect or proposed) is refused unless you pass `--replace`, which adds another proposal next to it. Changing a label's text or span clears its reading until it is read again, and a proposed reading of the old label can no longer be accepted.
 
 **Where it is stored.** Labels, cuts and readings live in `dataop/runs/<run_id>/review.json`, in review format 2, the format the Aftershock cloud uses too (see SPEC.md). Files written by earlier versions are read as they are and rewritten in format 2 on their next change, or all at once with `aftershock-logger migrate-reviews <dataset_root>`. That file travels with the dataset and never touches the recorded frames, manifest or checksums. The reader sets `item["dataop.train_mask"]` to False for cut frames and for labels read as `exclude`, and every target mask is gated on it. `inspect` reports labels, cut frames and open suggestions. Scripts can also record structured corrections in the same file through `aftershock_logger.review` (outcome, failure start, step boundary, reject run); the viewer lists them with an Undo button.
 
@@ -410,6 +410,8 @@ The logger is before 1.0, so a minor change may change behavior. Changes since 0
 - `validate.quarantine_entries` has a new entry kind, `"unreadable"`, for a quarantine folder whose `manifest.json` is missing or not valid JSON. `validate` reports it as an error and `validate --repair` as left untouched.
 - A quarantine retry (`run.retry_quarantine()`, and the spill on close) accepts a folder already at the destination only if it is a complete record of this run's frames; otherwise it raises and keeps the frames in memory.
 - The bounded queue example holds the robot inside the run block on `ControlledStop`, then re-raises.
+- `review.file_format` returns `None` only when a run has no review file. A file that cannot be read, is not valid JSON or is in no known format raises `ReviewError` (it returned `None` before); a `review.json` link whose target is gone counts as unreadable, and `review.load` refuses it instead of reading it as an empty review. `migrate-reviews` counts such a file as refused and exits nonzero, in `--dry-run` too.
+- `review_format.accept` and `decide_many` refuse a proposed reading whose label was replaced or taken back; a bulk accept that includes one accepts nothing. `replace` refuses a new reading of such a label, and `undo` refuses a step (and `undoable` leaves it out) whose undo would make such a reading accepted again. The new helper `review_format.obsolete_reading(review, edit)` says why, or returns `None`. The viewer shows each proposed reading with its label's text and span and offers no Accept for an obsolete one.
 
 ## License
 
