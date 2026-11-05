@@ -330,15 +330,20 @@ def test_memory_stays_bounded_under_a_stalled_writer(tmp_path, monkeypatch):
     ds = make_ds(tmp_path)
     gate = threading.Event()
     slow_writer(monkeypatch, ds, 0, gate)
-    with RunLogger(ds, SCHEMA) as log:
-        with pytest.raises(ControlledStop):
-            with log.run(task=TASK, policy=POLICY) as run:
-                q = run.queue(max_seconds=0.5)                   # 15 frames at 30 Hz
-                assert q.capacity == 15
-                for i in range(1000):
-                    q.put(frame(i), **kw(i))
-                    assert q.depth() <= q.capacity + 1
-        assert i in (q.capacity, q.capacity + 1)                   # stopped once capacity frames were waiting
+    try:
+        with RunLogger(ds, SCHEMA) as log:
+            with pytest.raises(ControlledStop):
+                with log.run(task=TASK, policy=POLICY) as run:
+                    q = run.queue(max_seconds=0.5, stop_timeout=0.2)    # 15 frames at 30 Hz
+                    assert q.capacity == 15
+                    for i in range(1000):
+                        q.put(frame(i), **kw(i))
+                        assert q.depth() <= q.capacity + 1
+            assert i in (q.capacity, q.capacity + 1)               # stopped once capacity frames were waiting
+            gate.set()
+            q._thread.join(5)                                      # the writer leaves LeRobot before the close
+            assert not q._thread.is_alive()
+    finally:
         gate.set()
 
 
