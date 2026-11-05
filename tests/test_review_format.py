@@ -355,40 +355,20 @@ def test_random_operation_sequences_match_the_reference(seed):
     assert got["final"] == want["final"]
 
 
-def _mutations(rng: random.Random, d):
-    """Every path in d, each changed one way at random."""
-    paths = []
-
-    def walk(x, path):
-        paths.append(path)
-        if isinstance(x, dict):
-            for k in x:
-                walk(x[k], path + (k,))
-        elif isinstance(x, list):
-            for i, v in enumerate(x):
-                walk(v, path + (i,))
-    walk(d, ())
-    values = [None, 0, -1, 1, 2, True, "", " ", "x", "unknown", "unresolved", "aaaaaaaaaaaa", [], {}, 1.5, "a\n",
-              "human", "agent", "accepted", "proposed", "rejected", 10 ** 6, "s-reach", "Grasp", "\ud800",
-              "a\udc00b"]
-    for path in paths[1:]:
-        yield path, "set", rng.choice(values)
-        yield path, "drop", None
+_mutations = rc.mutations
+_apply = rc.apply_change
 
 
-def _apply(d, path, how, value):
-    d = copy.deepcopy(d)
-    x = d
-    for k in path[:-1]:
-        x = x[k]
-    if how == "drop":
-        if isinstance(x, dict):
-            del x[path[-1]]
-        else:
-            x.pop(path[-1])
-    else:
-        x[path[-1]] = value
-    return d
+def test_random_changes_to_a_review_with_take_backs_are_refused_or_accepted_as_the_reference_did():
+    """Pinned in expected.json, so the take back field rules are checked on a real take back without the reference."""
+    assert rc.mutation_results(rc.LoggerImpl()) == EXPECTED["mutations"]
+    got = EXPECTED["mutations"]["take_back"]
+    assert 0 < len(got["accepted"]) < got["count"]          # both answers occur
+
+
+def test_random_changes_to_a_review_with_take_backs_match_the_reference_live():
+    impl = rc.contract_impl()
+    assert rc.mutation_results(rc.LoggerImpl()) == rc.mutation_results(impl) == EXPECTED["mutations"]
 
 
 def test_random_changes_are_refused_or_accepted_like_the_reference():
@@ -397,7 +377,8 @@ def test_random_changes_are_refused_or_accepted_like_the_reference():
     m = impl.manifest(MANIFEST)
     texts = [EXPECTED["migration"]["format1_all_kinds.json task"]["format2"],
              rc.run_case(rc.LoggerImpl(), "every_kind")["final"],
-             rc.run_case(rc.LoggerImpl(), "lock_and_unlock")["final"]]
+             rc.run_case(rc.LoggerImpl(), "lock_and_unlock")["final"],
+             rc.run_case(rc.LoggerImpl(), "take_back")["final"]]
     checked = 0
     for text in texts:
         good = json.loads(text)
@@ -529,7 +510,8 @@ def test_lone_surrogates_are_refused_or_accepted_like_the_reference():
     impl = rc.contract_impl()
     m = impl.manifest(MANIFEST)
     texts = [EXPECTED["migration"]["format1_all_kinds.json task"]["format2"],
-             rc.run_case(rc.LoggerImpl(), "every_kind")["final"], rc.run_case(rc.LoggerImpl(), "lock_and_unlock")["final"]]
+             rc.run_case(rc.LoggerImpl(), "every_kind")["final"], rc.run_case(rc.LoggerImpl(), "lock_and_unlock")["final"],
+             rc.run_case(rc.LoggerImpl(), "take_back")["final"]]
     seen = {True: 0, False: 0}
     for text in texts:
         good = json.loads(text)
@@ -586,6 +568,18 @@ def test_a_take_back_records_who_and_when_and_is_final():
     # undo puts the edit back exactly as accepted
     back, _ = fmt.undo(r, r["history"][-1]["step_id"], expect_rev=3, now="t5")
     assert next(e for e in back["edits"] if e["edit_id"] == lb)["retracted_at"] is None
+
+
+def test_a_take_back_in_the_viewer_is_stored_as_take_back_whatever_the_viewer_calls_it(tmp_path):
+    run, m = _named_run(tmp_path, MANIFEST["subgoals"])
+    cut = rv.add_edit(run, m, "exclude", {"start": 4, "end": 9})
+    with rv.recording("undo cut 4-9") as rec:               # the viewer's name for the action
+        rv.decide(run, m, cut["edit_id"], False, by="q")
+    step = rv.load(run, m)["history"][-1]
+    assert step["step_id"] == rec["entry"] and rec["what"] == "undo cut 4-9"    # the page still shows its own name
+    assert step["what"] == "take back"                      # the file says what the shared format says
+    gone = next(e for e in rv.load(run, m)["edits"] if e["edit_id"] == cut["edit_id"])
+    assert (gone["status"], gone["retracted_by"]) == ("rejected", "q")
 
 
 def test_format1_cannot_say_who_took_an_edit_back():
@@ -746,8 +740,10 @@ def test_no_text_field_holds_a_lone_surrogate():
     assert fmt.dump_review(fmt.load_review(fmt.dump_review(r))) == fmt.dump_review(r)      # valid text still reads
 
 
-def _surrogate_calls(r, lb, cut):
-    """Operation calls with a lone surrogate in one input, several of which would change nothing otherwise."""
+def _surrogate_calls(r, lb, cut, prop):
+    """Operation calls with a lone surrogate in one input, several of which would change nothing otherwise. Each one
+    is refused only for the text: with the surrogate replaced it would go through (accept and reject target the open
+    proposal, not the accepted cut, which they would refuse for its status)."""
     agent = dict(kind="note", payload={"frame": 1, "text": "x"}, source="agent", by="a", job_id="j",
                  agent_version="v", reason="r")
     return [
@@ -758,8 +754,8 @@ def _surrogate_calls(r, lb, cut):
         ("propose", dict(kind="note", payload={"frame": 1, "text": S}, source="human", by="p")),
         ("set_reviewed", dict(reviewed=False, by="p", now=S)),          # not signed off: nothing to take back
         ("set_reviewed", dict(reviewed=False, by=S)),
-        ("accept", dict(edit_id=cut, by=S)),
-        ("reject", dict(edit_id=cut, by=S)),
+        ("accept", dict(edit_id=prop, by=S)),
+        ("reject", dict(edit_id=prop, by=S)),
         ("replace", dict(edit_id=cut, payload={"start": 4, "end": 8}, by=S)),
         ("retract", dict(edit_id=cut, by=S)),
         ("retract", dict(edit_id=cut, by="p", now=S)),
@@ -770,17 +766,26 @@ def _surrogate_calls(r, lb, cut):
 
 def _with_open_proposal():
     r, lb, cut = _review_with_take_back()
-    r, _ = fmt.propose(r, kind="note", payload={"frame": 1, "text": "x"}, source="agent", by="a", job_id="j",
-                       agent_version="v", reason="r", expect_rev=r["rev"], now="t")
-    return r, lb, cut
+    r, prop = fmt.propose(r, kind="note", payload={"frame": 1, "text": "x"}, source="agent", by="a", job_id="j",
+                          agent_version="v", reason="r", expect_rev=r["rev"], now="t")
+    return r, lb, cut, prop["edit_id"]
+
+
+def _without_surrogate(v):
+    if isinstance(v, str):
+        return v.replace(S, "ok")
+    if isinstance(v, dict):
+        return {k: _without_surrogate(x) for k, x in v.items()}
+    return v
 
 
 def test_operations_refuse_a_lone_surrogate_even_when_they_change_nothing():
-    r, lb, cut = _with_open_proposal()
-    for op, kw in _surrogate_calls(r, lb, cut):
+    r, lb, cut, prop = _with_open_proposal()
+    for op, kw in _surrogate_calls(r, lb, cut, prop):
         kw = {"now": "t9", **kw}
-        with pytest.raises(fmt.ReviewError):
+        with pytest.raises(fmt.ReviewError, match="unicode"):
             getattr(fmt, op)(r, expect_rev=r["rev"], **kw)
+        getattr(fmt, op)(r, expect_rev=r["rev"], **_without_surrogate(kw))     # the text is the only reason
     item = dict(kind="note", payload={"frame": 1, "text": "x"}, source="agent", by="a", job_id="j",
                 agent_version="v", reason="r")
     for kw in (dict(now=S, what="w"), dict(now="t", what=S)):
@@ -795,9 +800,9 @@ def test_operations_refuse_a_lone_surrogate_even_when_they_change_nothing():
 
 def test_operations_refuse_a_lone_surrogate_like_the_reference():
     impl = rc.contract_impl()
-    r, lb, cut = _with_open_proposal()
+    r, lb, cut, prop = _with_open_proposal()
     ref = impl.load(fmt.dump_review(r))
-    for op, kw in _surrogate_calls(r, lb, cut):
+    for op, kw in _surrogate_calls(r, lb, cut, prop):
         kw = {"now": "t9", **kw}
         outs = []
         for call, review in ((getattr(fmt, op), r), (impl.op(op), ref)):

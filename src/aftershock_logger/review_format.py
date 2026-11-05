@@ -1027,19 +1027,21 @@ def decide_many(review: dict, edit_ids: list[str], accept_them: bool, *, by: str
     return box["out"]
 
 
-def retract(review: dict, edit_id: str, *, by: str, expect_rev: int, now: str, t: int | None = None,
-            what: str | None = None) -> tuple[dict, dict]:
+def retract(review: dict, edit_id: str, *, by: str, expect_rev: int, now: str,
+            t: int | None = None) -> tuple[dict, dict]:
     """A person takes back an accepted edit (deletes a label or a cut in the viewer). It becomes rejected and keeps
     its accepted_seq, decided_at and decided_by, so the file still says who accepted it and when; retracted_at and
     retracted_by say who took it back and when. The edit accepted before it in the same slot is in effect again.
     Readings of a label taken back stay with it and no longer apply, as with replace. It is one undoable step, and a
-    taken back edit cannot be accepted, rejected, replaced or taken back again."""
+    taken back edit cannot be accepted, rejected, replaced or taken back again. Its history step's what is always
+    "take back", as the shared format says; a caller's label for the step (the viewer's "delete label") is for
+    display only and is not stored."""
     by = _who(by)
-    _text(now, what)
+    _text(now)
     if UNKNOWN in (by, now):
         raise ReviewError("a take back names who did it and when; unknown is kept only on take backs read from a "
                           "logger L8 file")
-    with _write(review, expect_rev, what=what or "take back") as box:
+    with _write(review, expect_rev, what="take back") as box:
         box["now"], box["t"] = now, t
         e = _find(box["d"], edit_id)
         if e["status"] != "accepted":

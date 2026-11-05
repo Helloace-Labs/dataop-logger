@@ -410,6 +410,7 @@ def decide(run_path: Path, manifest: dict, edit_id: str, accept: bool, payload: 
         elif e["status"] == "proposed":
             box["review"], out = fmt.reject(r, edit_id, **kw)
         else:
+            kw.pop("what")              # a take back's step is always "take back"; the viewer's label is display only
             box["review"], out = fmt.retract(r, edit_id, **kw)
     return out
 
