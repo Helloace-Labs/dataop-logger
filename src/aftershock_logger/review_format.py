@@ -706,8 +706,8 @@ def _find(d: dict, edit_id: str) -> dict:
 
 def obsolete_reading(review: dict, e: dict) -> str | None:
     """Why a reading edit can no longer be accepted, or None. A reading applies only while its label is accepted;
-    once the label was replaced or taken back, accepting the reading would change nothing in training, so it is
-    refused rather than recorded as if it took effect."""
+    once the label was replaced or taken back, accepting the reading would change nothing in training, so accept,
+    decide_many, replace and undo refuse to make it accepted rather than record it as if it took effect."""
     if e["kind"] != "reading":
         return None
     label_id = e["payload"]["label_id"]
@@ -908,6 +908,9 @@ def replace(review: dict, edit_id: str, payload: dict, *, by: str, expect_rev: i
         if new_names:
             d["legacy_subtask_map"]["entries"].extend(new_names)
         e = _new_edit(new_edit_id or new_id(), old["kind"], payload, "human", by, None, None, None, now)
+        obsolete = obsolete_reading(d, e)
+        if obsolete:
+            raise ReviewError(obsolete)
         e["replaces"] = edit_id
         if old["source"] != "human":
             e["corrects"] = edit_id
@@ -919,7 +922,8 @@ def replace(review: dict, edit_id: str, payload: dict, *, by: str, expect_rev: i
 
 def _undone_edits(edits: list[dict], step: dict) -> list[dict]:
     """The edits after putting back every edit the step touched, or ReviewError when that cannot be done cleanly:
-    an edit changed again since, or another edit still refers to one the undo would take away."""
+    an edit changed again since, another edit still refers to one the undo would take away, or the undo would make a
+    reading accepted again whose label is no longer accepted (see obsolete_reading)."""
     cur = {e["edit_id"]: e for e in edits}
     if any(cur.get(c["edit_id"]) != c["after"] for c in step["changes"]):
         raise ReviewError("those edits changed again since; undo the later change first")
@@ -939,6 +943,13 @@ def _undone_edits(edits: list[dict], step: dict) -> list[dict]:
         gone = [r for r in refs if r is not None and r not in ids]
         if gone:
             raise ReviewError(f"edit {e['edit_id']} still refers to {gone[0]}; undo that edit's step first")
+    for c in step["changes"]:                      # a reading the undo makes accepted again needs its label accepted
+        b, a = c["before"], c["after"]
+        if (b is not None and b["kind"] == "reading" and b["status"] == "accepted"
+                and (a is None or a["status"] != "accepted")):
+            obsolete = obsolete_reading({"edits": out}, b)
+            if obsolete:
+                raise ReviewError(f"undoing this would accept it again: {obsolete}")
     return out
 
 

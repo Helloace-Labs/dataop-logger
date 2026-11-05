@@ -368,6 +368,23 @@ def _cases() -> dict[str, dict]:
         ("undo", dict(step_id="@5")),                                     # the label is back
         ("accept", dict(edit_id="$4", by="p1")),                          # so its reading can be accepted
     ]
+    obsolete_reading_by_replace_or_undo = [
+        ("propose", dict(kind="label", payload=_label(), source="human", by="p1")),
+        ("propose", dict(kind="reading", payload={"label_id": "$0", "train": "keep", "meaning": "fine"},
+                         source="human", by="p1")),
+        ("retract", dict(edit_id="$1", by="p1")),                         # the reading is taken back
+        ("replace", dict(edit_id="$0", payload=_label(10, 25, "arm pauses long"), by="p1")),
+        ("undo", dict(step_id="@2")),                                     # would accept it again: refused
+        ("propose", dict(kind="label", payload=_label(30, 40, "arm stops"), source="human", by="p1")),
+        ("propose", dict(kind="reading", payload={"label_id": "$5", "train": "keep", "meaning": "fine"},
+                         source="human", by="p1")),
+        ("replace", dict(edit_id="$6", payload={"label_id": "$5", "train": "exclude", "meaning": "stop"}, by="p1")),
+        ("retract", dict(edit_id="$5", by="p1")),
+        ("replace", dict(edit_id="$7", payload={"label_id": "$5", "train": "keep", "meaning": "ok"}, by="p1")),
+        ("undo", dict(step_id="@7")),                                     # would bring back $6: refused
+        ("undo", dict(step_id="@8")),                                     # the label is back
+        ("undo", dict(step_id="@7")),                                     # now allowed
+    ]
     cap = [("propose", dict(kind="note", payload={"frame": i % 120, "text": f"note {i}"}, source="human", by="p1"))
            for i in range(205)] + [("undo", dict(step_id="@0")), ("undo", dict(step_id="@204"))]
     big = [("propose", dict(kind="segments", payload={"segments": [
@@ -386,6 +403,7 @@ def _cases() -> dict[str, dict]:
         "replace_refused_for_its_payload": {"start": "empty", "ops": replace_refused},
         "migrated_take_back": {"start": "format1_all_kinds.json+task", "ops": migrated_take_back},
         "obsolete_reading": {"start": "empty", "ops": obsolete_reading},
+        "obsolete_reading_by_replace_or_undo": {"start": "empty", "ops": obsolete_reading_by_replace_or_undo},
         "history_cap": {"start": "empty", "ops": cap},
         "large_steps": {"start": "empty", "ops": big},
     }

@@ -1140,3 +1140,25 @@ def test_file_format_is_none_only_when_there_is_no_review_file(tmp_path, capsys)
     assert rv.file_format(run) is None
     assert main(["migrate-reviews", str(tmp_path / "ds"), "--dry-run"]) == 0
     assert "0 refused" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("how", ["replace", "retract"])
+def test_replace_and_undo_cannot_make_an_obsolete_reading_accepted(how):
+    """Review round 1, Highs 1 and 2: replace and undo were two more ways to accept a reading of a retired label."""
+    r = fmt.empty_review(rc.RUN_ID)
+    r, lb = fmt.propose(r, kind="label", payload={"start": 1, "end": 3, "text": "x", "driver": None, "segment": None},
+                        source="human", by="p", expect_rev=0, now="t")
+    r, rd = fmt.propose(r, kind="reading", payload={"label_id": lb["edit_id"], "train": "keep", "meaning": "m"},
+                        source="human", by="p", expect_rev=1, now="t")
+    r, _ = fmt.retract(r, rd["edit_id"], by="p", expect_rev=2, now="t")
+    reading_step = r["history"][-1]["step_id"]
+    r2, rd2 = fmt.propose(r, kind="reading", payload={"label_id": lb["edit_id"], "train": "keep", "meaning": "n"},
+                          source="human", by="p", expect_rev=3, now="t")
+    r = _retire(r, lb, how)
+    r2 = _retire(r2, lb, how)
+    assert reading_step not in fmt.undoable(r)
+    with pytest.raises(fmt.ReviewError, match="no longer applies"):
+        fmt.undo(r, reading_step, expect_rev=r["rev"], now="t")
+    with pytest.raises(fmt.ReviewError, match="no longer applies"):
+        fmt.replace(r2, rd2["edit_id"], {"label_id": lb["edit_id"], "train": "exclude", "meaning": "o"}, by="p",
+                    expect_rev=r2["rev"], now="t")
