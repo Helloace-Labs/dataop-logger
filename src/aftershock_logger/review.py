@@ -6,7 +6,9 @@ reviewed. The recorded frames, the manifest and its checksums never change; `eff
 into what training should use, and the reader turns that into `dataop.train_mask`.
 
 A file in the logger's earlier format 1 (`{"version": 1, ...}`) is read through the lossless migration and stays as
-it is on disk until the next change to that run's review, which writes it as format 2.
+it is on disk until the next change to that run's review, which writes it as format 2. A format 2 file this logger
+wrote at 4f4395e, before edits had retracted_at and retracted_by, is read the same way: upgraded in memory
+(review_format._before_take_back_fields) and written with both keys at its next change.
 
 Edit kinds and their payloads (frames are frame indices of the run; ranges are [start, end)):
   outcome        {"outcome": success | failure | unknown, "termination_reason": str | None, "failure_mode": str | None}
@@ -15,7 +17,7 @@ Edit kinds and their payloads (frames are frame indices of the run; ranges are [
   failure_type   {"failure_type_id": id, "vocab_rev": int}
   exclude        {"start": int, "end": int}   frames [start, end) are left out of training
   segments       {"segments": [{"subtask_id", "start", "end", "legacy_name"}]}: the run's full list of task segments
-                 (callers may pass [{"name", "start", "end"}]; see _segment_names)
+                 (callers may pass [{"name", "start", "end"}]; see review_format._named_segments)
   step_boundary  {"index": int, "before": str, "after": str, "frame": int}
                  moves the shared boundary between recorded steps `index` and `index + 1`
   segment_edge   {"index": int, "edge": start | end, "frame": int}
@@ -36,7 +38,6 @@ Every change happens under a cross-process lock, is checked against the recorded
 from __future__ import annotations
 
 import contextvars
-import copy
 import fcntl
 import json
 import re
@@ -256,37 +257,13 @@ def _input(kind: str, payload, manifest: dict) -> tuple[str, dict]:
     return kind, p
 
 
-def _segment_names(review: dict, kind: str, payload: dict) -> dict:
-    """A segments payload given by name (from _input), made to agree with the review. The logger has no Aftershock
-    task, so it never invents a subtask id: a name keeps its subtask id from the review's legacy_subtask_map when the
-    map has the name, and is otherwise "unresolved" with the name kept, for a person to map in Aftershock. A name the
-    map does not have yet is added to it as unresolved (the format requires every named segment to agree with the
-    map). Returns the review to apply the edit to: the same object when nothing was added."""
-    lmap = review["legacy_subtask_map"]
-    if kind != "segments" or lmap is None or not isinstance(payload.get("segments"), list):
-        return review
-    out = review
-    for s in payload["segments"]:
-        if not isinstance(s, dict) or not isinstance(s.get("legacy_name"), str) or s.get("subtask_id") != fmt.UNRESOLVED:
-            continue
-        known = fmt._lookup(out["legacy_subtask_map"], None, s["legacy_name"])
-        if known is not None:
-            s["subtask_id"] = known
-        else:
-            if out is review:
-                out = copy.deepcopy(review)
-            out["legacy_subtask_map"]["entries"].append({"step_index": None, "recorded_name": s["legacy_name"],
-                                                          "subtask_id": fmt.UNRESOLVED})
-    return out
-
-
 def _propose(box: dict, **kw) -> dict:
-    """fmt.propose on the transaction's review, naming segments first (see _segment_names). A proposal that changes
-    nothing (the same open one exists) leaves the review exactly as it was."""
-    base = _segment_names(box["review"], kw["kind"], kw["payload"])
-    out, e = fmt.propose(base, expect_rev=base["rev"], now=box["now"], t=box["t"], what=box["what"], **kw)
-    if out is not base:
-        box["review"] = out
+    """fmt.propose on the transaction's review. A segment given by name gets no invented subtask id: it is stored as
+    unresolved with its name, and in a migrated review it agrees with legacy_subtask_map (fmt.propose applies the
+    rule, as the reference does). A proposal that changes nothing (the same open one exists) leaves the review
+    exactly as it was."""
+    box["review"], e = fmt.propose(box["review"], expect_rev=box["review"]["rev"], now=box["now"], t=box["t"],
+                                   what=box["what"], **kw)
     return e
 
 
@@ -433,6 +410,7 @@ def decide(run_path: Path, manifest: dict, edit_id: str, accept: bool, payload: 
         elif e["status"] == "proposed":
             box["review"], out = fmt.reject(r, edit_id, **kw)
         else:
+            kw.pop("what")              # a take back's step is always "take back"; the viewer's label is display only
             box["review"], out = fmt.retract(r, edit_id, **kw)
     return out
 
@@ -496,9 +474,8 @@ def replace_edit(run_path: Path, manifest: dict, edit_id: str, payload: dict, ex
         if old is None or old["status"] != "accepted":
             raise ReviewError(f"no accepted edit {edit_id!r} on this run")
         _, p = _input(old["kind"], payload, manifest)
-        base = _segment_names(box["review"], old["kind"], p)
-        box["review"], e = fmt.replace(base, edit_id, p, by=by, expect_rev=base["rev"], now=box["now"], t=box["t"],
-                                       what=box["what"])
+        box["review"], e = fmt.replace(box["review"], edit_id, p, by=by, expect_rev=box["review"]["rev"],
+                                       now=box["now"], t=box["t"], what=box["what"])
     return e
 
 

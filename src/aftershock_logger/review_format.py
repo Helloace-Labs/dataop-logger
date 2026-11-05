@@ -51,7 +51,7 @@ REVIEW_KEYS = ("review_format", "run_id", "rev", "seq", "reviewed", "reviewed_at
                "history", "locked", "lock_log", "legacy_subtask_map")
 EDIT_KEYS = ("edit_id", "kind", "payload", "source", "by", "job_id", "agent_version", "reason", "status",
              "created_at", "decided_at", "decided_by", "accepted_seq", "corrects", "replaces", "replaced_by",
-             "adjusted", "legacy_reading", "legacy_reading_history")
+             "retracted_at", "retracted_by", "adjusted", "legacy_reading", "legacy_reading_history")
 
 
 class FormatError(ValueError):
@@ -90,13 +90,24 @@ def _int(v, what: str, lo: int = 0) -> int:
 _SURROGATE = re.compile("[\ud800-\udfff]")
 
 
+def lone_surrogate_in(v) -> bool:
+    """Whether v, or any text nested in it (list and tuple items, dict keys and values), has a code point from U+D800
+    to U+DFFF outside a valid pair. Such text is not valid unicode, and many JSON stores refuse it."""
+    if isinstance(v, str):
+        return _SURROGATE.search(v) is not None
+    if isinstance(v, (list, tuple)):
+        return any(lone_surrogate_in(x) for x in v)
+    if isinstance(v, dict):
+        return any(lone_surrogate_in(k) or lone_surrogate_in(x) for k, x in v.items())
+    return False
+
+
 def _str(v, what: str, lo: int = 0, hi: int | None = None, blank_ok: bool = True) -> str:
-    """Text. A field with any limit (a length or not blank) is also refused when it holds a lone surrogate code
-    point, which is not valid unicode; a field with no limit (by, reason, a step's what) takes any string. The
-    reference reader draws the line in the same place."""
+    """Text. No text field holds a lone surrogate code point, which is not valid unicode: one rule for every field,
+    the unlimited ones (by, reason, a step's what) included, as the reference reader has it."""
     if not isinstance(v, str) or len(v) < lo or (hi is not None and len(v) > hi):
         raise FormatError(f"{what} must be text of {lo} to {hi if hi is not None else 'any'} characters")
-    if (lo > 0 or hi is not None or not blank_ok) and _SURROGATE.search(v):
+    if _SURROGATE.search(v):
         raise FormatError(f"{what} is not valid unicode text")
     if not blank_ok and not v.strip():
         raise FormatError(f"{what} must not be blank")
@@ -271,6 +282,8 @@ def check_edit(e) -> dict:
     for k in ("corrects", "replaces", "replaced_by"):
         if e[k] is not None:
             _match(EDIT_ID, e[k], k)
+    _opt(_str, e["retracted_at"], "retracted_at", 1)
+    _opt(_str, e["retracted_by"], "retracted_by", 1, 100)
     _bool(e["adjusted"], "adjusted")
     if e["legacy_reading"] is not None:
         _legacy_reading(e["legacy_reading"])
@@ -284,6 +297,20 @@ def check_edit(e) -> dict:
             raise FormatError(f"{where}: a person's edit has no job_id or agent_version")
     elif e["job_id"] is None or e["agent_version"] is None:
         raise FormatError(f"{where}: a {e['source']} edit names its job_id and agent_version")
+    if UNKNOWN in (e["job_id"], e["agent_version"]) and (
+            e["source"] != "agent" or (e["job_id"], e["agent_version"]) != (UNKNOWN, UNKNOWN)):
+        raise FormatError(f"{where}: job_id and agent_version are unknown only together, on an agent edit migrated "
+                          "from format 1")
+    if (e["retracted_at"] is None) != (e["retracted_by"] is None):
+        raise FormatError(f"{where}: retracted_at and retracted_by are set together")
+    if UNKNOWN in (e["retracted_at"], e["retracted_by"]) and (e["retracted_at"], e["retracted_by"]) != (UNKNOWN,
+                                                                                                          UNKNOWN):
+        raise FormatError(f"{where}: retracted_at and retracted_by are unknown only together, on a take back read "
+                          "from a logger L8 file")
+    if e["retracted_at"] is not None and (e["status"] != "rejected" or e["accepted_seq"] is None
+                                          or e["replaced_by"] is not None):
+        raise FormatError(f"{where}: only an accepted edit is taken back: it is rejected, keeps its accepted_seq and "
+                          "was not replaced")
     if e["status"] == "accepted" and e["accepted_seq"] is None:
         raise FormatError(f"{where}: an accepted edit has an accepted_seq")
     if e["status"] != "proposed" and e["decided_at"] is None:
@@ -411,6 +438,15 @@ def check_review(review) -> dict:
     last = review["lock_log"][-1]["action"] if review["lock_log"] else "unlock"
     if (review["locked"] is not None) != (last == "lock"):
         raise FormatError("locked must agree with the last lock_log entry")
+    versions = all_edit_versions(review)
+    if lmap is None and any(e["agent_version"] == UNKNOWN for e in versions):
+        raise FormatError("job_id and agent_version unknown are kept only on edits migrated from format 1")
+    if lmap is None and any(_unrecorded_take_back(e) for e in versions):
+        raise FormatError("a take back records who did it (retracted_at and retracted_by); only a review migrated "
+                          "from format 1 keeps a take back that names nobody")
+    if lmap is not None and any(e["retracted_at"] == UNKNOWN for e in versions):
+        raise FormatError("retracted_at and retracted_by unknown appear only outside a review migrated from format 1; "
+                          "a migrated review reads an old take back with both null")
     if lmap is not None:
         if lmap["run_id"] != review["run_id"]:
             raise FormatError("legacy_subtask_map is for another run")
@@ -420,6 +456,12 @@ def check_review(review) -> dict:
                     if s["legacy_name"] is not None and _lookup(lmap, None, s["legacy_name"]) != s["subtask_id"]:
                         raise FormatError(f"segment {s['legacy_name']!r} disagrees with legacy_subtask_map")
     return review
+
+
+def _unrecorded_take_back(e: dict) -> bool:
+    """Format 1's take back: rejected after acceptance (accepted_seq kept), not replaced, with nobody recorded."""
+    return (e["status"] == "rejected" and e["accepted_seq"] is not None and e["replaced_by"] is None
+            and e["retracted_at"] is None)
 
 
 def check_against_manifest(review: dict, manifest: dict) -> None:
@@ -491,19 +533,52 @@ def dumps(obj: Any) -> str:
 
 
 def dump_review(review: dict) -> str:
+    """The canonical file text. Refuses a lone surrogate, which a checked review never holds."""
+    if lone_surrogate_in(review):
+        raise FormatError("text must be valid unicode (no lone surrogate)")
     return dumps(review)
 
 
 def load_review(text: str | bytes) -> dict:
-    """Parse and check a format 2 file. Anything this format would not write is refused."""
+    """Parse and check a format 2 file, upgraded when logger 4f4395e wrote it (see _before_take_back_fields).
+    Anything this format would not write is refused."""
     data = json.loads(text)
     if not isinstance(data, dict) or data.get("review_format") != REVIEW_FORMAT:
         raise FormatError("not a review_format 2 file")
-    return check_review(data)
+    return check_review(_before_take_back_fields(data))
+
+
+def _before_take_back_fields(data: dict) -> dict:
+    """Read a format 2 file written before edits had retracted_at and retracted_by (this logger at 4f4395e).
+
+    An edit with neither key was not taken back, so both read as null, except an edit that logger took back
+    (rejected with an accepted_seq and no replaced_by) in a review not migrated from format 1: that one gets unknown
+    for both. Its history step may still name who took it back and when, but the upgrade does not use it. An edit
+    with only one of the two keys is refused as usual. In a migrated review the edits read with both null, which is
+    how format 1 recorded a take back. Whenever the file holds an edit or a history snapshot, the upgraded review
+    dumps to other bytes than the file on disk, so review_digest is always of the upgraded text; the next change
+    writes both keys. The input is not changed."""
+    edits = data.get("edits")
+    if not isinstance(edits, list):
+        return data
+    data = copy.deepcopy(data)
+    def items(v) -> list:                   # anything malformed is left for check_review to refuse
+        return v if isinstance(v, list) else []
+    snaps = [c.get(k) for h in items(data.get("history")) if isinstance(h, dict)
+             for c in items(h.get("changes")) if isinstance(c, dict) for k in ("before", "after")]
+    migrated = data.get("legacy_subtask_map") is not None
+    for e in data["edits"] + snaps:
+        if not isinstance(e, dict) or "retracted_at" in e or "retracted_by" in e:
+            continue
+        old_take_back = (e.get("status") == "rejected" and e.get("accepted_seq") is not None
+                         and e.get("replaced_by") is None)
+        mark = UNKNOWN if old_take_back and not migrated else None
+        e["retracted_at"] = e["retracted_by"] = mark
+    return data
 
 
 def review_digest(review: dict) -> str:
-    """sha256 of the canonical file text."""
+    """sha256 of the canonical file text (of the upgraded text for a file logger 4f4395e wrote)."""
     return hashlib.sha256(dump_review(review).encode()).hexdigest()
 
 
@@ -567,7 +642,15 @@ def _size(obj: Any) -> int:
 def _who(by) -> str:
     if not isinstance(by, str) or not by.strip() or len(by) > 100:
         raise ReviewError("by names who acts in 1 to 100 characters")
+    _text(by)
     return by
+
+
+def _text(*values) -> None:
+    """Refuse a lone surrogate in an operation's inputs. Checked up front, so a call that would change nothing (a
+    repeated proposal, taking back a sign off never given) refuses it too."""
+    if lone_surrogate_in(list(values)):
+        raise ReviewError("text must be valid unicode (no lone surrogate)")
 
 
 def _validated(d: dict) -> dict:
@@ -590,7 +673,7 @@ def _write(review: dict, expect_rev: int, *, what: str | None = None, allow_lock
         raise ReviewLocked(f"the review is locked by {review['locked']['by']}; unlock the pack first")
     before = review
     d = copy.deepcopy(before)
-    box: dict[str, Any] = {"d": d, "now": None, "t": None, "step": None, "what": None}
+    box: dict[str, Any] = {"d": d, "now": None, "t": None, "step": None}
     yield box
     if what is not None:
         old = {e["edit_id"]: e for e in before["edits"]}
@@ -598,8 +681,7 @@ def _write(review: dict, expect_rev: int, *, what: str | None = None, allow_lock
         changes = [{"edit_id": i, "before": copy.deepcopy(old.get(i)), "after": copy.deepcopy(new.get(i))}
                    for i in list(old) + [i for i in new if i not in old] if old.get(i) != new.get(i)]
         if changes:
-            step = {"step_id": new_id(), "at": box["now"], "t": box["t"], "what": box.get("what") or what,
-                    "changes": changes,
+            step = {"step_id": new_id(), "at": box["now"], "t": box["t"], "what": what, "changes": changes,
                     "undone": False, "undone_at": None}
             hist = d["history"]
             if _size(step) <= HISTORY_BYTES:                # one huge step is not kept for undo
@@ -632,7 +714,8 @@ def _new_edit(edit_id: str, kind: str, payload: dict, source: str, by: str, reas
     return {"edit_id": edit_id, "kind": kind, "payload": payload, "source": source, "by": by, "job_id": job_id,
             "agent_version": agent_version, "reason": reason, "status": "proposed", "created_at": now,
             "decided_at": None, "decided_by": None, "accepted_seq": None, "corrects": None, "replaces": None,
-            "replaced_by": None, "adjusted": False, "legacy_reading": None, "legacy_reading_history": []}
+            "replaced_by": None, "retracted_at": None, "retracted_by": None, "adjusted": False, "legacy_reading": None,
+            "legacy_reading_history": []}
 
 
 def _payload(kind: str, payload) -> dict:
@@ -640,6 +723,31 @@ def _payload(kind: str, payload) -> dict:
         return check_payload(kind, copy.deepcopy(payload))
     except FormatError as e:
         raise ReviewError(f"bad {kind} payload: {e}") from None
+
+
+def _named_segments(review: dict, kind: str, payload: dict) -> tuple[dict, list[dict]]:
+    """(payload, new map entries) for a segments payload in a review that has a legacy_subtask_map.
+
+    Without a task the logger stores a named segment as unresolved, its name in legacy_name, and never invents an
+    id. When the review was migrated from format 1, every named segment must agree with the map: a name the map
+    lists takes its id from there, and a name it does not list yet is returned as a new unresolved entry. Reviews
+    without a map get the payload back unchanged. propose and replace apply this, as the shared format does."""
+    lmap = review["legacy_subtask_map"]
+    if kind != "segments" or lmap is None:
+        return payload, []
+    known = {x["recorded_name"]: x["subtask_id"] for x in lmap["entries"] if x["step_index"] is None}
+    added: list[dict] = []
+    segs = []
+    for s in payload["segments"]:
+        name = s["legacy_name"]
+        if name is not None and s["subtask_id"] == UNRESOLVED:
+            if name in known:
+                s = {**s, "subtask_id": known[name]}
+            else:
+                known[name] = UNRESOLVED
+                added.append({"step_index": None, "recorded_name": name, "subtask_id": UNRESOLVED})
+        segs.append(s)
+    return {**payload, "segments": segs}, added
 
 
 def _edit_of(review: dict, edit_id: str) -> dict:
@@ -652,22 +760,29 @@ def _same_open(edits: list[dict], kind, payload, source, by, job_id, agent_versi
                  and e["payload"] == payload), None)
 
 
-def _check_proposal(kind, payload, source, by, reason, job_id, agent_version, corrects) -> tuple[dict, str]:
+def _check_proposal(kind, payload, source, by, reason, job_id, agent_version, corrects, now, edit_id=None,
+                    what=None, review=None) -> tuple[dict, str, list[dict]]:
+    """The checked payload (named segments made to agree with `review`'s map), who, and the map entries to add."""
     payload = _payload(kind, payload)
+    payload, new_names = (payload, []) if review is None else _named_segments(review, kind, payload)
     by = _who(by)
+    _text(now, reason, job_id, agent_version, corrects, edit_id, what)
     if source == "human":
         if job_id is not None or agent_version is not None:
             raise ReviewError("a person's edit has no job_id or agent_version")
     elif source in ("agent", "check", "splitter"):
         if not job_id or not agent_version:
             raise ReviewError(f"a {source} proposal names its job_id and agent_version")
+        if UNKNOWN in (job_id, agent_version):
+            raise ReviewError("a new proposal names its real job_id and agent_version; unknown is kept only on edits "
+                              "migrated from format 1")
         if corrects is not None:
             raise ReviewError("only a person's edit corrects another edit")
         if not isinstance(reason, str) or not reason.strip():
             raise ReviewError(f"a {source} proposal says why, in a short reason")
     else:
         raise ReviewError("source must be human, agent, check or splitter")
-    return payload, by
+    return payload, by, new_names
 
 
 def _propose_into(d: dict, kind, payload, source, by, reason, job_id, agent_version, corrects, edit_id,
@@ -706,7 +821,8 @@ def propose(review: dict, *, kind: str, payload: dict, source: str, by: str, exp
     The same open proposal from the same source, by, job_id and agent_version is not added twice: the existing one
     is returned and rev stays. A reading names an accepted label.
     """
-    payload, by = _check_proposal(kind, payload, source, by, reason, job_id, agent_version, corrects)
+    payload, by, new_names = _check_proposal(kind, payload, source, by, reason, job_id, agent_version, corrects, now,
+                                             edit_id, what, review)
     if source != "human":
         same = _same_open(review["edits"], kind, payload, source, by, job_id, agent_version)
         if same is not None:
@@ -715,6 +831,8 @@ def propose(review: dict, *, kind: str, payload: dict, source: str, by: str, exp
             return review, same
     with _write(review, expect_rev, what=what or f"add {kind}") as box:
         box["now"], box["t"] = now, t
+        if new_names:
+            box["d"]["legacy_subtask_map"]["entries"].extend(new_names)
         e = _propose_into(box["d"], kind, payload, source, by, reason, job_id, agent_version, corrects, edit_id, now)
     return box["out"], _edit_of(box["out"], e["edit_id"])
 
@@ -723,6 +841,7 @@ def accept(review: dict, edit_id: str, *, by: str, expect_rev: int, now: str, t:
            what: str | None = None) -> tuple[dict, dict]:
     """A person accepts a proposal unchanged. Only a proposal can be accepted."""
     by = _who(by)
+    _text(what)
     with _write(review, expect_rev, what=what or "accept") as box:
         box["now"], box["t"] = now, t
         e = _find(box["d"], edit_id)
@@ -734,8 +853,9 @@ def accept(review: dict, edit_id: str, *, by: str, expect_rev: int, now: str, t:
 
 def reject(review: dict, edit_id: str, *, by: str, expect_rev: int, now: str, t: int | None = None,
            what: str | None = None) -> tuple[dict, dict]:
-    """A person rejects a proposal. An accepted edit is changed with replace or taken back with undo."""
+    """A person rejects a proposal. An accepted edit is changed with replace, or taken back with retract or undo."""
     by = _who(by)
+    _text(what)
     with _write(review, expect_rev, what=what or "reject") as box:
         box["now"], box["t"] = now, t
         e = _find(box["d"], edit_id)
@@ -751,14 +871,17 @@ def replace(review: dict, edit_id: str, payload: dict, *, by: str, expect_rev: i
     names it in replaces (and in corrects when the old one was not a person's). Readings of a replaced label stay
     with the old label, so they no longer apply."""
     by = _who(by)
+    _text(what)
     with _write(review, expect_rev, what=what or "replace") as box:
         d = box["d"]
         box["now"], box["t"] = now, t
         old = _find(d, edit_id)
         if old["status"] != "accepted":
             raise ReviewError(f"no accepted edit {edit_id!r} on this run")
-        e = _new_edit(new_edit_id or new_id(), old["kind"], _payload(old["kind"], payload), "human", by, None,
-                      None, None, now)
+        payload, new_names = _named_segments(review, old["kind"], _payload(old["kind"], payload))
+        if new_names:
+            d["legacy_subtask_map"]["entries"].extend(new_names)
+        e = _new_edit(new_edit_id or new_id(), old["kind"], payload, "human", by, None, None, None, now)
         e["replaces"] = edit_id
         if old["source"] != "human":
             e["corrects"] = edit_id
@@ -828,6 +951,7 @@ def set_reviewed(review: dict, reviewed: bool, *, by: str, expect_rev: int, now:
     if not isinstance(reviewed, bool):
         raise ReviewError("reviewed is true or false")
     by = _who(by)
+    _text(now)
     with _write(review, expect_rev) as box:
         box["d"].update(reviewed=reviewed, reviewed_at=now if reviewed else None, reviewed_by=by if reviewed else None)
     return box["out"]
@@ -866,12 +990,16 @@ def propose_many(review: dict, items: list[dict], *, expect_rev: int, now: str, 
                  what: str) -> tuple[dict, list[dict]]:
     """Several proposals in one step. items are propose's keyword arguments (kind, payload, source, by, reason,
     job_id, agent_version). An item equal to an open proposal (as propose decides it) returns that proposal."""
+    _text(now, what)
     checked = [(it, *_check_proposal(it["kind"], it["payload"], it["source"], it["by"], it.get("reason"),
-                                     it.get("job_id"), it.get("agent_version"), None)) for it in items]
+                                     it.get("job_id"), it.get("agent_version"), None, now)) for it in items]
     with _write(review, expect_rev, what=what) as box:
         box["now"], box["t"] = now, t
         ids = []
-        for it, payload, by in checked:
+        for it, payload, by, _ in checked:
+            payload, new_names = _named_segments(box["d"], it["kind"], payload)
+            if new_names:
+                box["d"]["legacy_subtask_map"]["entries"].extend(new_names)
             same = None if it["source"] == "human" else _same_open(box["d"]["edits"], it["kind"], payload,
                                                                    it["source"], by, it.get("job_id"),
                                                                    it.get("agent_version"))
@@ -885,6 +1013,7 @@ def decide_many(review: dict, edit_ids: list[str], accept_them: bool, *, by: str
                 t: int | None = None, what: str) -> dict:
     """A person accepts or rejects several proposals in one step. Every id must be an open proposal."""
     by = _who(by)
+    _text(now, what)
     with _write(review, expect_rev, what=what) as box:
         box["now"], box["t"] = now, t
         todo = [next((x for x in box["d"]["edits"] if x["edit_id"] == i), None) for i in edit_ids]
@@ -898,22 +1027,26 @@ def decide_many(review: dict, edit_ids: list[str], accept_them: bool, *, by: str
     return box["out"]
 
 
-def retract(review: dict, edit_id: str, *, by: str, expect_rev: int, now: str, t: int | None = None,
-            what: str | None = None) -> tuple[dict, dict]:
-    """A person takes back an accepted edit (deletes a label or a cut in the viewer). The edit is kept as rejected
-    with its accepted_seq, so the edit accepted before it in the same slot is in effect again. Its acceptance stays
-    as it was (decided_at and decided_by still say who accepted it and when); the take back is recorded as its own
-    history step, whose `what` names who took it back and whose `at` says when. Format 1 recorded the same state
-    (rejected with an accepted_seq). Readings of a label taken back stay with it and no longer apply, as with
-    replace."""
+def retract(review: dict, edit_id: str, *, by: str, expect_rev: int, now: str,
+            t: int | None = None) -> tuple[dict, dict]:
+    """A person takes back an accepted edit (deletes a label or a cut in the viewer). It becomes rejected and keeps
+    its accepted_seq, decided_at and decided_by, so the file still says who accepted it and when; retracted_at and
+    retracted_by say who took it back and when. The edit accepted before it in the same slot is in effect again.
+    Readings of a label taken back stay with it and no longer apply, as with replace. It is one undoable step, and a
+    taken back edit cannot be accepted, rejected, replaced or taken back again. Its history step's what is always
+    "take back", as the shared format says; a caller's label for the step (the viewer's "delete label") is for
+    display only and is not stored."""
     by = _who(by)
-    with _write(review, expect_rev, what=what or "take back") as box:
+    _text(now)
+    if UNKNOWN in (by, now):
+        raise ReviewError("a take back names who did it and when; unknown is kept only on take backs read from a "
+                          "logger L8 file")
+    with _write(review, expect_rev, what="take back") as box:
         box["now"], box["t"] = now, t
         e = _find(box["d"], edit_id)
         if e["status"] != "accepted":
-            raise ReviewError("only an accepted edit can be taken back")
-        box["what"] = f"{what or 'take back'} (taken back by {by})"
-        e["status"] = "rejected"
+            raise ReviewError("only an accepted edit can be taken back; reject a proposal instead")
+        e.update(status="rejected", retracted_at=now, retracted_by=by)
     return box["out"], _edit_of(box["out"], edit_id)
 
 
@@ -1032,7 +1165,7 @@ def _f1_edit(e, segment_ids: dict[str, str]) -> dict:
         "job_id": None if is_human else UNKNOWN, "agent_version": None if is_human else UNKNOWN,
         "reason": e["reason"], "status": e["status"], "created_at": e["created_at"], "decided_at": e["decided_at"],
         "decided_by": None, "accepted_seq": e.get("accepted_seq"), "corrects": None, "replaces": e.get("replaces"),
-        "replaced_by": e.get("replaced_by"), "adjusted": "adjusted" in e,
+        "replaced_by": e.get("replaced_by"), "retracted_at": None, "retracted_by": None, "adjusted": "adjusted" in e,
         "legacy_reading": _f1_reading(e["interpretation"]) if e.get("interpretation") is not None else None,
         "legacy_reading_history": [_f1_reading(r) for r in hist],
     }
@@ -1098,8 +1231,8 @@ def _edit_to_format1(e: dict) -> dict:
         raise MigrationError(f"{where}: format 1 has no {e['source']} source")
     if e["source"] == "agent" and (e["job_id"], e["agent_version"]) != (UNKNOWN, UNKNOWN):
         raise MigrationError(f"{where}: format 1 cannot keep job_id and agent_version")
-    if e["decided_by"] is not None or e["corrects"] is not None:
-        raise MigrationError(f"{where}: format 1 cannot keep decided_by or corrects")
+    if e["decided_by"] is not None or e["corrects"] is not None or e["retracted_by"] is not None:
+        raise MigrationError(f"{where}: format 1 cannot keep decided_by, corrects or a take back's retracted_by")
     kind, p = e["kind"], e["payload"]
     if kind in ("failure_type", "name", "reading"):
         raise MigrationError(f"{where}: format 1 has no {kind} kind")
@@ -1163,6 +1296,6 @@ def read(text: str | bytes, manifest: dict, task: dict | None = None) -> dict:
         return migrate_format1(raw, manifest, task)
     if not isinstance(raw, dict) or raw.get("review_format") != REVIEW_FORMAT:
         raise FormatError("neither a review_format 2 file nor a format 1 (version 1) file")
-    check_review(raw)
-    check_against_manifest(raw, manifest)
-    return raw
+    review = check_review(_before_take_back_fields(raw))      # a file this logger wrote at 4f4395e, upgraded
+    check_against_manifest(review, manifest)
+    return review

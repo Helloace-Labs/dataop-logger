@@ -93,6 +93,13 @@ class LoggerImpl:
     def check_manifest(self, review, manifest) -> None:
         self.fmt.check_against_manifest(review, manifest)
 
+    def read_run(self, text: str, manifest) -> str | None:
+        """The canonical text of a file as the logger reads it for a run, or None when it refuses it."""
+        try:
+            return self.fmt.dump_review(self.fmt.read(text, manifest))
+        except ValueError:
+            return None
+
     def op(self, name: str):
         return getattr(self.fmt, name)
 
@@ -104,6 +111,9 @@ class LoggerImpl:
 
     def errors(self) -> tuple:
         return (self.fmt.ReviewError, self.fmt.FormatError)
+
+    def digest(self, review) -> str:
+        return self.fmt.review_digest(review)
 
 
 class ContractImpl(LoggerImpl):
@@ -154,6 +164,14 @@ class ContractImpl(LoggerImpl):
     def check_manifest(self, review, manifest) -> None:
         self.rv.check_against_manifest(review, manifest)
 
+    def read_run(self, text: str, manifest) -> str | None:
+        try:
+            r = self.rv.load_review(text)
+            self.rv.check_against_manifest(r, manifest)
+            return self.rv.dump_review(r)
+        except (ValueError, TypeError):     # the reference raises TypeError for some malformed values
+            return None
+
     def op(self, name: str):
         return getattr(self.ops, name)
 
@@ -165,6 +183,9 @@ class ContractImpl(LoggerImpl):
 
     def errors(self) -> tuple:
         return (ValueError,)
+
+    def digest(self, review) -> str:
+        return self.rv.review_digest(review)
 
 
 def contract_impl() -> ContractImpl:
@@ -291,6 +312,48 @@ def _cases() -> dict[str, dict]:
         ("undo", dict(step_id="@4")),
         ("undo", dict(step_id="dddddddddddd")),
     ]
+    take_back = [
+        ("propose", dict(kind="label", payload=_label(), source="human", by="p1")),
+        ("propose", dict(kind="exclude", payload={"start": 0, "end": 5}, **_agent())),
+        ("accept", dict(edit_id="$1", by="p1")),
+        ("propose", dict(kind="reading", payload={"label_id": "$0", "train": "exclude", "meaning": "pause"},
+                         source="human", by="p1")),
+        ("set_reviewed", dict(reviewed=True, by="p1")),
+        ("retract", dict(edit_id="$0", by="q")),                          # the label; its reading stays with it
+        ("retract", dict(edit_id="$0", by="q")),                          # a taken back edit is final
+        ("accept", dict(edit_id="$0", by="p1")),
+        ("reject", dict(edit_id="$0", by="p1")),
+        ("replace", dict(edit_id="$0", payload=_label(10, 25), by="p1")),
+        ("retract", dict(edit_id="$1", by="unknown")),                    # only the L8 upgrade writes unknown
+        ("propose", dict(kind="note", payload={"frame": 5, "text": "x"}, **_agent())),
+        ("retract", dict(edit_id="$11", by="p1")),                        # a proposal is rejected, not taken back
+        ("propose", dict(kind="failure_start", payload={"frame": 50}, source="human", by="p1")),
+        ("propose", dict(kind="failure_start", payload={"frame": 60}, source="human", by="p1")),
+        ("retract", dict(edit_id="$14", by="p2")),                        # the earlier value is in effect again
+        ("undo", dict(step_id="@15")),
+        ("retract", dict(edit_id="$14", by="p2")),
+        ("replace", dict(edit_id="$13", payload={"frame": 55}, by="p1")),
+        ("retract", dict(edit_id="$18", by="p1")),                        # the replacement; $13 stays replaced
+        ("retract", dict(edit_id="$13", by="p1")),                        # a replaced edit is not taken back
+        ("propose", dict(kind="note", payload={"frame": 5, "text": "y"}, **_agent(job_id="unknown"))),
+        ("propose", dict(kind="note", payload={"frame": 5, "text": "y"}, **_agent(agent_version="unknown"))),
+    ]
+    replace_refused = [
+        ("propose", dict(kind="failure_start", payload={"frame": 50}, source="human", by="p1")),
+        ("replace", dict(edit_id="$0", payload=_label(), by="p1")),          # refused for its payload, draws no id
+        ("propose", dict(kind="note", payload={"frame": 5, "text": "x"}, source="human", by="p1")),
+        ("replace", dict(edit_id="$0", payload={"frame": 55}, by="p1")),
+        ("replace", dict(edit_id="$3", payload={"frame": -1}, by="p1")),      # refused again
+        ("retract", dict(edit_id="$3", by="q")),                          # take back fields on the replacement
+        ("propose", dict(kind="note", payload={"frame": 6, "text": "y"}, source="human", by="q")),
+    ]
+    migrated_take_back = [
+        ("retract", dict(edit_id="00000000000e", by="q")),
+        ("retract", dict(edit_id="00000000000f", by="q")),                # a format 1 take back is final too
+        ("accept", dict(edit_id="000000000009", by="p1")),
+        ("undo", dict(step_id="@0")),
+        ("retract", dict(edit_id="00000000000c", by="q")),                # a label with a format 1 reading
+    ]
     cap = [("propose", dict(kind="note", payload={"frame": i % 120, "text": f"note {i}"}, source="human", by="p1"))
            for i in range(205)] + [("undo", dict(step_id="@0")), ("undo", dict(step_id="@204"))]
     big = [("propose", dict(kind="segments", payload={"segments": [
@@ -305,6 +368,9 @@ def _cases() -> dict[str, dict]:
         "migrated_without_task": {"start": "format1_all_kinds.json", "ops": migrated[:5]},
         "migrated_minimal": {"start": "format1_minimal.json", "ops": [
             ("accept", dict(edit_id="000000000015", by="p1")), ("undo", dict(step_id="@0"))]},
+        "take_back": {"start": "empty", "ops": take_back},
+        "replace_refused_for_its_payload": {"start": "empty", "ops": replace_refused},
+        "migrated_take_back": {"start": "format1_all_kinds.json+task", "ops": migrated_take_back},
         "history_cap": {"start": "empty", "ops": cap},
         "large_steps": {"start": "empty", "ops": big},
     }
@@ -380,4 +446,96 @@ def migration_results(impl) -> dict:
             r = impl.migrate(raw, m, impl.task(t))
             out[f"{f1} {label}"] = {"format2": impl.dump(r), "format1": json.dumps(impl.to_format1(r), indent=1,
                                                                                    sort_keys=True) + "\n"}
+    return out
+
+
+def l8_results(impl) -> dict:
+    """Files the logger wrote at 4f4395e (l8_files.json, before the take back fields), as each implementation reads
+    them: the upgraded text, its digest, and the text after the next change (a person's note, or the unlock of a
+    locked review)."""
+    out = {}
+    for name, f in read("l8_files.json").items():
+        review = impl.load(f["text"])
+        with impl.ids(Ids(0xf9000000000)):
+            if json.loads(f["text"])["locked"] is not None:
+                nxt = impl.op("unlock")(review, by="owner", reason="next change", expect_rev=impl.rev(review),
+                                        now=when(0))
+            else:
+                nxt, _ = impl.op("propose")(review, kind="note", payload={"frame": 1, "text": "next change"},
+                                            source="human", by="p1", expect_rev=impl.rev(review), now=when(0))
+        out[name] = {"upgraded": impl.dump(review), "digest": impl.digest(review), "next": impl.dump(nxt)}
+    return out
+
+
+# ------------------------------------------------------------------ random changes to valid files
+
+
+MUTATION_VALUES = [None, 0, -1, 1, 2, True, "", " ", "x", "unknown", "unresolved", "aaaaaaaaaaaa", [], {}, 1.5, "a\n",
+                   "human", "agent", "accepted", "proposed", "rejected", 10 ** 6, "s-reach", "Grasp", "\ud800",
+                   "a\udc00b"]
+
+
+TAKE_BACK_KEYS = ("status", "accepted_seq", "replaced_by", "decided_at", "decided_by", "retracted_at",
+                  "retracted_by")
+
+
+def mutations(rng, d, take_backs: bool = False):
+    """Every path in d, each set to a random value once and dropped once: (path, "set" or "drop", value). With
+    take_backs, the fields of every taken back edit (in the edits and in history snapshots) that the take back rules
+    look at are also set to every value in turn."""
+    paths, exhaustive = [], []
+
+    def walk(x, path):
+        paths.append(path)
+        if isinstance(x, dict):
+            if take_backs and x.get("retracted_at") is not None:
+                exhaustive.extend(path + (k,) for k in TAKE_BACK_KEYS)
+            for k in x:
+                walk(x[k], path + (k,))
+        elif isinstance(x, list):
+            for i, v in enumerate(x):
+                walk(v, path + (i,))
+    walk(d, ())
+    for path in paths[1:]:
+        yield path, "set", rng.choice(MUTATION_VALUES)
+        yield path, "drop", None
+    for path in exhaustive:
+        for value in MUTATION_VALUES:
+            yield path, "set", value
+
+
+def apply_change(d, path, how, value):
+    d = copy.deepcopy(d)
+    x = d
+    for k in path[:-1]:
+        x = x[k]
+    if how == "drop":
+        if isinstance(x, dict):
+            del x[path[-1]]
+        else:
+            x.pop(path[-1])
+    else:
+        x[path[-1]] = value
+    return d
+
+
+MUTATED_CASES = {"take_back": 13, "migrated_take_back": 17}     # case -> seed; both end with edits taken back
+
+
+def mutation_results(impl) -> dict:
+    """Random changes to the final text of each case in MUTATED_CASES, read as a run's file: the indices of the
+    changes accepted, and a digest of every result (the canonical text, or refused), so the logger is checked against
+    the reference on these without it. Most changes are refused, so the shorter list of those accepted is kept."""
+    import random
+    out = {}
+    m = impl.manifest(read("manifest.json"))
+    for name, seed in MUTATED_CASES.items():
+        good = json.loads(run_case(LoggerImpl(), name)["final"])
+        accepted, h = [], hashlib.sha256()
+        for i, (path, how, value) in enumerate(mutations(random.Random(seed), good, take_backs=True)):
+            text = impl.read_run(json.dumps(apply_change(good, path, how, value)), m)
+            if text is not None:
+                accepted.append(i)
+            h.update((sha(text) if text is not None else "refused").encode() + b"\n")
+        out[name] = {"count": i + 1, "accepted": accepted, "digest": h.hexdigest()}
     return out
