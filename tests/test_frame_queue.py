@@ -307,11 +307,10 @@ def test_a_stuck_writer_does_not_block_the_stop_forever(tmp_path, monkeypatch):
             release.wait(10)                                      # LeRobot hangs on the second frame
         real(f)
     monkeypatch.setattr(ds, "add_frame", add)
-    monkeypatch.setattr(FQ, "WRITER_TIMEOUT_S", 0.2)
     log = RunLogger(ds, SCHEMA)
     with pytest.raises(ControlledStop):
         with log.run(task=TASK, policy=POLICY) as run:
-            q = run.queue(max_frames=2)
+            q = run.queue(max_frames=2, stop_timeout=0.2)
             for i in range(10):
                 q.put(frame(i), **kw(i))
                 time.sleep(0.01)
@@ -400,3 +399,244 @@ def test_validate_reports_broken_and_unfinished_quarantine(tmp_path, monkeypatch
     assert any(line.startswith(f"left untouched quarantined partial run {run.run_id}") for line in report)
     assert any(line.startswith("left untouched quarantine/.") for line in report)
     assert path.exists() and unfinished.exists()                  # repair never deletes them
+
+
+def wait_for_stop(q, limit=5.0):
+    deadline = time.monotonic() + limit
+    while q.stopped is None and time.monotonic() < deadline:
+        time.sleep(0.005)
+    assert q.stopped is not None
+
+
+def test_first_put_after_a_write_failure_keeps_its_frame(tmp_path, monkeypatch):
+    """Review round 1, H1: the action of the tick that first hears of a failure already reached the robot."""
+    ds = make_ds(tmp_path)
+    failing_writer(monkeypatch, ds, fail_at=3)
+    with RunLogger(ds, SCHEMA) as log:
+        with pytest.raises(ControlledStop):
+            with log.run(task=TASK, policy=POLICY) as run:
+                q = run.queue()
+                for i in range(5):
+                    q.put(frame(i), **kw(i))
+                wait_for_stop(q)
+                with pytest.raises(ControlledStop):
+                    q.put(frame(5), **kw(5))                      # kept, then raises
+                with pytest.raises(ControlledStop):
+                    q.put(frame(6), **kw(6))                      # the caller was told: nothing more is kept
+        path, m = quarantined(ds, run)
+        assert m["length"] == 6
+        sent = pq.read_table(path / "ticks.parquet").column("sent_action").to_pylist()
+        assert sent[-1] == list(np.arange(6, dtype=np.float32) + 5)
+
+
+def test_check_counts_as_telling_the_caller(tmp_path, monkeypatch):
+    ds = make_ds(tmp_path)
+    failing_writer(monkeypatch, ds, fail_at=1)
+    with RunLogger(ds, SCHEMA) as log:
+        with pytest.raises(ControlledStop):
+            with log.run(task=TASK, policy=POLICY) as run:
+                q = run.queue()
+                for i in range(3):
+                    q.put(frame(i), **kw(i))
+                wait_for_stop(q)
+                with pytest.raises(ControlledStop):
+                    q.check()
+                with pytest.raises(ControlledStop):
+                    q.put(frame(3), **kw(3))
+        assert quarantined(ds, run)[1]["length"] == 3
+
+
+def _full_quarantine(monkeypatch, ds, state):
+    real_write = store.atomic_write_bytes
+    qroot = str(store.quarantine_dir(ds.root))
+
+    def write(path, data):
+        if state["full"] and str(path).startswith(qroot):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        if state.get("spill_full") and "spill" in Path(path).parts:
+            raise OSError(errno.ENOSPC, "No space left on device")
+        real_write(path, data)
+    monkeypatch.setattr(store, "atomic_write_bytes", write)
+
+
+def test_unsaved_frames_are_spilled_when_the_stop_leaves_the_logger(tmp_path, monkeypatch):
+    """Review round 1, H2: the documented flow lets the stop leave the RunLogger block; the frames must not vanish."""
+    ds = make_ds(tmp_path)
+    slow_writer(monkeypatch, ds, 0.05)
+    _full_quarantine(monkeypatch, ds, {"full": True})
+    spill = tmp_path / "spill"
+    with pytest.raises(RunError, match="were written to") as ei:
+        with RunLogger(ds, SCHEMA, spill_dir=spill) as log:
+            with log.run(task=TASK, policy=POLICY) as run:
+                q = run.queue(max_frames=3)
+                for i in range(10):
+                    q.put(frame(i), **kw(i))
+    stop = ei.value.__context__
+    assert isinstance(stop, ControlledStop) and "NOT written" in str(stop)
+    rec = spill / run.run_id
+    m = json.loads((rec / "manifest.json").read_text())
+    assert m["length"] == stop.frames and m["quarantine"]["reason"] == "queue_full"
+    assert str(rec) in str(ei.value) and run.quarantine_path == rec
+
+
+def test_close_says_when_frames_could_not_be_written_anywhere(tmp_path, monkeypatch):
+    ds = make_ds(tmp_path)
+    slow_writer(monkeypatch, ds, 0.05)
+    _full_quarantine(monkeypatch, ds, {"full": True, "spill_full": True})
+    with pytest.raises(RunError, match="NOT written anywhere"):
+        with RunLogger(ds, SCHEMA, spill_dir=tmp_path / "spill") as log:
+            with log.run(task=TASK, policy=POLICY) as run:
+                q = run.queue(max_frames=3)
+                for i in range(10):
+                    q.put(frame(i), **kw(i))
+    assert run._unsaved_quarantine is not None                    # still in memory for a last retry
+
+
+def test_close_retries_the_dataset_quarantine_first(tmp_path, monkeypatch):
+    ds = make_ds(tmp_path)
+    slow_writer(monkeypatch, ds, 0.05)
+    state = {"full": True}
+    _full_quarantine(monkeypatch, ds, state)
+    log = RunLogger(ds, SCHEMA, spill_dir=tmp_path / "spill")
+    with pytest.raises(ControlledStop) as ei:
+        with log.run(task=TASK, policy=POLICY) as run:
+            q = run.queue(max_frames=3)
+            for i in range(10):
+                q.put(frame(i), **kw(i))
+    state["full"] = False                                         # space was freed
+    log.close()
+    path, m = quarantined(ds, run)
+    assert m["length"] == ei.value.frames and "quarantined at" in str(ei.value)
+    assert not (tmp_path / "spill").exists()
+
+
+def test_end_on_a_hung_writer_stops_without_waiting_twice(tmp_path, monkeypatch):
+    ds = make_ds(tmp_path)
+    release = threading.Event()
+    real, calls = ds.add_frame, [0]
+
+    def add(f):
+        calls[0] += 1
+        if calls[0] == 2:
+            release.wait(20)
+        real(f)
+    monkeypatch.setattr(ds, "add_frame", add)
+    log = RunLogger(ds, SCHEMA)
+    t0 = time.monotonic()
+    with pytest.raises(ControlledStop, match="no frame finished"):
+        with log.run(task=TASK, policy=POLICY) as run:
+            q = run.queue(stall_timeout=0.3, stop_timeout=5)
+            for i in range(6):
+                q.put(frame(i), **kw(i))
+            run.end("success")
+    assert time.monotonic() - t0 < 3                              # the 5 s stop wait is skipped for a hung writer
+    _, m = quarantined(ds, run)
+    assert m["length"] == 6 and m["quarantine"]["frames_written_to_lerobot"] == 1
+    assert m["quarantine"]["lerobot_buffer_reset"] is False and log.broken
+    release.set()
+
+
+def test_a_slow_but_working_writer_drains_without_a_stop(tmp_path, monkeypatch):
+    """Review round 1, M1: only time without progress counts, not the total drain time."""
+    ds = make_ds(tmp_path)
+    slow_writer(monkeypatch, ds, 0.03)
+    with RunLogger(ds, SCHEMA) as log:
+        with log.run(task=TASK, policy=POLICY) as run:
+            q = run.queue(stall_timeout=0.25)
+            for i in range(30):                                   # about 0.9 s of writing left at run.end()
+                q.put(frame(i), **kw(i))
+            run.end("success")
+    ds.finalize()
+    assert run.state == "committed" and V.validate(ds.root)["ok"]
+
+
+def test_lerobot_failing_halfway_through_a_frame(tmp_path, monkeypatch):
+    ds = make_ds(tmp_path, images=True)
+    real, n = ds.add_frame, [0]
+
+    def add(f):
+        real(f)                                                   # the frame reaches the buffer, then it fails
+        n[0] += 1
+        if n[0] == 4:
+            raise OSError(errno.ENOSPC, "No space left on device")
+    monkeypatch.setattr(ds, "add_frame", add)
+    with RunLogger(ds, SCHEMA) as log:
+        with pytest.raises(ControlledStop):
+            with log.run(task=TASK, policy=POLICY) as run:
+                q = run.queue()
+                for i in range(6):
+                    q.put(frame(i, True), **kw(i))
+                run.end("success")
+        _, m = quarantined(ds, run)
+        info = m["quarantine"]
+        assert m["length"] == 6 and info["frames_written_to_lerobot"] == 3 and info["frames_queued"] == 3
+        assert info["lerobot_buffer_reset"] and not ds.has_pending_frames() and not log.broken
+        monkeypatch.undo()
+        with log.run(task=TASK, policy=POLICY) as r2:
+            for i in range(3):
+                r2.add_frame(frame(i, True), **kw(i))
+            r2.end("success")
+    ds.finalize()
+    assert r2.state == "committed" and V.validate(ds.root)["ok"]
+
+
+def test_put_returns_while_a_write_is_stuck(tmp_path, monkeypatch):
+    ds = make_ds(tmp_path)
+    gate = threading.Event()
+    slow_writer(monkeypatch, ds, 0, gate)
+    with RunLogger(ds, SCHEMA) as log:
+        with log.run(task=TASK, policy=POLICY) as run:
+            q = run.queue(max_frames=10)
+            q.put(frame(0), **kw(0))
+            time.sleep(0.05)                                      # the writer is now blocked inside add_frame
+            for i in range(1, 11):
+                t0 = time.monotonic()
+                q.put(frame(i), **kw(i))
+                assert time.monotonic() - t0 < 0.02
+            assert q.depth() == 10 and q.stopped is None
+            gate.set()
+            run.end("success")
+    ds.finalize()
+    assert run.state == "committed" and V.validate(ds.root)["ok"]
+
+
+def test_copy_frame_copies_mutable_values():
+    lst, d = [1.0, 2.0], {"a": [1]}
+    out = FQ._copy_frame({"x": lst, "y": d, "s": "text"})
+    lst.append(3.0)
+    d["a"].append(2)
+    assert out == {"x": [1.0, 2.0], "y": {"a": [1]}, "s": "text"}
+
+
+def test_quarantine_record_survives_a_failed_folder_sync(tmp_path, monkeypatch):
+    ds = make_ds(tmp_path)
+    slow_writer(monkeypatch, ds, 0.05)
+    real_sync, qdir = store._fsync_dir, store.quarantine_dir(ds.root)
+
+    def sync(p):
+        if Path(p) == qdir:                                       # only the sync after the rename fails
+            raise OSError("sync failed")
+        real_sync(p)
+    monkeypatch.setattr(store, "_fsync_dir", sync)
+    with RunLogger(ds, SCHEMA, spill_dir=tmp_path / "spill") as log:
+        with pytest.warns(UserWarning, match="could not be synced"):
+            with pytest.raises(ControlledStop) as ei:
+                with log.run(task=TASK, policy=POLICY) as run:
+                    q = run.queue(max_frames=2)
+                    for i in range(10):
+                        q.put(frame(i), **kw(i))
+        assert ei.value.quarantine_path is not None and not log.broken
+        assert run.retry_quarantine() == run.quarantine_path
+
+
+def test_hidden_files_in_quarantine_are_not_errors(tmp_path):
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        with log.run(task=TASK, policy=POLICY) as run:
+            run.add_frame(frame(0), **kw(0))
+            run.end("success")
+    ds.finalize()
+    store.quarantine_dir(ds.root).mkdir(parents=True)
+    (store.quarantine_dir(ds.root) / ".DS_Store").write_bytes(b"x")
+    res = V.validate(ds.root)
+    assert res["ok"], res["errors"]

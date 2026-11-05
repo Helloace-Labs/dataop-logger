@@ -5,6 +5,7 @@ State machine per run: active -> staged -> committed, with terminal discarded, s
 from __future__ import annotations
 
 import datetime as _dt
+from pathlib import Path
 import shutil
 import time
 import uuid
@@ -66,12 +67,15 @@ class RunLogger:
 
     def __init__(self, dataset, action_schema: ActionSchema, obs_timestamp_kind: str = "bundle_completion",
                  action_key: str = "action", batch: str | None = None,
-                 planner: PlannerInfo | dict | None | str = UNKNOWN):
+                 planner: PlannerInfo | dict | None | str = UNKNOWN, spill_dir: str | None = None):
         """batch: the batch new runs join (opened if it does not exist). Without it, runs join the batch that is
         collecting, or a new batch named after the policy.
 
         planner: the planner that picks subtasks in every run of this writer: PlannerInfo(name, id), None when no
-        planner runs, or "unknown" (the default) when the caller does not say. A run can override it."""
+        planner runs, or "unknown" (the default) when the caller does not say. A run can override it.
+
+        spill_dir: where close() writes a stopped run's frames when they still cannot be written to the dataset's
+        quarantine folder (default: an aftershock-logger-spill folder in the system temp directory)."""
         if obs_timestamp_kind not in ("capture", "bundle_completion"):
             raise ValueError("obs_timestamp_kind must be 'capture' or 'bundle_completion'")
         self.dataset = dataset
@@ -84,11 +88,42 @@ class RunLogger:
         self.broken: str | None = None                   # set after a mid-save failure; no more runs
         self._lock = store.WriterLock(self.root)
         self._active: Run | None = None
+        self.spill_dir = spill_dir
+        self._unsaved_runs: list[Run] = []                # stopped runs whose frames are only in memory
 
     def close(self) -> None:
-        if self._active is not None and self._active.state == "active":
-            self._active.discard()
-        self._lock.release()
+        """Release the writer lock. A stopped run whose frames are still only in memory is written to quarantine
+        once more, then to spill_dir; a RunError names where they went, or that they were not written at all."""
+        try:
+            if self._active is not None and self._active.state == "active":
+                self._active.discard()
+        finally:
+            self._lock.release()
+        problems = []
+        for run in list(self._unsaved_runs):
+            try:
+                run.retry_quarantine()
+                continue
+            except Exception as e:
+                first = f"{type(e).__name__}: {e}"
+            import tempfile
+            from .frame_queue import write_partial
+            spill = Path(self.spill_dir) if self.spill_dir else Path(tempfile.gettempdir()) / "aftershock-logger-spill"
+            rows, observations, info = run._unsaved_quarantine
+            try:
+                spill.mkdir(parents=True, exist_ok=True)
+                path = write_partial(run, rows, observations, info, qdir=spill)
+            except Exception as e:
+                problems.append(f"run {run.run_id}: {len(rows)} frames were NOT written anywhere (quarantine: {first}; "
+                                f"spill folder {spill}: {type(e).__name__}: {e}); they are lost when this process ends")
+                continue
+            run.quarantine_path, run._unsaved_quarantine = path, None
+            self._unsaved_runs.remove(run)
+            problems.append(f"run {run.run_id}: {len(rows)} frames could not be written to the dataset's quarantine "
+                            f"({first}) and were written to {path}; move that folder to "
+                            f"{store.quarantine_dir(self.root)} when there is space")
+        if problems:
+            raise RunError("; ".join(problems))
 
     def __enter__(self):
         return self
@@ -178,6 +213,7 @@ class Run:
         self.quarantine_path = None                        # set when this run's partial record is quarantined
         self._unsaved_quarantine = None                    # a partial record that could not be written yet
         self._blocks_logger = False                        # True while that record stops the logger
+        self._stop = None                                  # the ControlledStop that ended this run
 
     # ── recording ────────────────────────────────────────────────────────────
 
@@ -324,17 +360,21 @@ class Run:
                            "add frames only through run.add_frame()")
         self.dataset.add_frame(frame)
 
-    def queue(self, max_seconds: float = 2.0, max_frames: int | None = None):
+    def queue(self, max_seconds: float = 2.0, max_frames: int | None = None, stall_timeout: float | None = None,
+              stop_timeout: float | None = None):
         """Record through a bounded queue: queue.put() takes a frame without waiting for LeRobot, and a writer thread
         adds it. If the queue is full or a write fails, put() raises ControlledStop and the run is quarantined when
-        the run block exits. See frame_queue.FrameQueue."""
+        the run block exits. stall_timeout: how long run.end() waits with no frame finishing before it calls the
+        writer hung; stop_timeout: how long a stop waits for the frame being written (both 10 s by default).
+        See frame_queue.FrameQueue."""
         self._require("active")
         if self._queue is not None:
             raise RunError("this run already has a queue")
         if self._count:
             raise RunError("start the queue before the first frame")
         from .frame_queue import FrameQueue
-        self._queue = FrameQueue(self, max_seconds=max_seconds, max_frames=max_frames)
+        self._queue = FrameQueue(self, max_seconds=max_seconds, max_frames=max_frames, stall_timeout=stall_timeout,
+                                 stop_timeout=stop_timeout)
         return self._queue
 
     def complete_transition(self, reward: float, terminated: bool = False, truncated: bool = False) -> None:
@@ -484,17 +524,24 @@ class Run:
         self._queue = None
         self.state = "quarantined"
         stop.frames = len(rows)
+        self._stop = stop
         try:
             self.quarantine_path = write_partial(self, rows, observations, info)
-        except Exception as e:
+        except BaseException as e:                     # an interrupt must not leave the frames unreported either
             stop.quarantine_error = f"{type(e).__name__}: {e}"
             self._blocks_logger = reset_error is None
-            unsaved = (f"run {self.run_id} stopped and its {len(rows)} frames could not be written to quarantine "
-                       f"({stop.quarantine_error}); they are kept in memory: free space and call run.retry_quarantine()")
+            self.logger._unsaved_runs.append(self)
+            unsaved = (f"run {self.run_id} stopped and its {len(rows)} frames were NOT written to quarantine "
+                       f"({stop.quarantine_error}); they are only in memory: free space and call "
+                       "run.retry_quarantine(), or close the RunLogger, which retries and then spills them")
             self.logger.broken = f"{self.logger.broken}; {unsaved}" if reset_error else unsaved
+            stop._settle()
+            if not isinstance(e, Exception):
+                raise
         else:
             self._unsaved_quarantine = None
             stop.quarantine_path = self.quarantine_path
+            stop._settle()
         return stop
 
     def retry_quarantine(self):
@@ -508,6 +555,11 @@ class Run:
         rows, observations, info = self._unsaved_quarantine
         self.quarantine_path = write_partial(self, rows, observations, info)
         self._unsaved_quarantine = None
+        if self in self.logger._unsaved_runs:
+            self.logger._unsaved_runs.remove(self)
+        if self._stop is not None:
+            self._stop.quarantine_path, self._stop.quarantine_error = self.quarantine_path, None
+            self._stop._settle()
         if self._blocks_logger:
             self.logger.broken = None
             self._blocks_logger = False

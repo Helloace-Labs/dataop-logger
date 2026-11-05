@@ -418,7 +418,11 @@ def quarantine_entries(root: Path) -> list[dict]:
     if not q.exists():
         return []
     out = []
+    import re
+    unfinished = re.compile(r"\.[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\..*\.tmp")
     for p in sorted(q.iterdir()):
+        if p.name.startswith(".") and not (p.is_dir() and unfinished.fullmatch(p.name)):
+            continue                                       # other hidden files (for example a file browser's)
         if p.name.startswith("."):
             out.append({"name": p.name, "kind": "unfinished", "frames": None, "reason": None,
                         "problems": ["an unfinished quarantine write (the process stopped while writing it); "

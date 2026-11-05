@@ -174,19 +174,21 @@ On a robot, record through `run.queue()` so the loop never waits for the disk:
 ```python
 from aftershock_logger import ControlledStop
 
-with log.run(task=TASK, policy=policy) as run:
-    q = run.queue()                      # holds at most 2 s of frames
-    try:
+try:
+    with log.run(task=TASK, policy=policy) as run:
+        q = run.queue()                  # holds at most 2 s of frames
         for each tick:
             q.put(frame, sent_action=a, base_action=a, control_mode="base",
                   inference_id=k, chunk_offset=j, obs_ns=t_obs, sent_ns=t_sent)
-    except ControlledStop:
-        hold_the_robot()                 # then leave the block; the logger quarantines the run
-        raise
-    run.end(termination_reason="success")
+        run.end(termination_reason="success")
+except ControlledStop as stop:
+    hold_the_robot()                     # the run ended as system_error; end the session as a fault
+    print(stop)                          # says where the frames are, or that they were NOT written yet
+    if stop.quarantine_error:
+        ...                              # free space, then run.retry_quarantine()
 ```
 
-If the queue fills or a write fails (a full disk, for example), `put()` raises `ControlledStop`. Hold the robot and leave the block. Every frame the logger accepted is written to `dataop/quarantine/<run_id>/` with the reason, and the run is never saved as a complete episode. If even that write fails, the stop says so, the frames stay in memory and `run.retry_quarantine()` writes them once there is space. `aftershock-logger validate --repair` checks quarantined runs and keeps them. Details are in [SPEC.md](SPEC.md).
+If the queue fills or a write fails (a full disk, for example), `put()` raises `ControlledStop`. Hold the robot and let the stop leave the run block. Every frame the logger accepted is written to `dataop/quarantine/<run_id>/` with the reason, and the run is never saved as a complete episode. If even that write fails, the stop says the frames were not written and they stay in memory: call `run.retry_quarantine()` once there is space. Closing the `RunLogger` retries too and, if the disk is still full, writes them to a spill folder (`spill_dir`) and raises an error that names it. `aftershock-logger validate --repair` checks quarantined runs and keeps them. Details are in [SPEC.md](SPEC.md).
 
 ## Command line
 
