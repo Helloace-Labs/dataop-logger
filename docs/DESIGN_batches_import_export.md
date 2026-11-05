@@ -1,6 +1,6 @@
 # Batches, import and training-data export (design, v0.4 draft)
 
-Part of the Aftershock logger (package `dataop-logger`). In the Aftershock app, a batch is shown as a **pack**: the runs one model and one planner made on one task. Export is the Train page.
+Part of the Aftershock logger (package `aftershock-logger`). In the Aftershock app, a batch is shown as a **pack**: the runs one model and one planner made on one task. Export is the Train page.
 
 Three features turn the logger from "record and review one dataset" into the post-training loop a team actually runs:
 collect a batch of runs with one policy, review it, generate a training set from it with a script, train the next
@@ -62,7 +62,7 @@ training set can be generated from it. In DAgger it is one round.
 - Import: imported runs join the batch named with `--batch` (section 2).
 - Existing datasets with no batches: on first read, every committed run with no batch goes into one batch per policy
   (source + revision), status `reviewing`. Nothing is moved; this is just grouping.
-- CLI: `dataop-logger batches <root> list | show <b> | new <name> | add <b> <run>... | move <run> <b> | close <b> |
+- CLI: `aftershock-logger batches <root> list | show <b> | new <name> | add <b> <run>... | move <run> <b> | close <b> |
   lock <b> | unlock <b> --reason ... | rename <b> <name> | link <b> --model <source@revision>`. All print JSON with
   `--json` for agents.
 
@@ -124,10 +124,10 @@ unavailable for this run").
 the episodes that will be bound, skipped (already bound, matched by fingerprint) or refused (length mismatch with a
 side file). Import is idempotent and resumable: an episode already bound is skipped. Validation runs at the end.
 
-**CLI.** `dataop-logger import <source> [--into <root>] [--preset p | --map map.json] [--batch name] [--episodes
-0-29] [--dry-run]`. Python: `dataop_logger.importer.import_dataset(...)` with the same arguments.
+**CLI.** `aftershock-logger import <source> [--into <root>] [--preset p | --map map.json] [--batch name] [--episodes
+0-29] [--dry-run]`. Python: `aftershock_logger.importer.import_dataset(...)` with the same arguments.
 
-**Sharing.** `dataop-logger push <root> <repo_id>` uploads only the `dataop/` folder into the same Hub dataset repo
+**Sharing.** `aftershock-logger push <root> <repo_id>` uploads only the `dataop/` folder into the same Hub dataset repo
 (`path_in_repo="dataop"`); LeRobot ignores it, and `pull` brings it back. Moving or copying the dataset folder
 carries the sidecar with it because it lives inside the root.
 
@@ -137,7 +137,7 @@ carries the sidecar with it because it lives inside the root.
 deterministic script: the same locked batch and the same recipe parameters always produce the same training set.
 An agent may start an export, but only through the same CLI a person uses.
 
-**Command.** `dataop-logger export --batch <root>:<batch> [--batch ...] --recipe <name> [recipe options]
+**Command.** `aftershock-logger export --batch <root>:<batch> [--batch ...] --recipe <name> [recipe options]
 --into <out_root> [--dry-run]`. Refuses unlocked batches unless `--allow-unlocked`, which is recorded.
 
 **Output.** A new LeRobot v3.0 dataset written with LeRobot's own writer (so any LeRobot trainer reads it), plus

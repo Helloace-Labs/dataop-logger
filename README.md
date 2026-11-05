@@ -2,8 +2,8 @@
 
 The post-training data workspace for robotics.
 
-`dataop-logger` is Aftershock's open-source logger and local viewer. The package, the `dataop-logger` command and the
-`dataop/` sidecar folder keep their current names for now, so existing datasets keep working.
+`aftershock-logger` is Aftershock's open-source logger and local viewer. It was called `dataop-logger` before, and
+the old names keep working: see [Renamed from dataop-logger](#renamed-from-dataop-logger).
 
 In Aftershock, the logger is how runs get in. Aftershock's station app uses it when Aftershock drives the robot (Drive mode), and you add it to your own control loop when your software drives (Watch mode). Review, training sets and results all read what it records.
 
@@ -16,7 +16,7 @@ LeRobot saves what the robot did. To build DAgger, residual-network or RL datase
 - the action **actually sent**, and **who was in control**,
 - timing, an optional **reward**, and **how the run ended**.
 
-dataop-logger records all of that in a small sidecar folder. Your dataset stays a plain LeRobot dataset that loads and trains anywhere.
+aftershock-logger records all of that in a small sidecar folder. Your dataset stays a plain LeRobot dataset that loads and trains anywhere.
 
 ## Install
 
@@ -26,16 +26,31 @@ pip install "git+https://github.com/Helloace-Labs/dataop-logger.git"
 
 Requires Python 3.10+ and `lerobot` 0.6.x (tested with 0.6.2). PyTorch is only needed for the reader.
 
+### Renamed from dataop-logger
+
+The package is now `aftershock-logger` and the Python package is `aftershock_logger`. Nothing that worked before breaks:
+
+- `import dataop_logger` and `from dataop_logger.reader import DataopDataset` still work. They give the very same
+  modules and classes as `aftershock_logger`, so old scripts, pickles and type checks keep working. New code should
+  import `aftershock_logger`.
+- Both commands are installed: `aftershock-logger` and the old `dataop-logger`. They are the same program.
+  `python -m dataop_logger.cli` also still works.
+- The sidecar folder keeps its name, `dataop/`, and so do the reader's `dataop.*` columns, `dataop_export.json` and
+  the manifest's `env.software.dataop_logger` key. The logger reads and writes these exactly as before, so datasets
+  recorded with dataop-logger load, validate and export unchanged.
+- If an older `dataop-logger` install is in the same environment, run `pip uninstall dataop-logger` before installing,
+  since both own the `dataop_logger` folder.
+
 ## Set it up with your coding agent
 
 Give Claude Code, Codex, Cursor or any coding agent this prompt from inside your robot project:
 
 ```text
-Read https://raw.githubusercontent.com/Helloace-Labs/dataop-logger/main/skills/dataop-logger/SKILL.md
-and add dataop-logger to my recording loop. Validate it when done.
+Read https://raw.githubusercontent.com/Helloace-Labs/dataop-logger/main/skills/aftershock-logger/SKILL.md
+and add aftershock-logger to my recording loop. Validate it when done.
 ```
 
-The agent checks your LeRobot version, finds your recording loop, wires in the logger and runs `dataop-logger validate`. Claude Code users can also install it as a skill by copying `skills/dataop-logger/` into `~/.claude/skills/`.
+The agent checks your LeRobot version, finds your recording loop, wires in the logger and runs `aftershock-logger validate`. Claude Code users can also install it as a skill by copying `skills/aftershock-logger/` into `~/.claude/skills/`.
 
 ## Quick start
 
@@ -43,7 +58,7 @@ Three changes to an existing LeRobot recording loop: describe your action once, 
 
 ```python
 import time
-from dataop_logger import ActionSchema, EnvInfo, PolicyInfo, RunLogger
+from aftershock_logger import ActionSchema, EnvInfo, PolicyInfo, RunLogger
 
 schema = ActionSchema(
     names=("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"),
@@ -141,10 +156,10 @@ with log.run(task="...", log_predictions=True) as run:
 ## Command line
 
 ```bash
-dataop-logger validate <dataset_root>            # nonzero exit on any problem; --json for a report
-dataop-logger validate <dataset_root> --repair   # commit runs that match a saved episode, quarantine the rest
-dataop-logger inspect  <dataset_root>            # runs, outcomes, takeovers, minutes per control mode
-dataop-logger remap <old_root> <new_root> --repo-id ID --revision REV   # after filtering or renumbering episodes
+aftershock-logger validate <dataset_root>            # nonzero exit on any problem; --json for a report
+aftershock-logger validate <dataset_root> --repair   # commit runs that match a saved episode, quarantine the rest
+aftershock-logger inspect  <dataset_root>            # runs, outcomes, takeovers, minutes per control mode
+aftershock-logger remap <old_root> <new_root> --repo-id ID --revision REV   # after filtering or renumbering episodes
 ```
 
 `validate` checks that every run matches its LeRobot episode frame for frame and byte for byte, that the episode was fully saved (metadata and video files present), that the sidecar files match their recorded checksums, and every rule above.
@@ -152,7 +167,7 @@ dataop-logger remap <old_root> <new_root> --repo-id ID --revision REV   # after 
 ## Viewer
 
 ```bash
-dataop-logger view <dataset_root>      # opens http://127.0.0.1:8765/dataop/view/
+aftershock-logger view <dataset_root>      # opens http://127.0.0.1:8765/dataop/view/
 ```
 
 A local page: every run with its outcome and a strip showing who drove each frame, then the selected run's camera videos in sync with a control-mode timeline. Click the timeline or an event to jump to that moment. Nothing leaves your machine.
@@ -183,18 +198,18 @@ The × on a type removes it from the dataset when no run uses it. A rename (from
 Agents use the same lists:
 
 ```bash
-dataop-logger lists <dataset_root>                                       # JSON
-dataop-logger lists <dataset_root> add failure_types collision --description "hit something"
-dataop-logger lists <dataset_root> rename task_segments lift raise
+aftershock-logger lists <dataset_root>                                       # JSON
+aftershock-logger lists <dataset_root> add failure_types collision --description "hit something"
+aftershock-logger lists <dataset_root> rename task_segments lift raise
 ```
 
-**Agents fill in the same schema.** `dataop-logger runs <dataset_root>` returns each run's segments, drive mode, failure moment and type, and video files as JSON. An agent that watched the video writes its reading back with `dataop-logger annotate <dataset_root> <run_id> --segments ... --failure-at ... --failure-type ... --takeover-at ... --by my-agent`. Names must come from the lists. Each change shows who set it and is one undoable step in the viewer.
+**Agents fill in the same schema.** `aftershock-logger runs <dataset_root>` returns each run's segments, drive mode, failure moment and type, and video files as JSON. An agent that watched the video writes its reading back with `aftershock-logger annotate <dataset_root> <run_id> --segments ... --failure-at ... --failure-type ... --takeover-at ... --by my-agent`. Names must come from the lists. Each change shows who set it and is one undoable step in the viewer.
 
 **AI feature: find idle frames.** In Edit, **✦ Find idle frames** runs the built-in idle finder on the run. It marks stretches where the arm barely moves for over a second in light grey, each with a short description. You can cut them all, or cut or keep them one by one. Your own agent can make the same kind of suggestion:
 
 ```bash
-dataop-logger find-idle <dataset_root> [--run RUN_ID]                     # built-in finder, every run
-dataop-logger suggest-cut <dataset_root> <run_id> <start> <end> --reason "..." --by my-agent
+aftershock-logger find-idle <dataset_root> [--run RUN_ID]                     # built-in finder, every run
+aftershock-logger suggest-cut <dataset_root> <run_id> <start> <end> --reason "..." --by my-agent
 ```
 
 **Task segments and the failure moment.** The lane above the run bar shows the task segments, each in its own shade of one color. In Edit:
@@ -202,18 +217,18 @@ dataop-logger suggest-cut <dataset_root> <run_id> <start> <end> --reason "..." -
 - click a segment to select its frames for a label or a cut;
 - drag the red "fails" marker to where the policy actually started to fail. It is dashed and reads "fails?" while it is only estimated.
 
-The two seconds before the failure are shaded, since those frames matter most for training data. Agents can list a run's drive-mode changes, segment starts and failure moment with `dataop-logger events`, and add a detail to any of them with `dataop-logger note`.
+The two seconds before the failure are shaded, since those frames matter most for training data. Agents can list a run's drive-mode changes, segment starts and failure moment with `aftershock-logger events`, and add a detail to any of them with `aftershock-logger note`.
 
 **Agents read the labels.** An agent records what each plain-language label means for training, and the viewer shows that reading under the label:
 
 ```bash
-dataop-logger labels <dataset_root> --uninterpreted      # JSON: each label with what was recorded in its span
-dataop-logger interpret <dataset_root> <run_id> <label_id> --train exclude --meaning "camera blocked by a hand" --by my-agent
+aftershock-logger labels <dataset_root> --uninterpreted      # JSON: each label with what was recorded in its span
+aftershock-logger interpret <dataset_root> <run_id> <label_id> --train exclude --meaning "camera blocked by a hand" --by my-agent
 ```
 
 An existing reading is never overwritten silently: pass `--replace`, and the old one is kept in history. Changing a label's text or span clears its reading until an agent reads it again.
 
-**Where it is stored.** Labels, cuts and readings live in `dataop/runs/<run_id>/review.json`. That file travels with the dataset and never touches the recorded frames, manifest or checksums. The reader sets `item["dataop.train_mask"]` to False for cut frames and for labels read as `exclude`, and every target mask is gated on it. `inspect` reports labels, cut frames and open suggestions. Scripts can also record structured corrections in the same file through `dataop_logger.review` (outcome, failure start, step boundary, reject run); the viewer lists them with an Undo button.
+**Where it is stored.** Labels, cuts and readings live in `dataop/runs/<run_id>/review.json`. That file travels with the dataset and never touches the recorded frames, manifest or checksums. The reader sets `item["dataop.train_mask"]` to False for cut frames and for labels read as `exclude`, and every target mask is gated on it. `inspect` reports labels, cut frames and open suggestions. Scripts can also record structured corrections in the same file through `aftershock_logger.review` (outcome, failure start, step boundary, reject run); the viewer lists them with an Undo button.
 
 ## Batches: one round of collection
 
@@ -228,12 +243,12 @@ Without `batch=`, runs join the batch that is collecting, or a new batch named a
 batches existed are grouped by policy the first time the dataset is read.
 
 ```bash
-dataop-logger batches <root> list                      # every batch with runs, success, rescues, review progress
-dataop-logger batches <root> new "round 4"              # new runs go here; the old batch closes for review
-dataop-logger batches <root> close "round 3"            # no new runs; review continues
-dataop-logger batches <root> lock "round 3"             # freeze the review so a training set can be made from it
-dataop-logger batches <root> unlock "round 3" --reason "fix a label"   # earlier exports are marked out of date
-dataop-logger batches <root> edit "round 3" --model me/smolvla_v4      # the model trained from it (lineage)
+aftershock-logger batches <root> list                      # every batch with runs, success, rescues, review progress
+aftershock-logger batches <root> new "round 4"              # new runs go here; the old batch closes for review
+aftershock-logger batches <root> close "round 3"            # no new runs; review continues
+aftershock-logger batches <root> lock "round 3"             # freeze the review so a training set can be made from it
+aftershock-logger batches <root> unlock "round 3" --reason "fix a label"   # earlier exports are marked out of date
+aftershock-logger batches <root> edit "round 3" --model me/smolvla_v4      # the model trained from it (lineage)
 ```
 
 Locking needs every run marked reviewed (the "Mark reviewed" button in the viewer) and no open suggestions, or
@@ -245,9 +260,9 @@ The viewer has a batch picker above the run list with the batch's progress and t
 Bring data recorded without the logger, so it can be reviewed and exported the same way:
 
 ```bash
-dataop-logger import data/my_runs --dry-run                     # what would be bound, field by field
-dataop-logger import data/my_runs --preset lerobot-hil --batch "hil 1"
-dataop-logger import me/hub_dataset --into data/hub_copy         # a Hub dataset is copied first
+aftershock-logger import data/my_runs --dry-run                     # what would be bound, field by field
+aftershock-logger import data/my_runs --preset lerobot-hil --batch "hil 1"
+aftershock-logger import me/hub_dataset --into data/hub_copy         # a Hub dataset is copied first
 ```
 
 Import reads LeRobot v3.0 (convert v2.1 with LeRobot's own `convert_dataset_v21_to_v30` first) and never rewrites
@@ -262,7 +277,7 @@ A mapping says where each field comes from; anything without a source is stored 
 | `watcher` | the `intervention` column | `<session>_raw/epNNN.npy`, one row per policy frame | `<session>_results_*.json` |
 
 The default `--preset auto` picks one from the dataset's columns and side files. The Watcher preset also takes each
-episode's time from its raw file, marked as estimated. Pass `--map map.json` to map your own columns and side files (format in `src/dataop_logger/importer.py`). Import is
+episode's time from its raw file, marked as estimated. Pass `--map map.json` to map your own columns and side files (format in `src/aftershock_logger/importer.py`). Import is
 idempotent: episodes that already have a run are skipped.
 
 In the viewer, **Import** lists the LeRobot datasets on this machine (next to the ones the viewer knows and in
@@ -286,9 +301,9 @@ made from a locked batch stays current while the lock holds; one made from unloc
 soon as a run in it is reviewed differently. From the command line:
 
 ```bash
-dataop-logger export --batch data/round3:"round 3" --recipe dagger --into data/round3_dagger
-dataop-logger export --batch data/round3:"round 3" --recipe residual --zero-on-success --into data/round3_residual
-dataop-logger export --batch data/round3:"round 3" --recipe filtered --val 0.1 --into data/round3_bc
+aftershock-logger export --batch data/round3:"round 3" --recipe dagger --into data/round3_dagger
+aftershock-logger export --batch data/round3:"round 3" --recipe residual --zero-on-success --into data/round3_residual
+aftershock-logger export --batch data/round3:"round 3" --recipe filtered --val 0.1 --into data/round3_bc
 ```
 
 | Recipe | Frames | Action written |
@@ -310,7 +325,7 @@ training never samples across a gap. The output is a normal LeRobot v3.0 dataset
 
 ```python
 from lerobot.datasets.lerobot_dataset import LeRobotDataset
-from dataop_logger.reader import DataopDataset
+from aftershock_logger.reader import DataopDataset
 
 ds = DataopDataset(LeRobotDataset("me/tube_runs", root="data/tube_runs"), missing="error")
 item = ds[0]

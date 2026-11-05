@@ -1,0 +1,81 @@
+{
+ "action_schema": {
+  "bounds": null,
+  "dtype": "float32",
+  "frame": "robot",
+  "id": "ac0a32686409548395006285b3801acd664fe20f496dd7562b8f0825e1622bbf",
+  "names": [
+   "shoulder_pan",
+   "shoulder_lift",
+   "elbow_flex",
+   "wrist_flex",
+   "wrist_roll",
+   "gripper"
+  ],
+  "normalization_note": "values are logged denormalized, in robot command space",
+  "rate_hz": 30,
+  "space": "joint_position",
+  "units": [
+   "deg",
+   "deg",
+   "deg",
+   "deg",
+   "deg",
+   "pct"
+  ]
+ },
+ "batch": null,
+ "clock": {
+  "obs_timestamp_kind": "bundle_completion",
+  "source": "time.monotonic_ns"
+ },
+ "dataset": {
+  "repo_id": "test/old_v0_1_0",
+  "revision": null,
+  "root": "old_v0_1_0"
+ },
+ "ended_at": "2026-11-05T03:53:55.254940+00:00",
+ "env": {
+  "calibration_digest": null,
+  "extras": {},
+  "operator": null,
+  "robot_id": "so101",
+  "software": {
+   "dataop_logger": "0.1.0",
+   "lerobot": "0.6.2"
+  }
+ },
+ "episode_index": 0,
+ "events": [],
+ "failure_mode": null,
+ "fingerprint": "9b69b89db546e5d60699297e24908b9a184c60d8ecd3f4ecb8061b2d1c0c944a",
+ "integrity": {
+  "events_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+  "predictions_sha256": null,
+  "ticks_sha256": "85177b2446900f4b10d084d05853a142ddb293d3083c31264d6b4d31f6e4a99e"
+ },
+ "labels": [],
+ "length": 10,
+ "policy": {
+  "chunk_size": null,
+  "code_revision": null,
+  "config_digest": null,
+  "device": null,
+  "family": "smolvla",
+  "precision": null,
+  "revision": null,
+  "source": "train/smolvla_100",
+  "temporal_ensembling": false
+ },
+ "predictions_count": null,
+ "rl_ready": false,
+ "run_id": "a547d754-00d1-471b-b9b0-fee776eca4c6",
+ "schema_version": 1,
+ "started_at": "2026-11-05T03:53:55.254726+00:00",
+ "status": "committed",
+ "subgoals": [],
+ "takeovers": [],
+ "task": "pick up the tube",
+ "task_success": null,
+ "termination_reason": "success"
+}

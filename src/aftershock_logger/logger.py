@@ -20,11 +20,22 @@ from .fingerprint import fingerprint
 from .schema import (LIVE_CONTROL_MODES as CONTROL_MODES, SCHEMA_VERSION, SUBGOAL_STATUSES, TERMINAL_FLAG, LIVE_TERMINATION_REASONS as TERMINATION_REASONS,
                      ActionSchema, EnvInfo, PolicyInfo)
 
-try:                                                     # recorded in manifests
-    from importlib.metadata import version as _pkg_version
-    _DATAOP_VERSION = _pkg_version("dataop-logger")
-except Exception:                                        # running from a source checkout
-    _DATAOP_VERSION = "0.1.0+src"
+from importlib.metadata import PackageNotFoundError, version as _pkg_version  # noqa: E402  (also used by _lerobot_version)
+
+
+def _own_version() -> str:
+    """Recorded in manifests (under the key `dataop_logger`, which keeps its name so old readers still find it)."""
+    for dist in ("aftershock-logger", "dataop-logger"):  # new distribution name, then the old one
+        try:
+            return _pkg_version(dist)
+        except PackageNotFoundError:
+            continue
+        except Exception:
+            break
+    return "0.1.0+src"                                   # running from a source checkout
+
+
+_DATAOP_VERSION = _own_version()
 
 PRED_SCHEMA = pa.schema([("inference_id", pa.int64()), ("obs_frame_index", pa.int64()),
                          ("infer_start_ns", pa.int64()), ("infer_end_ns", pa.int64()), ("horizon", pa.int64()),
@@ -82,7 +93,7 @@ class RunLogger:
         """Record one episode. Call run.end(...) inside the block; saving and commit happen on exit."""
         if self.broken:
             raise RunError(f"this logger stopped after a failed save ({self.broken}); "
-                           "run `dataop-logger validate --repair` and open a new dataset writer")
+                           "run `aftershock-logger validate --repair` and open a new dataset writer")
         if self._active is not None and self._active.state in ("active", "staged"):
             raise RunError("a run is already in progress on this dataset")
         if not isinstance(task, str) or not task:

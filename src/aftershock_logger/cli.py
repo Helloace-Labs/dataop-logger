@@ -1,4 +1,4 @@
-"""dataop-logger validate | repair | inspect | remap | view | labels | interpret | events | note | find-idle | suggest-cut |
+"""aftershock-logger (or the old name dataop-logger) validate | repair | inspect | remap | view | labels | interpret | events | note | find-idle | suggest-cut |
 batches"""
 from __future__ import annotations
 
@@ -20,8 +20,18 @@ def main(argv=None) -> int:
         return 2
 
 
+PROG = "aftershock-logger"
+OLD_PROG = "dataop-logger"                               # the old command name, still installed
+
+
+def _prog() -> str:
+    """Usage and help show the name the user typed: the old command keeps saying dataop-logger."""
+    typed = Path(sys.argv[0]).name if sys.argv and sys.argv[0] else ""
+    return typed if typed in (PROG, OLD_PROG) else PROG
+
+
 def _main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="dataop-logger")
+    p = argparse.ArgumentParser(prog=_prog())
     sub = p.add_subparsers(dest="cmd", required=True)
     v = sub.add_parser("validate", help="check the sidecar against the LeRobot data on disk")
     v.add_argument("root")
@@ -77,7 +87,7 @@ def _main(argv=None) -> int:
     nt = sub.add_parser("note", help="for your own agent: write the details of one major event")
     nt.add_argument("root")
     nt.add_argument("run_id")
-    nt.add_argument("key", help="the event key from `dataop-logger events`, e.g. failure or drive@384")
+    nt.add_argument("key", help="the event key from `aftershock-logger events`, e.g. failure or drive@384")
     nt.add_argument("--text", required=True)
     nt.add_argument("--by", default="agent", help="name of the agent")
     q = sub.add_parser("find-idle", help="AI feature: suggest cutting idle stretches (built-in finder)")

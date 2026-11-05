@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "dataop-logger"
+name = "aftershock-logger"
 version = "0.1.0"
 authors = [{ name = "Helloace Labs" }]
 description = "Record base-policy, expert and sent actions, control mode and outcomes alongside a LeRobot dataset"
@@ -21,10 +21,11 @@ torch = ["torch"]
 test = ["pytest"]
 
 [project.scripts]
-dataop-logger = "dataop_logger.cli:main"
+aftershock-logger = "aftershock_logger.cli:main"
+dataop-logger = "dataop_logger.cli:main"     # old name, kept so existing scripts work
 
 [tool.setuptools.packages.find]
 where = ["src"]
 
 [tool.setuptools.package-data]
-dataop_logger = ["viewer.html", "viewer.js"]
+aftershock_logger = ["viewer.html", "viewer.js"]

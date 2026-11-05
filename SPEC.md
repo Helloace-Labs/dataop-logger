@@ -1,6 +1,6 @@
 # Aftershock logger: design spec (v0.4)
 
-The logger is published as the `dataop-logger` package. The package, the `dataop-logger` command and the `dataop/` sidecar folder keep their old names for now, so existing datasets keep working.
+The logger is published as the `aftershock-logger` package (Python package `aftershock_logger`), renamed from `dataop-logger`. The old names stay as aliases: `import dataop_logger` returns the same modules, and the `dataop-logger` command is still installed next to `aftershock-logger`. On-disk names do not change in v1: the `dataop/` sidecar folder, the reader's `dataop.*` columns, `dataop_export.json` and the manifest key `env.software.dataop_logger` are read and written as before, so existing datasets keep working. Any later folder rename will keep reading `dataop/`.
 
 ## What the logger is in Aftershock
 
@@ -14,7 +14,7 @@ Everything else in Aftershock reads what the logger wrote: Review shows it and s
 | Watch mode | The customer's own software | Inside the customer's control loop, added in a few lines by them or their agent |
 | Import | Already recorded, no logger | Not at all; `import` fills the same sidecar from existing files, and fields it cannot know stay `unknown` |
 
-The same package also ships a local viewer (`dataop-logger view`), which is the offline version of Review, and the export command that builds training sets.
+The same package also ships a local viewer (`aftershock-logger view`), which is the offline version of Review, and the export command that builds training sets.
 ## Purpose
 
 A small open-source Python package that records the provenance post-training needs alongside a normal LeRobot recording, without changing the LeRobot dataset. Most stacks record what the robot did. They drop what the base policy proposed, what the expert would have done, who was in control, how long each step took, and how each run ended. Those are what DAgger and residual-network datasets need, and they are hard to recover later.
@@ -92,7 +92,7 @@ v0 cannot separate the arbitration output from a safety-filter correction, and d
 - `failure_mode`: free-text name for how the run failed (`dropped_after_lift`, `no_grasp`), or null; groups failures across runs
 - `takeovers`: derived summary of half-open ranges `[start_frame, end_frame)` per `control_mode` and `expert_source`
 - `policy`: family, hub repo and revision or artifact sha256, code revision, config digest, chunk size, temporal ensembling, device and precision
-- `env`: typed `robot_id`, `calibration_digest`, `operator` (pseudonym), `software` (lerobot and dataop-logger versions), plus free-form `extras` (lighting, etc.)
+- `env`: typed `robot_id`, `calibration_digest`, `operator` (pseudonym), `software` (lerobot and aftershock-logger versions), plus free-form `extras` (lighting, etc.)
 - `action_schema` as above, `clock`: monotonic source description
 
 `dataop/index.jsonl` is a derived cache rebuilt from manifests.
@@ -106,7 +106,7 @@ Mutable and separate from the manifest and its digests: `{version, rev, seq, rev
 The logger owns ordering so it cannot drift:
 
 ```python
-from dataop_logger import RunLogger
+from aftershock_logger import RunLogger
 
 log = RunLogger(dataset, action_schema=schema)          # one writer per dataset root, lock enforced
 with log.run(task="pick up the tube", policy=policy_info, env=env) as run:
@@ -133,9 +133,9 @@ with log.run(task="pick up the tube", policy=policy_info, env=env) as run:
 
 ## CLI
 
-- `dataop-logger validate <root>`: episode binding, frame counts and indices, monotonic times, `sent_action == LeRobot action`, schema checks, takeover ranges, staged or orphaned runs. Nonzero exit on any error; `--json` report.
-- `dataop-logger inspect <root>`: runs, outcomes, minutes per control mode, takeovers.
-- `dataop-logger remap <old_root> <new_root>`: rebinds runs to a filtered or renumbered dataset by fingerprint.
+- `aftershock-logger validate <root>`: episode binding, frame counts and indices, monotonic times, `sent_action == LeRobot action`, schema checks, takeover ranges, staged or orphaned runs. Nonzero exit on any error; `--json` report.
+- `aftershock-logger inspect <root>`: runs, outcomes, minutes per control mode, takeovers.
+- `aftershock-logger remap <old_root> <new_root>`: rebinds runs to a filtered or renumbered dataset by fingerprint.
 
 ## Python reader
 

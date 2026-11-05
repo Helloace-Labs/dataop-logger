@@ -69,7 +69,7 @@ def _known(lists: dict, kind: str, name: str) -> str:
     e = next((x for x in lists[kind] if x["name"] == name or name in x.get("aliases", [])), None)
     if e is None:
         raise ls.ListError(f"{name!r} is not in this dataset's {kind.replace('_', ' ')}; "
-                           f"add it first with: dataop-logger lists <root> add {kind} {name}")
+                           f"add it first with: aftershock-logger lists <root> add {kind} {name}")
     return e["name"]
 
 
