@@ -465,30 +465,74 @@ def test_unsaved_frames_are_spilled_when_the_stop_leaves_the_logger(tmp_path, mo
     slow_writer(monkeypatch, ds, 0.05)
     _full_quarantine(monkeypatch, ds, {"full": True})
     spill = tmp_path / "spill"
-    with pytest.raises(RunError, match="were written to") as ei:
-        with RunLogger(ds, SCHEMA, spill_dir=spill) as log:
-            with log.run(task=TASK, policy=POLICY) as run:
-                q = run.queue(max_frames=3)
-                for i in range(10):
-                    q.put(frame(i), **kw(i))
-    stop = ei.value.__context__
-    assert isinstance(stop, ControlledStop) and "NOT written" in str(stop)
+    with pytest.warns(UserWarning, match="were spilled to") as warned:
+        with pytest.raises(ControlledStop) as ei:              # the close error does not replace the stop
+            with RunLogger(ds, SCHEMA, spill_dir=spill) as log:
+                with log.run(task=TASK, policy=POLICY) as run:
+                    q = run.queue(max_frames=3)
+                    for i in range(10):
+                        q.put(frame(i), **kw(i))
+    stop = ei.value
     rec = spill / run.run_id
     m = json.loads((rec / "manifest.json").read_text())
     assert m["length"] == stop.frames and m["quarantine"]["reason"] == "queue_full"
-    assert str(rec) in str(ei.value) and run.quarantine_path == rec
+    assert stop.spilled and stop.quarantine_path == rec == run.quarantine_path
+    assert f"spilled to {rec}" in str(stop) and "NOT written" not in str(stop)
+    assert any(str(rec) in str(w.message) for w in warned)
+
+
+def test_close_error_when_no_stop_is_leaving_the_block(tmp_path, monkeypatch):
+    ds = make_ds(tmp_path)
+    slow_writer(monkeypatch, ds, 0.05)
+    _full_quarantine(monkeypatch, ds, {"full": True})
+    log = RunLogger(ds, SCHEMA, spill_dir=tmp_path / "spill")
+    with pytest.raises(ControlledStop) as ei:
+        with log.run(task=TASK, policy=POLICY) as run:
+            q = run.queue(max_frames=3)
+            for i in range(10):
+                q.put(frame(i), **kw(i))
+    with pytest.raises(RunError, match="spilled to"):            # a plain close() still raises
+        log.close()
+    assert "spilled to" in str(ei.value)
+
+
+def test_default_spill_dir_is_per_user_and_persistent(monkeypatch, tmp_path):
+    from aftershock_logger.logger import default_spill_dir
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    assert default_spill_dir() == tmp_path / "data" / "aftershock-logger" / "spill"
+    monkeypatch.delenv("XDG_DATA_HOME")
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    assert default_spill_dir() == tmp_path / "home" / ".local" / "share" / "aftershock-logger" / "spill"
+
+
+def test_default_spill_message_recommends_a_different_disk(tmp_path, monkeypatch):
+    ds = make_ds(tmp_path)
+    slow_writer(monkeypatch, ds, 0.05)
+    _full_quarantine(monkeypatch, ds, {"full": True})
+    monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path / "data"))
+    log = RunLogger(ds, SCHEMA)
+    with pytest.raises(ControlledStop):
+        with log.run(task=TASK, policy=POLICY) as run:
+            q = run.queue(max_frames=3)
+            for i in range(10):
+                q.put(frame(i), **kw(i))
+    with pytest.raises(RunError, match="different disk"):
+        log.close()
+    assert (tmp_path / "data" / "aftershock-logger" / "spill" / run.run_id / "manifest.json").exists()
 
 
 def test_close_says_when_frames_could_not_be_written_anywhere(tmp_path, monkeypatch):
     ds = make_ds(tmp_path)
     slow_writer(monkeypatch, ds, 0.05)
     _full_quarantine(monkeypatch, ds, {"full": True, "spill_full": True})
-    with pytest.raises(RunError, match="NOT written anywhere"):
-        with RunLogger(ds, SCHEMA, spill_dir=tmp_path / "spill") as log:
-            with log.run(task=TASK, policy=POLICY) as run:
-                q = run.queue(max_frames=3)
-                for i in range(10):
-                    q.put(frame(i), **kw(i))
+    with pytest.warns(UserWarning, match="NOT written anywhere"):
+        with pytest.raises(ControlledStop) as ei:
+            with RunLogger(ds, SCHEMA, spill_dir=tmp_path / "spill") as log:
+                with log.run(task=TASK, policy=POLICY) as run:
+                    q = run.queue(max_frames=3)
+                    for i in range(10):
+                        q.put(frame(i), **kw(i))
+    assert "NOT written anywhere" in str(ei.value) and "NOT written anywhere" in ei.value.close_error
     assert run._unsaved_quarantine is not None                    # still in memory for a last retry
 
 
@@ -640,3 +684,67 @@ def test_hidden_files_in_quarantine_are_not_errors(tmp_path):
     (store.quarantine_dir(ds.root) / ".DS_Store").write_bytes(b"x")
     res = V.validate(ds.root)
     assert res["ok"], res["errors"]
+
+
+def test_write_partial_returns_this_runs_record_and_refuses_another(tmp_path, monkeypatch):
+    """Review confirmation round, L8 (round 1 L1): a record already in place from an earlier try is reused."""
+    ds = make_ds(tmp_path)
+    slow_writer(monkeypatch, ds, 0.05)
+    with RunLogger(ds, SCHEMA) as log:
+        with pytest.raises(ControlledStop):
+            with log.run(task=TASK, policy=POLICY) as run:
+                q = run.queue(max_frames=2)
+                for i in range(10):
+                    q.put(frame(i), **kw(i))
+    path, m = quarantined(ds, run)
+    rows = pq.read_table(path / "ticks.parquet").to_pylist()
+    assert FQ.write_partial(run, [None] * m["length"], [], m["quarantine"]) == path   # same run, same length
+    with pytest.raises(RunError, match="not this run's record"):
+        FQ.write_partial(run, [None] * (m["length"] + 1), [], m["quarantine"])
+    assert len(rows) == m["length"]
+
+
+def test_an_interrupt_during_the_quarantine_write_blocks_the_logger(tmp_path, monkeypatch):
+    """Review confirmation round, L8 (round 1 L2)."""
+    ds = make_ds(tmp_path)
+    slow_writer(monkeypatch, ds, 0.05)
+    real = FQ.write_partial
+    calls = [0]
+
+    def interrupted(*a, **k):
+        calls[0] += 1
+        if calls[0] == 1:
+            raise KeyboardInterrupt
+        return real(*a, **k)
+    monkeypatch.setattr(FQ, "write_partial", interrupted)
+    log = RunLogger(ds, SCHEMA)
+    with pytest.raises(KeyboardInterrupt):
+        with log.run(task=TASK, policy=POLICY) as run:
+            q = run.queue(max_frames=2)
+            for i in range(10):
+                q.put(frame(i), **kw(i))
+    assert run in log._unsaved_runs and "NOT written" in log.broken
+    assert "KeyboardInterrupt" in run._stop.quarantine_error
+    with pytest.raises(RunError, match="NOT written"):
+        with log.run(task=TASK, policy=POLICY):
+            pass
+    path = run.retry_quarantine()
+    assert not log.broken and run not in log._unsaved_runs
+    assert json.loads((path / "manifest.json").read_text())["length"] == run._stop.frames
+    log.close()
+
+
+def test_close_does_not_misreport_an_idle_writer(tmp_path):
+    """Review confirmation round, L8 (round 1 L5): with no wait allowed, a writer that has finished its frames is
+    not reported as stuck."""
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA) as log:
+        with log.run(task=TASK, policy=POLICY) as run:
+            q = run.queue(stop_timeout=0)
+            for i in range(3):
+                q.put(frame(i), **kw(i))
+            deadline = time.monotonic() + 5
+            while (q.depth() or len(run._rows) < 3) and time.monotonic() < deadline:
+                time.sleep(0.005)
+            run.discard()
+        assert run.state == "discarded" and not log.broken and not ds.has_pending_frames()

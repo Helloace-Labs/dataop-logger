@@ -15,3 +15,13 @@ Round 1 was a fallback review (`round1_claude.md`, the reviewer at its usage lim
 SPEC.md and README.md describe the new arguments, the first-put rule, the spill folder and the message.
 
 Tests: `python -m pytest -q`: 258 passed, 1 skipped (246 passed, 1 skipped at round 1; 233 passed, 1 skipped on main).
+
+## Confirmation round (round1_confirm_claude.md)
+
+The fallback confirmation round of `bb917a2` approved the round 1 fixes: 0 High, 0 Medium, 3 Low. All three are fixed.
+
+10. **L6, the default spill folder is temporary and usually on the full disk. Changed.** `src/aftershock_logger/logger.py`, `default_spill_dir`: the default is now a persistent per-user folder, `$XDG_DATA_HOME/aftershock-logger/spill`, else `~/.local/share/aftershock-logger/spill`, never the system temp folder. When the default was used, the close message says it is usually on the same disk as the dataset and recommends setting `spill_dir` to a persistent folder on a different disk. README and SPEC recommend the same for robots. Tests: `test_default_spill_dir_is_per_user_and_persistent`, `test_default_spill_message_recommends_a_different_disk`.
+11. **L7, the stop still says "NOT written" after a spill, and the close error replaces the stop. Changed.** `logger.py`, `RunLogger.close`: a spill sets the run's `ControlledStop` `spilled` and `quarantine_path`, and its message says where the frames were spilled. `RunLogger.__exit__`: when an exception is leaving the block, a close error no longer replaces it; a `ControlledStop` gets it as `close_error` and in its message, a warning repeats it, and the original exception keeps propagating. A plain `close()` still raises. Tests: `test_unsaved_frames_are_spilled_when_the_stop_leaves_the_logger`, `test_close_says_when_frames_could_not_be_written_anywhere`, `test_close_error_when_no_stop_is_leaving_the_block`.
+12. **L8, test gaps for round 1 L1, L2 and L5. Changed.** `tests/test_frame_queue.py`: `test_write_partial_returns_this_runs_record_and_refuses_another` (the already-present path, matching and mismatched), `test_an_interrupt_during_the_quarantine_write_blocks_the_logger` (logger refused, run registered for `close()`, retry works), `test_close_does_not_misreport_an_idle_writer` (`stop_timeout=0` with an idle writer).
+
+Tests after the confirmation fixes: 264 passed, 1 skipped.

@@ -62,6 +62,14 @@ class RunError(RuntimeError):
     pass
 
 
+def default_spill_dir() -> Path:
+    """A persistent per-user folder: $XDG_DATA_HOME/aftershock-logger/spill, else ~/.local/share/aftershock-logger/spill.
+    It survives reboots, but is usually on the same disk as the dataset; set RunLogger(spill_dir=...) on a robot."""
+    import os
+    base = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    return Path(base) / "aftershock-logger" / "spill"
+
+
 class RunLogger:
     """One per dataset root. Holds the single-writer lock until close()."""
 
@@ -75,7 +83,8 @@ class RunLogger:
         planner runs, or "unknown" (the default) when the caller does not say. A run can override it.
 
         spill_dir: where close() writes a stopped run's frames when they still cannot be written to the dataset's
-        quarantine folder (default: an aftershock-logger-spill folder in the system temp directory)."""
+        quarantine folder. On a robot, set it to a persistent folder on a different disk from the dataset. The
+        default is a per-user folder (default_spill_dir()), which is usually on the same disk as the dataset."""
         if obs_timestamp_kind not in ("capture", "bundle_completion"):
             raise ValueError("obs_timestamp_kind must be 'capture' or 'bundle_completion'")
         self.dataset = dataset
@@ -106,9 +115,8 @@ class RunLogger:
                 continue
             except Exception as e:
                 first = f"{type(e).__name__}: {e}"
-            import tempfile
             from .frame_queue import write_partial
-            spill = Path(self.spill_dir) if self.spill_dir else Path(tempfile.gettempdir()) / "aftershock-logger-spill"
+            spill = Path(self.spill_dir) if self.spill_dir else default_spill_dir()
             rows, observations, info = run._unsaved_quarantine
             try:
                 spill.mkdir(parents=True, exist_ok=True)
@@ -119,8 +127,13 @@ class RunLogger:
                 continue
             run.quarantine_path, run._unsaved_quarantine = path, None
             self._unsaved_runs.remove(run)
+            if run._stop is not None:
+                run._stop.quarantine_path, run._stop.spilled = path, True
+                run._stop._settle()
+            hint = "" if self.spill_dir else (" (the default spill folder, usually on the same disk as the dataset; "
+                                              "set spill_dir to a persistent folder on a different disk)")
             problems.append(f"run {run.run_id}: {len(rows)} frames could not be written to the dataset's quarantine "
-                            f"({first}) and were written to {path}; move that folder to "
+                            f"({first}) and were spilled to {path}{hint}; move that folder to "
                             f"{store.quarantine_dir(self.root)} when there is space")
         if problems:
             raise RunError("; ".join(problems))
@@ -128,8 +141,20 @@ class RunLogger:
     def __enter__(self):
         return self
 
-    def __exit__(self, *exc):
-        self.close()
+    def __exit__(self, exc_type, exc, tb):
+        """A close() error never hides the exception that is leaving the block: a ControlledStop gets it attached
+        (close_error, and in its message) and a warning repeats it; the original exception keeps propagating."""
+        try:
+            self.close()
+        except RunError as e:
+            if exc is None:
+                raise
+            from .frame_queue import ControlledStop
+            if isinstance(exc, ControlledStop):
+                exc.close_error = str(e)
+                exc._settle()
+            warnings.warn(f"closing the logger: {e}")
+        return False
 
     @contextmanager
     def run(self, task: str, policy: PolicyInfo | None | str = UNKNOWN, env: EnvInfo | None = None,

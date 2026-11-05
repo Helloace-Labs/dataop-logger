@@ -188,7 +188,7 @@ except ControlledStop as stop:
         ...                              # free space, then run.retry_quarantine()
 ```
 
-If the queue fills or a write fails (a full disk, for example), `put()` raises `ControlledStop`. Hold the robot and let the stop leave the run block. Every frame the logger accepted is written to `dataop/quarantine/<run_id>/` with the reason, and the run is never saved as a complete episode. If even that write fails, the stop says the frames were not written and they stay in memory: call `run.retry_quarantine()` once there is space. Closing the `RunLogger` retries too and, if the disk is still full, writes them to a spill folder (`spill_dir`) and raises an error that names it. `aftershock-logger validate --repair` checks quarantined runs and keeps them. Details are in [SPEC.md](SPEC.md).
+If the queue fills or a write fails (a full disk, for example), `put()` raises `ControlledStop`. Hold the robot and let the stop leave the run block. Every frame the logger accepted is written to `dataop/quarantine/<run_id>/` with the reason, and the run is never saved as a complete episode. If even that write fails, the stop says the frames were not written and they stay in memory: call `run.retry_quarantine()` once there is space. Closing the `RunLogger` retries too and, if the disk is still full, writes them to a spill folder and says where; the stop's message is updated too. On a robot, pass `RunLogger(..., spill_dir=...)` with a persistent folder on a different disk from the dataset: the default (`~/.local/share/aftershock-logger/spill`) survives reboots but is usually on the same disk that just filled up. `aftershock-logger validate --repair` checks quarantined runs and keeps them. Details are in [SPEC.md](SPEC.md).
 
 ## Command line
 

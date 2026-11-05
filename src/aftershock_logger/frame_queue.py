@@ -45,18 +45,25 @@ class ControlledStop(RunError):
         self.frames: int | None = None
         self.quarantine_path: Path | None = None
         self.quarantine_error: str | None = None
+        self.spilled = False                                        # written to the spill folder, not the dataset
+        self.close_error: str | None = None                         # what closing the RunLogger reported
 
     def _settle(self) -> None:
         """Say in the message where the frames went, or that they were never written."""
         head = f"controlled stop of run {self.run_id}: {self.reason} ({self.detail})"
-        if self.quarantine_path is not None:
+        if self.quarantine_path is not None and self.spilled:
+            tail = (f"{self.frames} frames could not be written to the dataset and were spilled to "
+                    f"{self.quarantine_path}; move that folder into the dataset's dataop/quarantine/ when there is space")
+        elif self.quarantine_path is not None:
             tail = f"{self.frames} frames quarantined at {self.quarantine_path}"
         elif self.quarantine_error is not None:
             tail = (f"{self.frames} frames were NOT written ({self.quarantine_error}); they are only in memory: "
                     "call run.retry_quarantine(), or close the RunLogger, which retries and then spills them")
         else:
-            return
-        self.args = (f"{head}; {tail}",)
+            tail = None
+        parts = [head] + ([tail] if tail else []) + ([f"closing the logger: {self.close_error}"]
+                                                     if self.close_error and not self.spilled else [])
+        self.args = ("; ".join(parts),)
 
 
 def _copy_frame(frame: dict) -> dict:
