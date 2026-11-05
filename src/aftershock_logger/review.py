@@ -126,12 +126,23 @@ def load(run_path: Path, manifest: dict | None = None, task: dict | None = None)
 
 
 def file_format(run_path: Path) -> int | None:
-    """1 or 2 for the review file on disk, None when the run has none (or it is unreadable)."""
-    try:
-        raw = json.loads(_path(run_path).read_text())
-    except (OSError, ValueError):
+    """1 or 2 for the review file on disk, None only when the run has no review file. A file that exists but cannot
+    be read, is not valid JSON or is in neither format raises ReviewError, so callers never mistake a damaged review
+    for a missing one."""
+    p = _path(run_path)
+    if not p.exists():
         return None
-    return 1 if fmt.is_format1(raw) else 2 if isinstance(raw, dict) and raw.get("review_format") == 2 else None
+    try:
+        raw = json.loads(p.read_text())
+    except (OSError, ValueError) as e:
+        what = "is not valid JSON" if isinstance(e, ValueError) else f"cannot be read ({type(e).__name__})"
+        raise ReviewError(f"{p.name} {what}") from None
+    if fmt.is_format1(raw):
+        return 1
+    if isinstance(raw, dict) and raw.get("review_format") == 2:
+        return 2
+    found = raw.get("review_format", raw.get("version")) if isinstance(raw, dict) else type(raw).__name__
+    raise ReviewError(f"{p.name} is in no known review format (found {found!r})")
 
 
 _RECORDING = contextvars.ContextVar("dataop_review_recording", default=None)

@@ -460,11 +460,23 @@ function defaultsFor(r, lo, hi) {       // who drove and the step that cover mos
   return { driver, segment };
 }
 
+// a reading's label, and whether the reading can still apply: only while its label is accepted (the logger
+// refuses to accept a reading of a label that was replaced or taken back)
+function readingTarget(r, x) {
+  const label = r.review.edits.find(e => e.edit_id === x.payload.label_id && e.kind === "label");
+  return { label, live: !!label && label.status === "accepted" };
+}
+
 function proposalText(r, x) {    // one line for an agent's proposal of any kind other than a cut
   const p = x.payload, at = f => fmt(f / r.fps);
+  const reading = () => {
+    const { label, live } = readingTarget(r, x);
+    const about = label ? `label "${label.payload.text}" ${at(label.payload.start)}–${at(label.payload.end)}` : "a missing label";
+    return `${p.train} ${about}: ${p.meaning}${live ? "" : " (that label was replaced or taken back, so this no longer applies)"}`;
+  };
   const what = x.kind === "segments" ? p.segments.map(s => `${canon("task_segments", s.legacy_name || s.subtask_id)} ${at(s.start)}–${at(s.end)}`).join(", ")
     : x.kind === "outcome" ? `${p.termination_reason || p.outcome}${p.failure_mode ? ": " + p.failure_mode : ""}`
-    : x.kind === "reading" ? `${p.train}: ${p.meaning}`
+    : x.kind === "reading" ? reading()
     : p.frame !== undefined ? at(p.frame) + (p.text ? ": " + p.text : "")
     : p.text || p.failure_type_id || "";
   return `${x.by || "agent"}: ${what}${x.reason ? " (" + x.reason + ")" : ""}`;
@@ -486,7 +498,9 @@ function aiBar(r) {
   ${op.length ? `<div class="card sugg"><h3>Proposed by agents</h3>${op.map(x => `<div class="srow">
       <span class="time">${esc(x.kind.replace(/_/g, " "))}</span>
       <span class="sdesc" title="by ${esc(x.by || "agent")}">${esc(proposalText(r, x))}</span>
-      <span class="sbtns"><button class="btn sm" data-acc="${esc(x.edit_id)}">Accept</button><button class="btn sm" data-rej="${esc(x.edit_id)}">Reject</button></span></div>`).join("")}</div>` : ""}`;
+      <span class="sbtns">${x.kind === "reading" && !readingTarget(r, x).live
+        ? `<button class="btn sm" disabled title="Its label was replaced or taken back, so accepting it would change nothing">Accept</button>`
+        : `<button class="btn sm" data-acc="${esc(x.edit_id)}">Accept</button>`}<button class="btn sm" data-rej="${esc(x.edit_id)}">Reject</button></span></div>`).join("")}</div>` : ""}`;
 }
 
 // ── one run ───────────────────────────────────────────────────────────────────

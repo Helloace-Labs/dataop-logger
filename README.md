@@ -263,7 +263,7 @@ aftershock-logger labels <dataset_root> --uninterpreted      # JSON: each label 
 aftershock-logger interpret <dataset_root> <run_id> <label_id> --train exclude --meaning "camera blocked by a hand" --by my-agent
 ```
 
-A label that already has a reading (in effect or proposed) is refused unless you pass `--replace`, which adds another proposal next to it. Changing a label's text or span clears its reading until it is read again.
+A label that already has a reading (in effect or proposed) is refused unless you pass `--replace`, which adds another proposal next to it. Changing a label's text or span clears its reading until it is read again, and a proposed reading of the old label can no longer be accepted.
 
 **Where it is stored.** Labels, cuts and readings live in `dataop/runs/<run_id>/review.json`, in review format 2, the format the Aftershock cloud uses too (see SPEC.md). Files written by earlier versions are read as they are and rewritten in format 2 on their next change, or all at once with `aftershock-logger migrate-reviews <dataset_root>`. That file travels with the dataset and never touches the recorded frames, manifest or checksums. The reader sets `item["dataop.train_mask"]` to False for cut frames and for labels read as `exclude`, and every target mask is gated on it. `inspect` reports labels, cut frames and open suggestions. Scripts can also record structured corrections in the same file through `aftershock_logger.review` (outcome, failure start, step boundary, reject run); the viewer lists them with an Undo button.
 

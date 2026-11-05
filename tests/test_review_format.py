@@ -989,3 +989,154 @@ def test_real_review_files_migrate_losslessly_on_copies(tmp_path):
         assert rv.migrate_file(run, m)
         assert B.review_digest(m, rv.load(run, m)) == B.review_digest(m, r) and (run / "review.json").read_text() == fmt.dump_review(r)
         assert dumps(fmt.to_format1(rv.load(run, m))) == dumps(fmt.normalize_format1(raw))
+
+
+# ------------------------------------------------------------------ post-merge review of format 2: findings 1 and 2
+
+
+def _label_with_open_reading(r=None):
+    r = r or fmt.empty_review(rc.RUN_ID)
+    r, lb = fmt.propose(r, kind="label", payload={"start": 1, "end": 3, "text": "arm pauses", "driver": None,
+                                                  "segment": None}, source="human", by="p", expect_rev=r["rev"],
+                        now="t")
+    r, rd = fmt.propose(r, kind="reading", payload={"label_id": lb["edit_id"], "train": "exclude", "meaning": "pause"},
+                        source="agent", by="a", job_id="j", agent_version="v", reason="r", expect_rev=r["rev"],
+                        now="t")
+    return r, lb, rd
+
+
+def _retire(r, lb, how):
+    if how == "replace":
+        r, _ = fmt.replace(r, lb["edit_id"], {"start": 1, "end": 5, "text": "arm pauses long", "driver": None,
+                                              "segment": None}, by="p", expect_rev=r["rev"], now="t")
+    else:
+        r, _ = fmt.retract(r, lb["edit_id"], by="p", expect_rev=r["rev"], now="t")
+    return r
+
+
+@pytest.mark.parametrize("how", ["replace", "retract"])
+def test_a_reading_of_a_replaced_or_taken_back_label_cannot_be_accepted(how):
+    """Finding 1: accepting it would look like an exclusion while it changes no frame, so it is refused, one by one
+    and in a bulk decision, and nothing in that bulk decision is accepted."""
+    r, lb, rd = _label_with_open_reading()
+    r = _retire(r, lb, how)
+    before = fmt.dump_review(r)
+    with pytest.raises(fmt.ReviewError, match="no longer applies"):
+        fmt.accept(r, rd["edit_id"], by="p", expect_rev=r["rev"], now="t")
+    r, other = fmt.propose(r, kind="exclude", payload={"start": 0, "end": 2}, source="agent", by="a", job_id="j",
+                           agent_version="v", reason="idle", expect_rev=r["rev"], now="t")
+    with pytest.raises(fmt.ReviewError, match="no longer applies"):
+        fmt.decide_many(r, [other["edit_id"], rd["edit_id"]], True, by="p", expect_rev=r["rev"], now="t", what="all")
+    assert fmt.dump_review(fmt.reject(fmt.load_review(before), rd["edit_id"], by="p", expect_rev=r["rev"] - 1,
+                                      now="t")[0])                 # rejecting it still works
+    r = fmt.decide_many(r, [other["edit_id"], rd["edit_id"]], False, by="p", expect_rev=r["rev"], now="t", what="no")
+    assert all(e["status"] == "rejected" for e in r["edits"] if e["edit_id"] in (other["edit_id"], rd["edit_id"]))
+
+
+def test_a_reading_of_a_label_still_in_effect_is_accepted_as_before():
+    r, lb, rd = _label_with_open_reading()
+    r, out = fmt.accept(r, rd["edit_id"], by="p", expect_rev=r["rev"], now="t")
+    assert out["status"] == "accepted" and fmt.reading_in_effect(r, lb["edit_id"])["train"] == "exclude"
+    r2, lb2, rd2 = _label_with_open_reading()
+    r2 = fmt.decide_many(r2, [rd2["edit_id"]], True, by="p", expect_rev=r2["rev"], now="t", what="all")
+    assert fmt.reading_in_effect(r2, lb2["edit_id"])["train"] == "exclude"
+
+
+def test_undoing_the_replace_makes_the_reading_acceptable_again():
+    r, lb, rd = _label_with_open_reading()
+    r = _retire(r, lb, "replace")
+    r, _ = fmt.undo(r, r["history"][-1]["step_id"], expect_rev=r["rev"], now="t")
+    r, out = fmt.accept(r, rd["edit_id"], by="p", expect_rev=r["rev"], now="t")
+    assert fmt.reading_in_effect(r, lb["edit_id"])["meaning"] == "pause"
+
+
+def _run_without_review(tmp_path):
+    run = _dataset(tmp_path)
+    (run / "review.json").unlink()
+    return run
+
+
+@pytest.mark.parametrize("how", ["replace", "retract"])
+def test_the_viewer_api_refuses_an_obsolete_reading(tmp_path, how):
+    run = _run_without_review(tmp_path)
+    lb = rv.add_edit(run, MANIFEST, "label", {"start": 1, "end": 3, "text": "arm pauses"})
+    rd = rv.interpret(run, lb["edit_id"], "exclude", "pause", by="agent-a")
+    assert rd["status"] == "proposed"
+    if how == "replace":
+        rv.replace_edit(run, MANIFEST, lb["edit_id"], {"start": 1, "end": 5, "text": "arm pauses long"})
+    else:
+        rv.decide(run, MANIFEST, lb["edit_id"], False)            # the viewer's delete label
+    before = (run / "review.json").read_bytes()
+    with pytest.raises(rv.ReviewError, match="no longer applies"):
+        rv.decide(run, MANIFEST, rd["edit_id"], True)
+    with pytest.raises(rv.ReviewError, match="no longer applies"):
+        rv.decide_many(run, MANIFEST, [rd["edit_id"]], True)
+    with pytest.raises(rv.ReviewError, match="no accepted label"):
+        rv.decide(run, MANIFEST, rd["edit_id"], True, payload={"label_id": lb["edit_id"], "train": "exclude",
+                                                               "meaning": "pause"})
+    assert (run / "review.json").read_bytes() == before
+    mask = rv.train_mask(MANIFEST, rv.load(run, MANIFEST), ["base"] * MANIFEST["length"])
+    assert mask[1:5].all()                                        # the corrected span stays in training
+
+
+def _viewer_reading_rows(review: dict, fps: float = 10.0) -> list:
+    """Run the viewer's proposal line and Accept button for each open reading with node."""
+    import subprocess
+    if shutil.which("node") is None:
+        pytest.skip("node is not installed")
+    src = (Path(rv.__file__).parent / "viewer.js").read_text()
+
+    def grab(start: str) -> str:
+        i = src.index(start)
+        return src[i:src.index("\n}\n", i) + 3]
+    script = "\n".join([
+        src.splitlines()[5], src.splitlines()[6],                 # fmt and esc
+        "const canon = (k, n) => n;",
+        grab("function readingTarget("), grab("function proposalText("),
+        "const r = JSON.parse(require('fs').readFileSync(0, 'utf8'));",
+        "console.log(JSON.stringify(r.review.edits.filter(e => e.kind === 'reading' && e.status === 'proposed')"
+        ".map(x => [proposalText(r, x), readingTarget(r, x).live])));"])
+    out = subprocess.run(["node", "-e", script], input=json.dumps({"fps": fps, "review": review}),
+                         capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def test_the_viewer_shows_a_readings_label_and_span_and_marks_an_obsolete_one():
+    r, lb, rd = _label_with_open_reading()
+    [(text, live)] = _viewer_reading_rows(r)
+    assert live and 'label "arm pauses" 0:00.1–0:00.3' in text and "exclude" in text and "pause" in text
+    [(text, live)] = _viewer_reading_rows(_retire(r, lb, "replace"))
+    assert not live and "no longer applies" in text and '"arm pauses"' in text
+
+
+def test_the_viewer_offers_no_accept_for_an_obsolete_reading():
+    src = (Path(rv.__file__).parent / "viewer.js").read_text()
+    bar = src[src.index("function aiBar("):]
+    bar = bar[:bar.index("\n}\n")]
+    assert 'x.kind === "reading" && !readingTarget(r, x).live' in bar and "disabled" in bar
+
+
+@pytest.mark.parametrize("content,why", [("{\"version\": 1, \"edits\": [", "not valid JSON"),
+                                         ("{\"review_format\": 7}", "no known review format"),
+                                         ("[1, 2]", "no known review format")])
+def test_migrate_reviews_refuses_an_unreadable_review_file(tmp_path, capsys, content, why):
+    """Finding 2: a damaged review file is refused, named, and makes the command exit nonzero, in --dry-run too."""
+    from aftershock_logger.cli import main
+    run = _dataset(tmp_path)
+    (run / "review.json").write_text(content)
+    with pytest.raises(rv.ReviewError, match=why):
+        rv.file_format(run)
+    for args in (["--dry-run"], []):
+        assert main(["migrate-reviews", str(tmp_path / "ds"), *args]) == 1
+        out = capsys.readouterr()
+        assert "1 refused" in out.out and f"{MANIFEST['run_id']}: review.json" in out.err and why in out.err
+    assert (run / "review.json").read_text() == content          # left as it is
+
+
+def test_file_format_is_none_only_when_there_is_no_review_file(tmp_path, capsys):
+    from aftershock_logger.cli import main
+    run = _run_without_review(tmp_path)
+    assert rv.file_format(run) is None
+    assert main(["migrate-reviews", str(tmp_path / "ds"), "--dry-run"]) == 0
+    assert "0 refused" in capsys.readouterr().out

@@ -704,6 +704,28 @@ def _find(d: dict, edit_id: str) -> dict:
     return e
 
 
+def obsolete_reading(review: dict, e: dict) -> str | None:
+    """Why a reading edit can no longer be accepted, or None. A reading applies only while its label is accepted;
+    once the label was replaced or taken back, accepting the reading would change nothing in training, so it is
+    refused rather than recorded as if it took effect."""
+    if e["kind"] != "reading":
+        return None
+    label_id = e["payload"]["label_id"]
+    label = next((x for x in review["edits"] if x["edit_id"] == label_id), None)
+    if label is not None and label["kind"] == "label" and label["status"] == "accepted":
+        return None
+    if label is None or label["kind"] != "label":
+        why = "is not a label on this run"
+    elif label["replaced_by"] is not None:
+        why = f"was replaced by {label['replaced_by']!r}"
+    elif label["status"] == "rejected" and label["accepted_seq"] is not None:
+        why = "was taken back"
+    else:
+        why = "is not an accepted label"
+    return (f"reading {e['edit_id']!r} is about label {label_id!r}, which {why}; the reading no longer applies and "
+            "cannot be accepted: reject it, and read the label now in effect instead")
+
+
 def _accept(d: dict, e: dict, by: str, now: str) -> None:
     d["seq"] += 1
     e.update(status="accepted", accepted_seq=d["seq"], decided_at=now, decided_by=by)
@@ -839,7 +861,8 @@ def propose(review: dict, *, kind: str, payload: dict, source: str, by: str, exp
 
 def accept(review: dict, edit_id: str, *, by: str, expect_rev: int, now: str, t: int | None = None,
            what: str | None = None) -> tuple[dict, dict]:
-    """A person accepts a proposal unchanged. Only a proposal can be accepted."""
+    """A person accepts a proposal unchanged. Only a proposal can be accepted, and a reading only while its label
+    is accepted (see obsolete_reading)."""
     by = _who(by)
     _text(what)
     with _write(review, expect_rev, what=what or "accept") as box:
@@ -847,6 +870,9 @@ def accept(review: dict, edit_id: str, *, by: str, expect_rev: int, now: str, t:
         e = _find(box["d"], edit_id)
         if e["status"] != "proposed":
             raise ReviewError("only a proposal can be accepted; change an accepted edit with replace")
+        obsolete = obsolete_reading(box["d"], e)
+        if obsolete:
+            raise ReviewError(obsolete)
         _accept(box["d"], e, by, now)
     return box["out"], _edit_of(box["out"], edit_id)
 
@@ -1011,7 +1037,8 @@ def propose_many(review: dict, items: list[dict], *, expect_rev: int, now: str, 
 
 def decide_many(review: dict, edit_ids: list[str], accept_them: bool, *, by: str, expect_rev: int, now: str,
                 t: int | None = None, what: str) -> dict:
-    """A person accepts or rejects several proposals in one step. Every id must be an open proposal."""
+    """A person accepts or rejects several proposals in one step. Every id must be an open proposal, and nothing is
+    accepted when one of them is a reading whose label is no longer accepted (see obsolete_reading)."""
     by = _who(by)
     _text(now, what)
     with _write(review, expect_rev, what=what) as box:
@@ -1019,6 +1046,10 @@ def decide_many(review: dict, edit_ids: list[str], accept_them: bool, *, by: str
         todo = [next((x for x in box["d"]["edits"] if x["edit_id"] == i), None) for i in edit_ids]
         if any(e is None or e["status"] != "proposed" for e in todo) or len(set(edit_ids)) != len(edit_ids):
             raise ReviewError("every id must be an open proposal on this run, once")
+        if accept_them:
+            obsolete = next(filter(None, (obsolete_reading(box["d"], e) for e in todo)), None)
+            if obsolete:
+                raise ReviewError(obsolete)
         for e in todo:
             if accept_them:
                 _accept(box["d"], e, by, now)
