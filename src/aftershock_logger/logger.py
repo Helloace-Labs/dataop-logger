@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime as _dt
 from pathlib import Path
 import shutil
+import threading
 import time
 import uuid
 import warnings
@@ -99,16 +100,37 @@ class RunLogger:
         self._active: Run | None = None
         self.spill_dir = spill_dir
         self._unsaved_runs: list[Run] = []                # stopped runs whose frames are only in memory
+        self._stuck_writers: list = []                    # frame writer threads still inside LeRobot's add_frame
+        self._lock_handed_off = False
 
     def close(self) -> None:
         """Release the writer lock. A stopped run whose frames are still only in memory is written to quarantine
-        once more, then to spill_dir; a RunError names where they went, or that they were not written at all."""
+        once more, then to spill_dir; a RunError names where they went, or that they were not written at all.
+
+        A frame writer that timed out may still be inside LeRobot's add_frame and can still change the dataset's
+        files. The lock is then kept until that thread returns (a background thread releases it), so no other
+        writer can open the dataset meanwhile, and the RunError says so."""
+        problems = []
         try:
             if self._active is not None and self._active.state == "active":
                 self._active.discard()
         finally:
-            self._lock.release()
-        problems = []
+            stuck = [t for t in self._stuck_writers if t.is_alive()]
+            if not stuck:
+                self._lock.release()
+            elif not self._lock_handed_off:
+                self._lock_handed_off = True
+                lock = self._lock
+
+                def release_when_done():
+                    for t in stuck:
+                        t.join()
+                    lock.release()
+                threading.Thread(target=release_when_done, name="dataop-lock-release", daemon=True).start()
+            if stuck:
+                problems.append(f"a frame writer is still inside LeRobot's add_frame, so {self._lock.path} stays "
+                                "locked until it returns (or this process ends); no other writer can open the "
+                                "dataset meanwhile")
         for run in list(self._unsaved_runs):
             try:
                 run.retry_quarantine()
