@@ -6,6 +6,7 @@ and `python -m dataop_logger.cli` still runs the CLI. New code should import `af
 """
 import importlib
 import importlib.abc
+import importlib.machinery
 import importlib.util
 import sys
 
@@ -46,6 +47,13 @@ class _AliasLoader(importlib.abc.MetaPathFinder, importlib.abc.Loader):
         return _canonical(fullname)
 
     def find_spec(self, fullname, path=None, target=None):
+        if fullname.startswith(_NEW + "."):
+            # A new-name submodule found while the alias is in use (first import or importlib.reload): use the
+            # normal path finder, with its loader wrapped so it also answers to the old name.
+            spec = importlib.machinery.PathFinder.find_spec(fullname, path, target)
+            if spec is not None and spec.loader is not None and not isinstance(spec.loader, _BothNamesLoader):
+                spec.loader = _BothNamesLoader(spec.loader)
+            return spec
         if not fullname.startswith(_OLD + "."):
             return None
         real = importlib.util.find_spec(self._target(fullname))

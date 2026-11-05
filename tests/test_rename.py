@@ -113,10 +113,14 @@ def test_runpy_and_reload_after_the_alias_was_imported(tmp_path, first, module):
     """runpy.run_module and importlib.reload must work when the module is already imported under either name."""
     root = copy_old(tmp_path)
     code = f"""
-import importlib, runpy, sys
+import importlib, inspect, runpy, sys
 import {first}.cli, dataop_logger.cli, dataop_logger.store
-import aftershock_logger.store as store
+import aftershock_logger.cli as cli, aftershock_logger.store as store
 assert importlib.reload(dataop_logger.store) is store and store.__spec__.name == "aftershock_logger.store"
+for _ in range(2):                                   # reload the module that runs next, through both names
+    assert importlib.reload(dataop_logger.cli) is cli and importlib.reload(cli) is cli
+assert cli.__spec__.name == "aftershock_logger.cli" and cli.__package__ == "aftershock_logger"
+assert "def main" in inspect.getsource(cli)           # tracebacks and inspect still find the source
 sys.argv = ["x", "validate", {str(root)!r}]
 try:
     runpy.run_module({module!r}, run_name="__main__", alter_sys=True)
