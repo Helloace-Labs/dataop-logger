@@ -673,8 +673,8 @@ def test_train_mask_failure_start_across_modes(modes, fs, masked):
     r["edits"].append({"edit_id": "a" * 12, "kind": "failure_start", "payload": {"frame": fs}, "source": "human",
                        "by": "person", "job_id": None, "agent_version": None, "reason": None, "status": "accepted",
                        "created_at": "t", "decided_at": "t", "decided_by": "person", "accepted_seq": 1,
-                       "corrects": None, "replaces": None, "replaced_by": None, "adjusted": False,
-                       "legacy_reading": None, "legacy_reading_history": []})
+                       "corrects": None, "replaces": None, "replaced_by": None, "retracted_at": None,
+                       "retracted_by": None, "adjusted": False, "legacy_reading": None, "legacy_reading_history": []})
     mask = rv.train_mask(m, r, modes)
     assert [i for i in range(len(modes)) if not mask[i]] == masked
     m["termination_reason"] = "success"                          # an effective success ignores failure_start

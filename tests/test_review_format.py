@@ -138,9 +138,10 @@ def test_logger_only_operations_write_ordinary_format2_reviews():
     r = fmt.decide_many(r, [made[0]["edit_id"], made[1]["edit_id"]], True, by="p", expect_rev=1, now="t2",
                         what="cut all")
     r, gone = fmt.retract(r, made[0]["edit_id"], by="q", expect_rev=2, now="t3")
-    # the acceptance stays as it was; the take back is its own step
+    # the acceptance stays as it was; the take back says who did it and when, and is its own step
     assert (gone["status"], gone["accepted_seq"], gone["decided_by"], gone["decided_at"]) == ("rejected", 1, "p", "t2")
-    assert r["history"][-1]["at"] == "t3" and "taken back by q" in r["history"][-1]["what"]
+    assert (gone["retracted_by"], gone["retracted_at"]) == ("q", "t3")
+    assert r["history"][-1]["at"] == "t3" and r["history"][-1]["what"] == "take back"
     assert [e["edit_id"] for e in fmt.active_edits(r)] == [made[1]["edit_id"]]
     with pytest.raises(fmt.ReviewError):
         fmt.retract(r, made[0]["edit_id"], by="p", expect_rev=3, now="t4")
@@ -323,7 +324,7 @@ def _random_ops(rng: random.Random, review: dict, n: int) -> list:
                                                                                 reason="r")))
             ops.append(("propose", kw))
         elif roll < 0.6:
-            ops.append((rng.choice(["accept", "reject"]), dict(edit_id=rng.choice(ids), by="p1")))
+            ops.append((rng.choice(["accept", "reject", "retract"]), dict(edit_id=rng.choice(ids), by="p1")))
         elif roll < 0.7:
             ops.append(("replace", dict(edit_id=rng.choice(ids), payload={"frame": rng.randrange(0, 125)},
                                         by="p1")))
@@ -548,6 +549,357 @@ def test_lone_surrogates_are_refused_or_accepted_like_the_reference():
                 assert mine == theirs, f"{path} {value!r}: logger {'accepts' if mine else 'refuses'}"
                 seen[mine is not None] += 1
     assert seen[True] and seen[False]           # both kinds of field were exercised
+
+
+# ------------------------------------------------------------------ take back fields, text and unknown
+
+
+def _review_with_take_back():
+    """A review with a label taken back by q and a cut still in effect: (review, label id, cut id)."""
+    r = fmt.empty_review(rc.RUN_ID)
+    r, lb = fmt.propose(r, kind="label", payload={"start": 1, "end": 3, "text": "x", "driver": None, "segment": None},
+                        source="human", by="p", expect_rev=0, now="t1")
+    r, cut = fmt.propose(r, kind="exclude", payload={"start": 4, "end": 9}, source="human", by="p", expect_rev=1,
+                         now="t2")
+    r, _ = fmt.retract(r, lb["edit_id"], by="q", expect_rev=2, now="t3")
+    return r, lb["edit_id"], cut["edit_id"]
+
+
+def test_a_take_back_records_who_and_when_and_is_final():
+    r, lb, cut = _review_with_take_back()
+    gone = next(e for e in r["edits"] if e["edit_id"] == lb)
+    assert (gone["status"], gone["accepted_seq"], gone["decided_at"], gone["decided_by"]) == ("rejected", 1, "t1", "p")
+    assert (gone["retracted_at"], gone["retracted_by"]) == ("t3", "q")
+    assert (r["history"][-1]["what"], r["history"][-1]["at"]) == ("take back", "t3")
+    # accept, reject, replace and retract all refuse a taken back edit
+    for call in (lambda: fmt.accept(r, lb, by="p", expect_rev=3, now="t4"),
+                 lambda: fmt.reject(r, lb, by="p", expect_rev=3, now="t4"),
+                 lambda: fmt.replace(r, lb, {"start": 1, "end": 4, "text": "y", "driver": None, "segment": None},
+                                     by="p", expect_rev=3, now="t4"),
+                 lambda: fmt.retract(r, lb, by="p", expect_rev=3, now="t4")):
+        with pytest.raises(fmt.ReviewError):
+            call()
+    # unknown is written only by the upgrade of an L8 file, never by retract
+    for by, now in (("unknown", "t4"), ("p", "unknown")):
+        with pytest.raises(fmt.ReviewError, match="unknown"):
+            fmt.retract(r, cut, by=by, expect_rev=3, now=now)
+    # undo puts the edit back exactly as accepted
+    back, _ = fmt.undo(r, r["history"][-1]["step_id"], expect_rev=3, now="t5")
+    assert next(e for e in back["edits"] if e["edit_id"] == lb)["retracted_at"] is None
+
+
+def test_format1_cannot_say_who_took_an_edit_back():
+    r = fmt.migrate_format1(rc.read("format1_all_kinds.json"), MANIFEST, None)
+    assert all((e["retracted_at"], e["retracted_by"]) == (None, None) for e in fmt.all_edit_versions(r))
+    fmt.to_format1(r)
+    r2, _ = fmt.retract(r, "00000000000e", by="q", expect_rev=r["rev"], now="t")
+    with pytest.raises(fmt.MigrationError, match="retracted_by"):
+        fmt.to_format1(r2)
+
+
+def _edit_variants():
+    """(name, change to a taken back edit, accepted by check_edit)."""
+    def put(**kw):
+        return lambda e: e.update(kw)
+    return [
+        ("as written", put(), True),
+        ("only retracted_at", put(retracted_by=None), False),
+        ("only retracted_by", put(retracted_at=None), False),
+        ("still accepted", put(status="accepted"), False),
+        ("never accepted", put(accepted_seq=None), False),
+        ("also replaced", put(replaced_by="aaaaaaaaaaaa"), False),
+        ("both unknown", put(retracted_at="unknown", retracted_by="unknown"), True),
+        ("unknown at only", put(retracted_at="unknown"), False),
+        ("unknown by only", put(retracted_by="unknown"), False),
+        ("by too long", put(retracted_by="x" * 101), False),
+        ("blank at", put(retracted_at=""), False),
+    ]
+
+
+@pytest.mark.parametrize("name,change,ok", _edit_variants(), ids=[v[0] for v in _edit_variants()])
+def test_take_back_fields_are_set_together_and_only_on_a_take_back(name, change, ok):
+    r, lb, _ = _review_with_take_back()
+    e = copy.deepcopy(next(x for x in r["edits"] if x["edit_id"] == lb))
+    change(e)
+    if ok:
+        fmt.check_edit(e)
+    else:
+        with pytest.raises(fmt.FormatError):
+            fmt.check_edit(e)
+
+
+def _unrecorded(e):
+    e.update(retracted_at=None, retracted_by=None)
+
+
+def test_a_take_back_that_names_nobody_is_kept_only_in_a_migrated_review():
+    r, lb, _ = _review_with_take_back()
+    bad = copy.deepcopy(r)
+    _unrecorded(next(x for x in bad["edits"] if x["edit_id"] == lb))
+    with pytest.raises(fmt.FormatError, match="names nobody"):
+        fmt.check_review(bad)
+    bad = copy.deepcopy(r)                                  # only in a history snapshot
+    _unrecorded(bad["history"][-1]["changes"][0]["after"])
+    with pytest.raises(fmt.FormatError, match="names nobody"):
+        fmt.check_review(bad)
+    # a migrated review keeps format 1 take backs (000000000009 and 00000000000f) as format 1 wrote them
+    m = fmt.migrate_format1(rc.read("format1_all_kinds.json"), MANIFEST, None)
+    assert [e["edit_id"] for e in m["edits"] if fmt._unrecorded_take_back(e)] == ["000000000009", "00000000000f"]
+
+
+def _migrated_unknown_variants():
+    """Reviews that differ only in where unknown take back fields are: (name, review, accepted)."""
+    m = fmt.migrate_format1(rc.read("format1_all_kinds.json"), MANIFEST, None)
+    on_edit = copy.deepcopy(m)
+    next(e for e in on_edit["edits"] if e["edit_id"] == "000000000009").update(retracted_at="unknown",
+                                                                               retracted_by="unknown")
+    on_snapshot = copy.deepcopy(m)                          # a format 1 style take back only in a history `after`
+    after = on_snapshot["history"][0]["changes"][0]["after"]
+    after.update(status="rejected", retracted_at="unknown", retracted_by="unknown")
+    outside, lb, _ = _review_with_take_back()               # not migrated: an L8 take back reads as unknown
+    outside = copy.deepcopy(outside)
+    next(e for e in outside["edits"] if e["edit_id"] == lb).update(retracted_at="unknown", retracted_by="unknown")
+    outside_snapshot = copy.deepcopy(outside)
+    outside_snapshot["history"][-1]["changes"][0]["after"].update(retracted_at="unknown", retracted_by="unknown")
+    return [("migrated, format 1 take back", m, True), ("migrated, unknown on the edit", on_edit, False),
+            ("migrated, unknown on a history snapshot only", on_snapshot, False),
+            ("not migrated, unknown on the edit", outside, True),
+            ("not migrated, unknown on the edit and its snapshot", outside_snapshot, True)]
+
+
+def test_unknown_take_back_fields_are_refused_in_a_migrated_review():
+    for name, review, ok in _migrated_unknown_variants():
+        if ok:
+            fmt.check_review(review)
+            assert fmt.dump_review(fmt.read(fmt.dump_review(review), MANIFEST)) == fmt.dump_review(review), name
+        else:
+            with pytest.raises(fmt.FormatError, match="migrated"):
+                fmt.check_review(review)
+
+
+def test_unknown_take_back_fields_are_refused_in_a_migrated_review_like_the_reference():
+    impl = rc.contract_impl()
+    m = impl.manifest(MANIFEST)
+    for name, review, ok in _migrated_unknown_variants():
+        text = fmt.dump_review(review)
+        try:
+            ref = impl.load(text)
+            impl.check_manifest(ref, m)
+            theirs = impl.dump(ref)
+        except ValueError:
+            theirs = None
+        assert (theirs is not None) == ok and (theirs is None or theirs == text), name
+
+
+def test_job_id_and_agent_version_unknown_only_together_on_agent_edits_of_a_migrated_review():
+    m = fmt.migrate_format1(rc.read("format1_all_kinds.json"), MANIFEST, None)
+    agent = next(e for e in m["edits"] if e["source"] == "agent")
+    fmt.check_edit(agent)
+    for change in (dict(job_id="j1"), dict(agent_version="v1"), dict(source="check")):
+        with pytest.raises(fmt.FormatError, match="unknown only together"):
+            fmt.check_edit({**agent, **change})
+    # outside a migrated review, in the edits or only in a history snapshot
+    r = fmt.empty_review(rc.RUN_ID)
+    r, e = fmt.propose(r, kind="note", payload={"frame": 1, "text": "x"}, source="agent", by="a", job_id="j",
+                       agent_version="v", reason="r", expect_rev=0, now="t")
+    for where in ("edits", "snapshot"):
+        bad = copy.deepcopy(r)
+        x = bad["edits"][0] if where == "edits" else bad["history"][0]["changes"][0]["after"]
+        x.update(job_id="unknown", agent_version="unknown")
+        with pytest.raises(fmt.FormatError, match="migrated from format 1"):
+            fmt.check_review(bad)
+
+
+def test_a_caller_cannot_pass_unknown_as_job_id_or_agent_version(tmp_path):
+    r = fmt.empty_review(rc.RUN_ID)
+    for kw in (dict(job_id="unknown", agent_version="v"), dict(job_id="j", agent_version="unknown")):
+        item = dict(kind="note", payload={"frame": 1, "text": "x"}, source="agent", by="a", reason="r", **kw)
+        with pytest.raises(fmt.ReviewError, match="unknown"):
+            fmt.propose(r, expect_rev=0, now="t", **item)
+        with pytest.raises(fmt.ReviewError, match="unknown"):
+            fmt.propose_many(r, [item], expect_rev=0, now="t", what="w")
+    run, m = _named_run(tmp_path, MANIFEST["subgoals"])
+    with pytest.raises(rv.ReviewError, match="unknown"):
+        rv.add_edit(run, m, "note", {"frame": 1, "text": "x"}, source="agent", agent_version="unknown")
+
+
+S = "a\udc00"     # a lone surrogate
+
+
+def test_no_text_field_holds_a_lone_surrogate():
+    r, lb, _ = _review_with_take_back()
+    for change in (lambda d: d["edits"][0].update(by=S), lambda d: d["edits"][0].update(reason=S),
+                   lambda d: d["history"][0].update(what=S), lambda d: d["edits"][0].update(retracted_by=S),
+                   lambda d: d["lock_log"].append({"action": "unlock", "by": "o", "at": "t", "reason": S})):
+        bad = copy.deepcopy(r)
+        change(bad)
+        with pytest.raises(fmt.FormatError):
+            fmt.check_review(bad)
+        with pytest.raises(fmt.FormatError):
+            fmt.dump_review(bad)                            # the writer refuses it too, checked or not
+        with pytest.raises(fmt.FormatError):
+            fmt.load_review(json.dumps(bad))
+    raw = rc.read("format1_all_kinds.json")                # the format 1 read
+    raw["edits"][0]["by"] = S
+    with pytest.raises(fmt.MigrationError):
+        fmt.migrate_format1(raw, MANIFEST, None)
+    assert fmt.dump_review(fmt.load_review(fmt.dump_review(r))) == fmt.dump_review(r)      # valid text still reads
+
+
+def _surrogate_calls(r, lb, cut):
+    """Operation calls with a lone surrogate in one input, several of which would change nothing otherwise."""
+    agent = dict(kind="note", payload={"frame": 1, "text": "x"}, source="agent", by="a", job_id="j",
+                 agent_version="v", reason="r")
+    return [
+        ("propose", dict(agent, reason=S)),                             # a repeat of an open proposal
+        ("propose", dict(agent, now=S)),
+        ("propose", dict(agent, by=S)),
+        ("propose", dict(agent, job_id=S)),
+        ("propose", dict(kind="note", payload={"frame": 1, "text": S}, source="human", by="p")),
+        ("set_reviewed", dict(reviewed=False, by="p", now=S)),          # not signed off: nothing to take back
+        ("set_reviewed", dict(reviewed=False, by=S)),
+        ("accept", dict(edit_id=cut, by=S)),
+        ("reject", dict(edit_id=cut, by=S)),
+        ("replace", dict(edit_id=cut, payload={"start": 4, "end": 8}, by=S)),
+        ("retract", dict(edit_id=cut, by=S)),
+        ("retract", dict(edit_id=cut, by="p", now=S)),
+        ("lock", dict(by=S)),
+        ("lock", dict(by="o", reason=S)),
+    ]
+
+
+def _with_open_proposal():
+    r, lb, cut = _review_with_take_back()
+    r, _ = fmt.propose(r, kind="note", payload={"frame": 1, "text": "x"}, source="agent", by="a", job_id="j",
+                       agent_version="v", reason="r", expect_rev=r["rev"], now="t")
+    return r, lb, cut
+
+
+def test_operations_refuse_a_lone_surrogate_even_when_they_change_nothing():
+    r, lb, cut = _with_open_proposal()
+    for op, kw in _surrogate_calls(r, lb, cut):
+        kw = {"now": "t9", **kw}
+        with pytest.raises(fmt.ReviewError):
+            getattr(fmt, op)(r, expect_rev=r["rev"], **kw)
+    item = dict(kind="note", payload={"frame": 1, "text": "x"}, source="agent", by="a", job_id="j",
+                agent_version="v", reason="r")
+    for kw in (dict(now=S, what="w"), dict(now="t", what=S)):
+        with pytest.raises(fmt.ReviewError):
+            fmt.propose_many(r, [item], expect_rev=r["rev"], **kw)
+        with pytest.raises(fmt.ReviewError):
+            fmt.decide_many(r, [], True, by="p", expect_rev=r["rev"], **kw)
+    locked = fmt.lock(r, by="o", expect_rev=r["rev"], now="t")
+    with pytest.raises(fmt.ReviewError):
+        fmt.unlock(locked, by=S, reason="r", expect_rev=locked["rev"], now="t")
+
+
+def test_operations_refuse_a_lone_surrogate_like_the_reference():
+    impl = rc.contract_impl()
+    r, lb, cut = _with_open_proposal()
+    ref = impl.load(fmt.dump_review(r))
+    for op, kw in _surrogate_calls(r, lb, cut):
+        kw = {"now": "t9", **kw}
+        outs = []
+        for call, review in ((getattr(fmt, op), r), (impl.op(op), ref)):
+            try:
+                call(review, expect_rev=r["rev"], **copy.deepcopy(kw))
+                outs.append("ok")
+            except ValueError as e:
+                outs.append(type(e).__name__)
+        assert outs[0] == outs[1] == "ReviewError", (op, kw, outs)
+
+
+# ------------------------------------------------------------------ files the logger wrote at 4f4395e (logger L8)
+
+
+L8 = rc.read("l8_files.json")
+
+
+def _l8_run(tmp_path, name):
+    run, m = _named_run(tmp_path / name, MANIFEST["subgoals"])
+    (run / "review.json").write_text(L8[name]["text"])
+    return run, m
+
+
+def test_the_l8_fixtures_are_what_that_logger_wrote():
+    for name, f in L8.items():
+        raw = json.loads(f["text"])
+        assert all("retracted_at" not in e and "retracted_by" not in e for e in raw["edits"]), name
+        assert (raw["legacy_subtask_map"] is not None) == f["migrated"]
+    whats = [h["what"] for h in json.loads(L8["take_back"]["text"])["history"]]
+    assert whats[-2:] == ["take back (taken back by q)", "take back (taken back by p1)"]
+
+
+@pytest.mark.parametrize("name", sorted(L8))
+def test_an_l8_file_reads_as_the_reference_reads_it_through_both_read_paths(tmp_path, name):
+    f, want = L8[name], EXPECTED["l8_files"][name]
+    text = f["text"]
+    up = fmt.load_review(text)
+    assert fmt.dump_review(up) == want["upgraded"]
+    assert fmt.dump_review(fmt.read(text, MANIFEST)) == want["upgraded"]
+    run, m = _l8_run(tmp_path, name)
+    assert fmt.dump_review(rv.load(run, m)) == want["upgraded"]
+    assert fmt.dump_review(rv.load(run)) == want["upgraded"]                       # manifest read from disk
+    assert (run / "review.json").read_text() == text                              # reading never writes
+    # the digest is that of the upgraded text, which differs from the file's own sha256 once it has an edit
+    assert fmt.review_digest(up) == want["digest"]
+    has_edits = bool(json.loads(text)["edits"] or json.loads(text)["history"])
+    assert (want["digest"] != rc.sha(text)) == has_edits
+    # each edit not taken back reads with both null; a take back made by L8 outside a migrated review with unknown
+    for e in fmt.all_edit_versions(up):
+        took_back = e["status"] == "rejected" and e["accepted_seq"] is not None and e["replaced_by"] is None
+        want_mark = "unknown" if took_back and not f["migrated"] else None
+        assert (e["retracted_at"], e["retracted_by"]) == (want_mark, want_mark), (name, e["edit_id"])
+
+
+@pytest.mark.parametrize("name", sorted(L8))
+def test_the_next_change_to_an_l8_file_writes_both_keys(tmp_path, name):
+    want = EXPECTED["l8_files"][name]
+    review = fmt.load_review(L8[name]["text"])
+    with rc.LoggerImpl().ids(rc.Ids(0xf9000000000)):
+        if review["locked"] is not None:
+            nxt = fmt.unlock(review, by="owner", reason="next change", expect_rev=review["rev"], now=rc.when(0))
+        else:
+            nxt, _ = fmt.propose(review, kind="note", payload={"frame": 1, "text": "next change"}, source="human",
+                                 by="p1", expect_rev=review["rev"], now=rc.when(0))
+    assert fmt.dump_review(nxt) == want["next"]
+    # through the run: the file on disk becomes the canonical text, with both keys on every edit and snapshot
+    run, m = _l8_run(tmp_path, name)
+    if review["locked"] is None:
+        rv.add_edit(run, m, "note", {"frame": 1, "text": "next change"})
+        on_disk = json.loads((run / "review.json").read_text())
+        assert all({"retracted_at", "retracted_by"} <= set(e) for e in fmt.all_edit_versions(on_disk))
+        assert fmt.dump_review(fmt.load_review((run / "review.json").read_text())) == \
+            (run / "review.json").read_text()
+
+
+@pytest.mark.parametrize("name", sorted(L8))
+def test_an_l8_file_matches_the_reference_live(name):
+    impl = rc.contract_impl()
+    assert rc.l8_results(rc.LoggerImpl())[name] == rc.l8_results(impl)[name] == EXPECTED["l8_files"][name]
+
+
+def test_an_l8_edit_with_only_one_take_back_key_is_refused(tmp_path):
+    for key in ("retracted_at", "retracted_by"):
+        raw = json.loads(L8["take_back"]["text"])
+        raw["edits"][0][key] = None
+        text = fmt.dumps(raw)
+        with pytest.raises(fmt.FormatError):
+            fmt.load_review(text)
+        with pytest.raises(fmt.FormatError):
+            fmt.read(text, MANIFEST)
+        run, m = _l8_run(tmp_path / key, "take_back")
+        (run / "review.json").write_text(text)
+        with pytest.raises(rv.ReviewError):
+            rv.load(run, m)
+
+
+@pytest.mark.parametrize("name", sorted(L8))
+def test_batches_locked_by_the_l8_logger_still_verify(tmp_path, name):
+    """A batch lock records the sha256 of the effective view, not of the review text. Taken back edits are rejected
+    and not in that view, so the digest that logger recorded still matches after the upgrade."""
+    run, m = _l8_run(tmp_path, name)
+    assert B.review_digest(m, rv.load(run, m)) == L8[name]["batch_digest"]
 
 
 # ------------------------------------------------------------------ real files, read only

@@ -105,6 +105,9 @@ class LoggerImpl:
     def errors(self) -> tuple:
         return (self.fmt.ReviewError, self.fmt.FormatError)
 
+    def digest(self, review) -> str:
+        return self.fmt.review_digest(review)
+
 
 class ContractImpl(LoggerImpl):
     name = "contract"
@@ -165,6 +168,9 @@ class ContractImpl(LoggerImpl):
 
     def errors(self) -> tuple:
         return (ValueError,)
+
+    def digest(self, review) -> str:
+        return self.rv.review_digest(review)
 
 
 def contract_impl() -> ContractImpl:
@@ -291,6 +297,39 @@ def _cases() -> dict[str, dict]:
         ("undo", dict(step_id="@4")),
         ("undo", dict(step_id="dddddddddddd")),
     ]
+    take_back = [
+        ("propose", dict(kind="label", payload=_label(), source="human", by="p1")),
+        ("propose", dict(kind="exclude", payload={"start": 0, "end": 5}, **_agent())),
+        ("accept", dict(edit_id="$1", by="p1")),
+        ("propose", dict(kind="reading", payload={"label_id": "$0", "train": "exclude", "meaning": "pause"},
+                         source="human", by="p1")),
+        ("set_reviewed", dict(reviewed=True, by="p1")),
+        ("retract", dict(edit_id="$0", by="q")),                          # the label; its reading stays with it
+        ("retract", dict(edit_id="$0", by="q")),                          # a taken back edit is final
+        ("accept", dict(edit_id="$0", by="p1")),
+        ("reject", dict(edit_id="$0", by="p1")),
+        ("replace", dict(edit_id="$0", payload=_label(10, 25), by="p1")),
+        ("retract", dict(edit_id="$1", by="unknown")),                    # only the L8 upgrade writes unknown
+        ("propose", dict(kind="note", payload={"frame": 5, "text": "x"}, **_agent())),
+        ("retract", dict(edit_id="$11", by="p1")),                        # a proposal is rejected, not taken back
+        ("propose", dict(kind="failure_start", payload={"frame": 50}, source="human", by="p1")),
+        ("propose", dict(kind="failure_start", payload={"frame": 60}, source="human", by="p1")),
+        ("retract", dict(edit_id="$14", by="p2")),                        # the earlier value is in effect again
+        ("undo", dict(step_id="@15")),
+        ("retract", dict(edit_id="$14", by="p2")),
+        ("replace", dict(edit_id="$13", payload={"frame": 55}, by="p1")),
+        ("retract", dict(edit_id="$18", by="p1")),                        # the replacement; $13 stays replaced
+        ("retract", dict(edit_id="$13", by="p1")),                        # a replaced edit is not taken back
+        ("propose", dict(kind="note", payload={"frame": 5, "text": "y"}, **_agent(job_id="unknown"))),
+        ("propose", dict(kind="note", payload={"frame": 5, "text": "y"}, **_agent(agent_version="unknown"))),
+    ]
+    migrated_take_back = [
+        ("retract", dict(edit_id="00000000000e", by="q")),
+        ("retract", dict(edit_id="00000000000f", by="q")),                # a format 1 take back is final too
+        ("accept", dict(edit_id="000000000009", by="p1")),
+        ("undo", dict(step_id="@0")),
+        ("retract", dict(edit_id="00000000000c", by="q")),                # a label with a format 1 reading
+    ]
     cap = [("propose", dict(kind="note", payload={"frame": i % 120, "text": f"note {i}"}, source="human", by="p1"))
            for i in range(205)] + [("undo", dict(step_id="@0")), ("undo", dict(step_id="@204"))]
     big = [("propose", dict(kind="segments", payload={"segments": [
@@ -305,6 +344,8 @@ def _cases() -> dict[str, dict]:
         "migrated_without_task": {"start": "format1_all_kinds.json", "ops": migrated[:5]},
         "migrated_minimal": {"start": "format1_minimal.json", "ops": [
             ("accept", dict(edit_id="000000000015", by="p1")), ("undo", dict(step_id="@0"))]},
+        "take_back": {"start": "empty", "ops": take_back},
+        "migrated_take_back": {"start": "format1_all_kinds.json+task", "ops": migrated_take_back},
         "history_cap": {"start": "empty", "ops": cap},
         "large_steps": {"start": "empty", "ops": big},
     }
@@ -380,4 +421,22 @@ def migration_results(impl) -> dict:
             r = impl.migrate(raw, m, impl.task(t))
             out[f"{f1} {label}"] = {"format2": impl.dump(r), "format1": json.dumps(impl.to_format1(r), indent=1,
                                                                                    sort_keys=True) + "\n"}
+    return out
+
+
+def l8_results(impl) -> dict:
+    """Files the logger wrote at 4f4395e (l8_files.json, before the take back fields), as each implementation reads
+    them: the upgraded text, its digest, and the text after the next change (a person's note, or the unlock of a
+    locked review)."""
+    out = {}
+    for name, f in read("l8_files.json").items():
+        review = impl.load(f["text"])
+        with impl.ids(Ids(0xf9000000000)):
+            if json.loads(f["text"])["locked"] is not None:
+                nxt = impl.op("unlock")(review, by="owner", reason="next change", expect_rev=impl.rev(review),
+                                        now=when(0))
+            else:
+                nxt, _ = impl.op("propose")(review, kind="note", payload={"frame": 1, "text": "next change"},
+                                            source="human", by="p1", expect_rev=impl.rev(review), now=when(0))
+        out[name] = {"upgraded": impl.dump(review), "digest": impl.digest(review), "next": impl.dump(nxt)}
     return out
