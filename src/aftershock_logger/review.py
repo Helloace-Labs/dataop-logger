@@ -110,6 +110,18 @@ def empty(run_id: str) -> dict:
         return fmt.empty_review(run_id)
 
 
+def _has_review_file(p: Path) -> bool:
+    """False only when there is no review entry at all. A broken link, or an entry that cannot be looked up, is a
+    review file that cannot be read (ReviewError), never a missing one."""
+    try:
+        p.lstat()
+    except FileNotFoundError:
+        return False
+    except OSError as e:
+        raise ReviewError(f"{p.name} cannot be looked up ({type(e).__name__})") from None
+    return True
+
+
 def load(run_path: Path, manifest: dict | None = None, task: dict | None = None) -> dict:
     """The run's review as format 2, checked against the recorded run. A missing file is an empty review; a format 1
     file is migrated in memory (by recorded name, against `task` when given) and left on disk as it is."""
@@ -117,20 +129,22 @@ def load(run_path: Path, manifest: dict | None = None, task: dict | None = None)
     if manifest is None:
         manifest = store.read_manifest(run_path)
     p = _path(run_path)
-    if not p.exists():
+    if not _has_review_file(p):
         return empty(manifest["run_id"])
     try:
         return fmt.read(p.read_bytes(), manifest, task)
+    except OSError as e:
+        raise ReviewError(f"{p}: cannot be read ({type(e).__name__})") from None
     except (fmt.FormatError, KeyError, TypeError, AttributeError) as e:
         raise ReviewError(f"{p}: {e}") from None
 
 
 def file_format(run_path: Path) -> int | None:
-    """1 or 2 for the review file on disk, None only when the run has no review file. A file that exists but cannot
-    be read, is not valid JSON or is in neither format raises ReviewError, so callers never mistake a damaged review
-    for a missing one."""
+    """1 or 2 for the review file on disk, None only when the run has no review entry at all. An entry that cannot be
+    looked up or read (a broken link, for example), is not valid JSON or is in neither format raises ReviewError, so
+    callers never mistake a damaged review for a missing one."""
     p = _path(run_path)
-    if not p.exists():
+    if not _has_review_file(p):
         return None
     try:
         raw = json.loads(p.read_text())

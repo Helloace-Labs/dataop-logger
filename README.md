@@ -403,7 +403,7 @@ The design and code went through five rounds of review between Claude (Anthropic
 
 The logger is before 1.0, so a minor change may change behavior. Changes since 0.1.0:
 
-- `review.file_format` returns `None` only when a run has no review file. A file that cannot be read, is not valid JSON or is in no known format raises `ReviewError` (it returned `None` before). `migrate-reviews` counts such a file as refused and exits nonzero, in `--dry-run` too.
+- `review.file_format` returns `None` only when a run has no review file. A file that cannot be read, is not valid JSON or is in no known format raises `ReviewError` (it returned `None` before); a `review.json` link whose target is gone counts as unreadable, and `review.load` refuses it instead of reading it as an empty review. `migrate-reviews` counts such a file as refused and exits nonzero, in `--dry-run` too.
 - `review_format.accept` and `decide_many` refuse a proposed reading whose label was replaced or taken back; a bulk accept that includes one accepts nothing. `replace` refuses a new reading of such a label, and `undo` refuses a step (and `undoable` leaves it out) whose undo would make such a reading accepted again. The new helper `review_format.obsolete_reading(review, edit)` says why, or returns `None`. The viewer shows each proposed reading with its label's text and span and offers no Accept for an obsolete one.
 
 ## License

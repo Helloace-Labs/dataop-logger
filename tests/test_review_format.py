@@ -1162,3 +1162,38 @@ def test_replace_and_undo_cannot_make_an_obsolete_reading_accepted(how):
     with pytest.raises(fmt.ReviewError, match="no longer applies"):
         fmt.replace(r2, rd2["edit_id"], {"label_id": lb["edit_id"], "train": "exclude", "meaning": "o"}, by="p",
                     expect_rev=r2["rev"], now="t")
+
+
+def test_a_broken_review_link_is_refused_not_read_as_missing(tmp_path, capsys):
+    """Review round 1, Medium 1: a review.json link whose target is gone is a review that cannot be read."""
+    from aftershock_logger.cli import main
+    run = _dataset(tmp_path)
+    (run / "review.json").unlink()
+    (run / "review.json").symlink_to(tmp_path / "gone.json")
+    with pytest.raises(rv.ReviewError, match="cannot be read"):
+        rv.file_format(run)
+    with pytest.raises(rv.ReviewError, match="cannot be read"):
+        rv.load(run, MANIFEST)                                    # never an empty review a write would replace
+    for args in (["--dry-run"], []):
+        assert main(["migrate-reviews", str(tmp_path / "ds"), *args]) == 1
+        out = capsys.readouterr()
+        assert "1 refused" in out.out and "cannot be read" in out.err
+    assert (run / "review.json").is_symlink()
+
+
+def test_a_review_entry_that_cannot_be_looked_up_is_refused(tmp_path, monkeypatch, capsys):
+    from aftershock_logger.cli import main
+    run = _dataset(tmp_path)
+    real = Path.lstat
+
+    def lstat(self, *a, **k):
+        if self.name == "review.json":
+            raise PermissionError(13, "Permission denied")
+        return real(self, *a, **k)
+    monkeypatch.setattr(Path, "lstat", lstat)
+    with pytest.raises(rv.ReviewError, match="cannot be looked up"):
+        rv.file_format(run)
+    for args in (["--dry-run"], []):
+        assert main(["migrate-reviews", str(tmp_path / "ds"), *args]) == 1
+        out = capsys.readouterr()
+        assert "1 refused" in out.out and "cannot be looked up" in out.err
