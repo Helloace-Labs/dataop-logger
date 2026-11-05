@@ -399,6 +399,13 @@ The full field list and design are in [SPEC.md](SPEC.md).
 
 The design and code went through five rounds of review between Claude (Anthropic) and Codex (OpenAI). Every review and the decision taken on each finding are in [reviews/](reviews/).
 
+## Changes
+
+The logger is before 1.0, so a minor change may change behavior. Changes since 0.1.0:
+
+- `review.file_format` returns `None` only when a run has no review file. A file that cannot be read, is not valid JSON or is in no known format raises `ReviewError` (it returned `None` before). `migrate-reviews` counts such a file as refused and exits nonzero, in `--dry-run` too.
+- `review_format.accept` and `decide_many` refuse a proposed reading whose label was replaced or taken back; a bulk accept that includes one accepts nothing. The new helper `review_format.obsolete_reading(review, edit)` says why, or returns `None`. The viewer shows each proposed reading with its label's text and span and offers no Accept for an obsolete one.
+
 ## License
 
 Apache 2.0

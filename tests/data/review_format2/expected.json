@@ -2365,6 +2365,98 @@
     "step": "abc000000008"
    }
   ],
+  "obsolete_reading": [
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000001",
+    "op": "propose",
+    "rev": 1,
+    "sha": "4314911611bb4ebfda31b75e1dcdf50998669e851821b5b4f1008c12844bd4d2",
+    "step": "abc000000002"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000003",
+    "op": "propose",
+    "rev": 2,
+    "sha": "46561a198b364fbf8495f9cb423f1754b2cca0d5d40fe12e8865ac54f252cf3a",
+    "step": "abc000000004"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000005",
+    "op": "replace",
+    "rev": 3,
+    "sha": "5433c52f557cb6c933b9aff2bc1a2022b2a09c4d25ff13ce918db9499234e991",
+    "step": "abc000000006"
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "accept",
+    "rev": 3,
+    "sha": "5433c52f557cb6c933b9aff2bc1a2022b2a09c4d25ff13ce918db9499234e991",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000007",
+    "op": "propose",
+    "rev": 4,
+    "sha": "3bcaba65059f53cbda7b4318a019a3aa5f913849f884a4830c99478070765fca",
+    "step": "abc000000008"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000005",
+    "op": "retract",
+    "rev": 5,
+    "sha": "4a9c7a4ff692181805f502a7d390a03500367dbe8a512c83c3b67011f61cbb2d",
+    "step": "abc000000009"
+   },
+   {
+    "error": "ReviewError",
+    "fits_run": true,
+    "id": null,
+    "op": "accept",
+    "rev": 5,
+    "sha": "4a9c7a4ff692181805f502a7d390a03500367dbe8a512c83c3b67011f61cbb2d",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000003",
+    "op": "reject",
+    "rev": 6,
+    "sha": "b95491d76e07e0d4f66c223dd4c300a624ebfabfed7debc13f44fbf3a0b1953e",
+    "step": "abc00000000a"
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000009",
+    "op": "undo",
+    "rev": 7,
+    "sha": "749a9c22cf5aa4d7be4e5ccb3c3b6e45e6290bd2eec0eb1f5ed03196376625de",
+    "step": null
+   },
+   {
+    "error": null,
+    "fits_run": true,
+    "id": "abc000000007",
+    "op": "accept",
+    "rev": 8,
+    "sha": "eb756e0e9b0eabb31c7e587a1c395bf6f8aa88c6183bcfe8e7de769db63175ec",
+    "step": "abc00000000b"
+   }
+  ],
   "proposals_and_corrections": [
    {
     "error": null,
