@@ -462,7 +462,7 @@ function aiBar(r) {
   if (!editing) return "";
   const sg = suggestions(r);
   return `<div class="aibar">
-    <button class="btn ai" data-act="idle" title="Built-in idle finder. Your own agent can add suggestions with dataop-logger suggest-cut.">✦ Find idle frames</button>
+    <button class="btn ai" data-act="idle" title="Built-in idle finder. Your own agent can add suggestions with aftershock-logger suggest-cut.">✦ Find idle frames</button>
     ${sg.length ? `<button class="btn" data-act="cutall">Cut all ${sg.length}</button><button class="btn" data-act="keepall" title="Keep all suggested frames. These spans won't be suggested again.">Keep all</button>` : ""}
     ${!sel && notice ? `<span class="lbstatus ${noticeOk ? "" : "bad"}">${esc(notice)}</span>` : ""}
   </div>
@@ -1088,7 +1088,7 @@ function drawImport() {
       <dt>Outcomes</dt><dd>${Object.entries(p.outcomes).map(([k, v]) => `${v} ${esc(k)}`).join(", ") || "–"}</dd>
       <dt>Who drove</dt><dd>${esc(p.fields.control)}</dd><dt>Outcome from</dt><dd>${esc(p.fields.outcome)}</dd>
       <dt>Written to</dt><dd>${p.into ? esc(p.into) + " (a copy)" : "a dataop folder inside the dataset; LeRobot's files are not changed"}</dd></dl>` : ""}
-    ${p && !p.hub && p.missing_files.length ? `<div class="msg warn">Side files for ${p.missing_files.map(esc).join(", ")} are not next to this dataset, so those fields come in as unknown. An agent can point to them with a mapping (dataop-logger import --map).</div>` : ""}
+    ${p && !p.hub && p.missing_files.length ? `<div class="msg warn">Side files for ${p.missing_files.map(esc).join(", ")} are not next to this dataset, so those fields come in as unknown. An agent can point to them with a mapping (aftershock-logger import --map).</div>` : ""}
     ${p && p.hub ? `<div class="msg info">Downloads ${esc(p.source)} from the Hub into ${esc(p.into)}, then imports it.</div>` : ""}
     ${im.error ? `<div class="msg bad">${esc(im.error)}</div>` : ""}
     ${job && job.kind === "import" && job.state === "done" ? `<div class="msg ok">Imported ${plural(job.result.runs, "run")} into batch “${esc(job.result.batch || "")}”.</div>` : ""}

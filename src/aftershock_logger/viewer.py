@@ -1,4 +1,4 @@
-"""dataop-logger view: a local, read-only page for browsing logged runs next to their videos."""
+"""aftershock-logger view: a local, read-only page for browsing logged runs next to their videos."""
 from __future__ import annotations
 
 import functools

@@ -31,7 +31,7 @@ class DataopDataset:
         self.runs: dict[int, dict] = {}
         for run_path, m in store.iter_manifests(root, "committed"):
             if m["episode_index"] in self.runs:
-                raise ValueError(f"episode {m['episode_index']} is bound to several runs; run dataop-logger validate")
+                raise ValueError(f"episode {m['episode_index']} is bound to several runs; run aftershock-logger validate")
             t = pq.read_table(run_path / "ticks.parquet")
             dim = len(m["action_schema"]["names"])
             cols = {}

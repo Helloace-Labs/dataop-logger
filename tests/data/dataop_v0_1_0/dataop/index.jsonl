@@ -1,0 +1,2 @@
+{"episode_index": 0, "length": 10, "run_id": "a547d754-00d1-471b-b9b0-fee776eca4c6", "task": "pick up the tube", "task_success": null, "termination_reason": "success"}
+{"episode_index": 1, "length": 8, "run_id": "ed7fc219-a248-4397-8ef8-30453a62fdd9", "task": "pick up the tube", "task_success": null, "termination_reason": "failure"}

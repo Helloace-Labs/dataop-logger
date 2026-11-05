@@ -1,0 +1,33 @@
+{
+ "batches": [
+  {
+   "batch_id": "70439789073a",
+   "created_at": "2026-11-05T03:53:55Z",
+   "exports": [],
+   "history": [
+    {
+     "at": "2026-11-05T03:53:55Z",
+     "by": "dataop",
+     "what": "created (collecting)"
+    }
+   ],
+   "locked": null,
+   "model": null,
+   "name": "train/smolvla_100",
+   "parent": null,
+   "policy": {
+    "family": "smolvla",
+    "revision": null,
+    "source": "train/smolvla_100"
+   },
+   "purpose": "",
+   "status": "collecting"
+  }
+ ],
+ "members": {
+  "a547d754-00d1-471b-b9b0-fee776eca4c6": "70439789073a",
+  "ed7fc219-a248-4397-8ef8-30453a62fdd9": "70439789073a"
+ },
+ "rev": 2,
+ "version": 1
+}
