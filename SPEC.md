@@ -1,5 +1,20 @@
-# dataop-logger: design spec (v0.3, after review rounds 1 and 2)
+# Aftershock logger: design spec (v0.4)
 
+The logger is published as the `dataop-logger` package. The package, the `dataop-logger` command and the `dataop/` sidecar folder keep their old names for now, so existing datasets keep working.
+
+## What the logger is in Aftershock
+
+The logger is the part of Aftershock that runs on the robot's computer, inside the control loop. It is a small open-source Python library. On every frame it records what post-training needs and a normal LeRobot recording drops: who drove (the policy, a human on the leader arm, or a rescue skill), what the policy proposed, what the expert did, the command actually sent, timing, and how the run ended. It writes these into a sidecar folder next to the LeRobot dataset and never changes the dataset itself, so the dataset still loads and trains anywhere.
+
+Everything else in Aftershock reads what the logger wrote: Review shows it and stores labels next to it, Train builds training sets from it, Results scores it, and the agent works on it. The logger is how data gets into Aftershock, in three ways:
+
+| How runs are recorded | Who drives the robot | Where the logger runs |
+| --- | --- | --- |
+| Drive mode | Aftershock's station app | Inside our station app; the user installs nothing else |
+| Watch mode | The customer's own software | Inside the customer's control loop, added in a few lines by them or their agent |
+| Import | Already recorded, no logger | Not at all; `import` fills the same sidecar from existing files, and fields it cannot know stay `unknown` |
+
+The same package also ships a local viewer (`dataop-logger view`), which is the offline version of Review, and the export command that builds training sets.
 ## Purpose
 
 A small open-source Python package that records the provenance post-training needs alongside a normal LeRobot recording, without changing the LeRobot dataset. Most stacks record what the robot did. They drop what the base policy proposed, what the expert would have done, who was in control, how long each step took, and how each run ended. Those are what DAgger and residual-network datasets need, and they are hard to recover later.
@@ -135,9 +150,21 @@ Import binds runs to an existing LeRobot v3.0 dataset; control mode and outcome 
 LeRobot dataset from locked batches with the `filtered`, `dagger` or `residual` recipe and records its provenance in
 `dataop_export.json`.
 
+## Planned fields from the Nov 2026 prototype
+
+The prototype added subtasks and a planner (a layer above the VLA that picks the next subtask during a run). The logger needs three fields for them. None is implemented yet.
+
+| Where | Field | Meaning |
+| --- | --- | --- |
+| Per tick | `prompt` | The text the VLA received on this frame. A prompt that changes during a run means a planner is present; the distinct prompts are its subtasks and the changes are its boundaries |
+| Per tick | `subtask_cmd` | The subtask the planner commanded on this frame, or null without a planner |
+| Manifest | `planner` | `{name, id}`, or `unknown` when a planner is detected but not named. Set once with `RunLogger(..., planner="...")` |
+
+With these, a planner's commands become first-pass subtask labels in Review, failure analysis can tell a planner mistake from a VLA mistake, and training gets subtask prompts. The full record set is in the Aftershock Data Schema page.
+
 ## Non-goals for v0
 
-Uploading, cloud storage, multiple concurrent writers, real-time takeover control, and curation or materialization of derived training datasets. Those belong to the hosted product.
+Uploading, cloud storage, multiple concurrent writers, real-time takeover control, and curation or materialization of derived training datasets. Those belong to the hosted Aftershock product.
 
 ## Review decisions
 

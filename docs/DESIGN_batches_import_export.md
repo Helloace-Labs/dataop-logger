@@ -1,5 +1,7 @@
 # Batches, import and training-data export (design, v0.4 draft)
 
+Part of the Aftershock logger (package `dataop-logger`). In the Aftershock app, a batch is shown as a **pack**: the runs one model and one planner made on one task. Export is the Train page.
+
 Three features turn the logger from "record and review one dataset" into the post-training loop a team actually runs:
 collect a batch of runs with one policy, review it, generate a training set from it with a script, train the next
 policy, and repeat. Everything here is generic. Nothing depends on the task, the robot, the joints, the cameras or the
@@ -81,7 +83,7 @@ batch, Export (section 3). A locked batch shows a lock chip and disables editing
 the base model's output per episode, and a results JSON per session. `backfill_dataop.py` replayed each episode
 through `RunLogger` into a new dataset. That is a script for one format; import makes it a product feature.
 
-**What import does.** It binds dataop runs to episodes of an existing LeRobot dataset and fills the sidecar from what
+**What import does.** It binds logger runs to episodes of an existing LeRobot dataset and fills the sidecar from what
 the dataset (and optional side files) already contain. It never rewrites LeRobot files.
 
 **Sources (channels).**

@@ -5,6 +5,8 @@ The post-training data workspace for robotics.
 `dataop-logger` is Aftershock's open-source logger and local viewer. The package, the `dataop-logger` command and the
 `dataop/` sidecar folder keep their current names for now, so existing datasets keep working.
 
+In Aftershock, the logger is how runs get in. Aftershock's station app uses it when Aftershock drives the robot (Drive mode), and you add it to your own control loop when your software drives (Watch mode). Review, training sets and results all read what it records.
+
 Record what post-training needs, next to a normal [LeRobot](https://github.com/huggingface/lerobot) dataset.
 
 LeRobot saves what the robot did. To build DAgger, residual-network or RL datasets from real deployment runs you also need, for every frame:
