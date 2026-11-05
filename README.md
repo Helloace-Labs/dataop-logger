@@ -127,6 +127,20 @@ run.end(termination_reason="failure", failure_mode="dropped_during_lift")
 
 The manifest gets a `subgoals` list of frame spans with their status. `inspect` counts failure modes and failed steps across runs, and the viewer groups failed runs by failure mode and draws each run's steps above its timeline. Steps can come from anything your stack already knows: a success detector, gripper and height thresholds, or a person's label.
 
+## Task, planner and prompt (optional)
+
+When your stack knows them, record which task revision a run used, which planner picked its subtasks, and what the policy was told on each frame:
+
+```python
+from aftershock_logger import PlannerInfo
+
+log = RunLogger(dataset, schema, planner=PlannerInfo(name="Rules", id="rules-v3"))   # None: no planner runs
+with log.run(task=task, policy=policy, task_id="tube-pick", task_rev=3) as run:
+    run.add_frame(frame, ..., prompt="grasp the cap", prompt_rev=2, subtask_cmd="st_02", control_gen=1)
+```
+
+`prompt` is the text the policy received, `prompt_rev` counts prompt changes, `subtask_cmd` is the subtask id the planner commanded, and `control_gen` is your loop's command generation counter. Leave out what you do not know: it is stored as `unknown`, which is different from `None` (known to be none, for example no planner ran). The same holds for `policy`: leave it out and it is `unknown`; pass `policy=None` only for runs no policy drove, such as teleop demos. On disk the two counters are int64 columns with -1 for unknown. Runs written before these fields existed read as `unknown` too.
+
 ## Rewards for RL
 
 Pass `reward=` on `add_frame`, or, if your reward arrives one loop late, attach it to the previous tick:
@@ -341,7 +355,7 @@ Every per-tick field is also available as `item["dataop.<field>"]`. `missing="ex
 
 ```
 <dataset_root>/dataop/
-  runs/<run_id>/manifest.json       # outcome, takeovers, events, policy, environment, action schema, checksums
+  runs/<run_id>/manifest.json       # outcome, takeovers, events, policy, task, planner, environment, action schema, checksums
   runs/<run_id>/ticks.parquet       # one row per frame
   runs/<run_id>/predictions.parquet # only with log_predictions=True
   index.jsonl                       # summary of committed runs

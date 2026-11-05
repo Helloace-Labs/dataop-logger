@@ -26,7 +26,9 @@ as unknown, never invented. Per-run `origin.fields` says where each field came f
    "segments":     {"column": "task_segment"},                       per-frame segment name (empty = none)
    "time":         {"file_mtime": "{root}_raw/ep{episode:03d}.npy"}  when each episode ended: a file written as it
                      finished; the start is that minus the episode's length. Recorded as estimated.
-   "policy":       {"family": "smolvla", "source": "...", "revision": null},
+   "policy":       {"family": "smolvla", "source": "...", "revision": null}
+                   | null                                            no policy ran (teleop demos); left out = unknown
+   "planner":      {"name": "Rules", "id": "rules-v3"} | null         null = no planner ran; left out = unknown
    "action_space": "joint_position", "action_units": "deg"}
 
 Path patterns: {root} is the dataset folder path, {name} its folder name, {episode} the episode index.
@@ -46,11 +48,14 @@ import pyarrow.dataset as pads
 from . import batches as B
 from . import store
 from .fingerprint import fingerprint
-from .schema import KNOWN_SPACES, SCHEMA_VERSION, TERMINAL_FLAG, TERMINATION_REASONS, ActionSchema
+from .schema import (KNOWN_SPACES, SCHEMA_VERSION, TERMINAL_FLAG, TERMINATION_REASONS, UNKNOWN, UNKNOWN_INT, ActionSchema,
+                     planner_value)
 
 PRESETS = {
     "plain": {},
     # teleoperated (or scripted) demonstrations: a person drove every frame and every episode is a good demo
+    # it does not declare that no policy or planner ran: auto-detection picks it when nothing says a policy drove,
+    # which is not evidence of absence. Add {"policy": null, "planner": null} to the mapping to declare that.
     "demos": {"control": {"constant": "expert"}, "expert_source": "human", "outcome": {"constant": "success"}},
     # LeRobot's human-in-the-loop recordings (gym_manipulator / HIL-SERL)
     "lerobot-hil": {"control": {"column": "complementary_info.is_intervention"}, "expert_source": "human",
@@ -66,7 +71,7 @@ PRESETS = {
                 "time": {"file_mtime": "{root}_raw/ep{episode:03d}.npy"}},
 }
 KEYS = {"time", "control", "expert_source", "base_action", "expert_action", "outcome", "failure_mode", "reward", "segments",
-        "policy", "action_space", "action_units"}
+        "policy", "planner", "action_space", "action_units"}
 
 
 class ImportError_(ValueError):
@@ -134,6 +139,13 @@ def _mapping(preset: str | None, mapping: dict | None) -> dict:
         raise ImportError_("a constant control mode is base (the policy) or expert (a person or script)")
     if isinstance(o, dict) and "constant" in o and o["constant"] not in TERMINATION_REASONS:
         raise ImportError_(f"a constant outcome is one of {sorted(TERMINATION_REASONS)}")
+    if "policy" in m and m["policy"] is not None and not isinstance(m["policy"], dict):
+        raise ImportError_("policy is a policy record, or null when no policy ran; leave it out when not known")
+    if "planner" in m:
+        try:
+            planner_value(m["planner"])
+        except ValueError as e:
+            raise ImportError_(str(e)) from None
     return m
 
 
@@ -230,6 +242,8 @@ def plan(root: Path, preset: str | None = "plain", mapping: dict | None = None, 
                      if "column" in s else f"file {s['file']}")
     if mp.get("expert_action") is None and mp.get("control"):
         fields["expert_action"] = "sent_on_expert_frames"
+    for k in ("policy", "planner"):
+        fields[k] = "unknown" if k not in mp else "none ran (mapping)" if mp[k] is None else "mapping"
     todo, skipped = [], []
     for e in want:
         if e not in eps:
@@ -274,6 +288,8 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
             mode = np.array(["expert" if bool(_scalar(v)) else "base" for v in raw], dtype=object)
     else:
         mode = np.array(["unknown"] * n, dtype=object)
+
+    mapped_mode = mode.copy()                      # before frames without the matching action become unknown
 
     def actions(spec, which):
         if spec is None:
@@ -377,6 +393,13 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
         term[-1] = True
     elif flag == "truncated":
         trunc[-1] = True
+    # null policy or planner means none ran, which an import knows only when the mapping says so explicitly; left
+    # out of the mapping (every preset leaves them out), it was not recorded
+    no_policy = "policy" in mp and mp["policy"] is None
+    if no_policy and (np.isin(mapped_mode, ("base", "blend")).any() or bv.any()):
+        raise ImportError_(f"episode {e}: the mapping says no policy ran, but the data has policy-driven frames "
+                           "or policy actions")
+    planner = planner_value(mp["planner"]) if "planner" in mp else UNKNOWN
     fixed = lambda a: pa.FixedSizeListArray.from_arrays(pa.array(a.reshape(-1), pa.float32()), dim)
     table = pa.table({
         "frame_index": pa.array(np.arange(n, dtype=np.int64)),
@@ -392,6 +415,11 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
         "obs_ns": pa.array(ns), "obs_skew_ns": pa.array(np.full(n, -1, np.int64)), "sent_ns": pa.array(ns),
         "reward": pa.array(reward), "reward_valid": pa.array(rvalid),
         "terminated": pa.array(term), "truncated": pa.array(trunc),
+        # a LeRobot dataset does not say what prompt the policy received, which subtask was commanded or the
+        # command generation: not recorded
+        "prompt": pa.array([UNKNOWN] * n, pa.string()), "prompt_rev": pa.array(np.full(n, UNKNOWN_INT, np.int64)),
+        "subtask_cmd": pa.array([UNKNOWN] * n, pa.string()),
+        "control_gen": pa.array(np.full(n, UNKNOWN_INT, np.int64)),
     })
     from .logger import derive_subgoals, derive_takeovers
     tick_rows = [{"control_mode": str(mode[i]), "expert_source": expert_source[i]} for i in range(n)]
@@ -399,13 +427,14 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
     manifest = {
         "schema_version": SCHEMA_VERSION, "run_id": str(uuid.uuid4()), "status": "committed",
         "episode_index": int(e), "length": n, "task": ep["task"], "started_at": started_at, "ended_at": ended_at,
+        "task_id": UNKNOWN, "task_rev": UNKNOWN, "planner": planner,
         "termination_reason": reason, "task_success": None if reason == "unknown" else reason == "success",
         "labels": [], "failure_mode": failure_mode,
         "fingerprint": fingerprint(schema.id, ep["task"], sent),
         "events": events, "takeovers": derive_takeovers(tick_rows), "subgoals": derive_subgoals(events, n),
         "policy": {"family": None, "source": None, "revision": None, "code_revision": None, "config_digest": None,
                    "chunk_size": None, "temporal_ensembling": False, "device": None, "precision": None,
-                   **(policy or {})} if policy else None,
+                   **(policy or {})} if policy else None if no_policy else UNKNOWN,
         "env": {"robot_id": None, "calibration_digest": None, "operator": None, "extras": {},
                 "software": {"lerobot": None, "dataop_logger": None}},  # filled below
         "action_schema": {**schema.to_dict(), "id": schema.id},

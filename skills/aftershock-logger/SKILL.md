@@ -92,6 +92,7 @@ Rules the logger enforces, so get them right the first time:
 - Delete the old `dataset.save_episode()` call. Leaving the `run` block saves the episode. Replace `dataset.clear_episode_buffer()` (re-record) with `run.discard()`.
 - Do not call `dataset.add_frame`, `save_episode` or `clear_episode_buffer` anywhere while a run is open.
 - Reset phases between episodes stay outside `log.run(...)`, or are recorded with `control_mode="none"`.
+- Optional, only when the project already has them: `prompt=` (the text the policy received this frame), `prompt_rev=` and `control_gen=` (counters that never go down), `subtask_cmd=` (the subtask a planner commanded), and on `log.run(...)` `task_id=` and `task_rev=`. Pass a planner once with `RunLogger(..., planner=PlannerInfo(name, id))`, or `planner=None` if the project has none. Leave out anything the project does not know; it is stored as `unknown`. Never invent these values.
 
 ## 5. Mark moments worth finding
 
