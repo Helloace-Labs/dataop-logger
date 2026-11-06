@@ -465,6 +465,44 @@ def test_library_reached_through_dotdot_gets_its_mount_point_in_its_own_folder(t
     assert not (m_np.parent / "numpy.libs").exists()                  # no stray mount point beside the numpy copy
 
 
+def test_loader_spellings_through_symlinked_folders_keep_working(tmp_path, monkeypatch):
+    rt = _fake_runtime(tmp_path, False)
+    npd = Path(rt["dirs"][1])
+    libs_dir = npd.parent / "numpy.libs"
+    libs_dir.mkdir()
+    (libs_dir / "libgfortran.so.5").write_text("")
+    (npd / "_libs").symlink_to("../numpy.libs")                       # a symlinked folder inside a runtime folder
+    rt["dirs"].append(str(libs_dir))
+    sysroot = tmp_path / "sys"                                        # merged /usr: lib64 -> usr/lib64
+    (sysroot / "usr" / "lib64").mkdir(parents=True)
+    (sysroot / "usr" / "lib64" / "ld-linux-x86-64.so.2").write_text("")
+    (sysroot / "lib64").symlink_to("usr/lib64")
+    interp = f"{sysroot}/lib64/ld-linux-x86-64.so.2"                   # the ELF interpreter, as the kernel asks for it
+    bundled = f"{npd}/_libs/libgfortran.so.5"
+    (tmp_path / "ldd").write_text(f"\tlibgfortran.so.5 => {bundled} (0x00007f01)\n\t{interp} (0x00007f02)\n")
+    monkeypatch.setattr(HS, "_runtime", lambda: rt)
+    monkeypatch.setattr(HS, "_MIRRORS", {})
+    monkeypatch.setattr(HS, "_shared_libs", lambda bins: HS._parse_ldd((tmp_path / "ldd").read_text()))
+    monkeypatch.setattr(HS, "_check_paths", lambda paths: None)
+    assert HS._parse_ldd((tmp_path / "ldd").read_text()) == [bundled, interp]   # ldd's spelling is kept
+    job = os.path.realpath(tmp_path / "job")
+    os.makedirs(os.path.join(job, "in"))
+    os.makedirs(os.path.join(job, "out"))
+    cmd = HS._bwrap_cmd("/usr/bin/bwrap", job, seccomp_fd=7)
+    pairs = [(cmd[i + 1], cmd[i + 2]) for i in range(len(cmd) - 2) if cmd[i] == "--ro-bind"]
+    src = {d: s_ for s_, d in pairs}
+    canon = str(sysroot / "usr" / "lib64" / "ld-linux-x86-64.so.2")
+    assert src[canon] == canon and interp not in src                  # mounted once, at its real folder
+    syms = [(cmd[i + 1], cmd[i + 2]) for i in range(len(cmd) - 2) if cmd[i] == "--symlink"]
+    assert syms == [("usr/lib64", str(sysroot / "lib64"))]            # the interpreter's folder alias is recreated
+    assert cmd.index("--symlink") < cmd.index(canon)
+    m_np = Path(src[str(npd)])                                        # the alias inside numpy is in its copy
+    assert (m_np / "_libs").is_symlink() and os.readlink(m_np / "_libs") == "../numpy.libs"
+    assert str(libs_dir / "libgfortran.so.5") in src
+    for spelled in (interp, bundled):                                 # every spelling's canonical place is mounted
+        assert HS._canon_lib(spelled) in src
+
+
 def test_ldd_parsing_keeps_spaces_and_only_regular_files(tmp_path):
     spaced = tmp_path / "my libs"
     spaced.mkdir()
