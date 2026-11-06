@@ -530,17 +530,20 @@ class LiveTap:
 
     def controlled_stop(self, run, stop) -> None:
         """Where the stopped run's frames went: after the quarantine write, a retry or a spill."""
-        q = getattr(stop, "quarantine_path", None)
-        phase = "spilled" if getattr(stop, "spilled", False) else "quarantined" if q is not None else "not_written"
-        rel = None
-        if q is not None and phase == "quarantined":           # path work before the lock, never inside it
-            try:
-                rel = str(Path(q).resolve().relative_to(self.root.resolve()))
-            except (ValueError, OSError, AttributeError):
-                rel = None                                     # outside the dataset: no path is shown
-        with self._stop_lock:
-            self._stop_seen_for = run.run_id                   # a late detection is not published after this
-            self._stop_update(run, stop, phase, rel)
+        try:
+            q = getattr(stop, "quarantine_path", None)
+            phase = "spilled" if getattr(stop, "spilled", False) else "quarantined" if q is not None else "not_written"
+            rel = None
+            if q is not None and phase == "quarantined":       # path work before the lock, never inside it
+                try:
+                    rel = str(Path(q).resolve().relative_to(self.root.resolve()))
+                except Exception:                              # noqa: BLE001 (outside the dataset, a link loop)
+                    rel = None                                 # no path is shown
+            with self._stop_lock:
+                self._stop_seen_for = run.run_id               # a late detection is not published after this
+                self._stop_update(run, stop, phase, rel)
+        except Exception as e:                                 # noqa: BLE001 (never into the run block)
+            self._fail(e)
 
     def _stop_update(self, run, stop, phase: str, rel: str | None = None) -> None:
         """Memory only (called under _stop_lock): the stop's status and its event."""

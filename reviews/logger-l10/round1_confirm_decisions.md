@@ -24,3 +24,9 @@ Items 1, 4, 5 and 6 confirmed.
 | Item | Severity | Decision | What changed |
 | --- | --- | --- | --- |
 | 8 (lock) | Medium | Changed | The quarantine path is made relative to the root before the lock is taken; `_stop_update` under `_stop_lock` only builds the status dict and appends the event. |
+
+## Fourth confirmation (`round1_confirm4_codex.md`)
+
+| Item | Severity | Decision | What changed |
+| --- | --- | --- | --- |
+| 8 (errors) | Medium | Changed | `controlled_stop` contains every error again: the path work catches any exception (a link loop raises `RuntimeError`) and shows no path, and the whole hook goes through `_fail` on any other error, so nothing reaches the run block. Test: `test_a_quarantine_path_that_cannot_be_resolved_never_reaches_the_run_block`. |

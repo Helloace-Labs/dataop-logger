@@ -946,3 +946,21 @@ def test_a_late_detection_never_lands_after_or_over_the_final_stop(tmp_path):
         time.sleep(0.7)
     phases = [e["phase"] for e in kinds(L.read_events(ds.root), "controlled_stop")]
     assert phases == ["detected", "quarantined"]
+
+
+def test_a_quarantine_path_that_cannot_be_resolved_never_reaches_the_run_block(tmp_path, monkeypatch):
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, live=True) as log:
+        tap = log.live_tap
+        run = types.SimpleNamespace(run_id="r-2")
+
+        class Loop:
+            def resolve(self):
+                raise RuntimeError("Symlink loop")
+        monkeypatch.setattr(L, "Path", lambda p: Loop() if p == "loop" else Path(p))
+        stop = types.SimpleNamespace(reason="write_failed", detail="d", frames=1, spilled=False, quarantine_path="loop")
+        tap.controlled_stop(run, stop)                          # must not raise
+        assert tap.stop["phase"] == "quarantined" and tap.stop["quarantine"] is None
+        monkeypatch.setattr(tap, "_stop_update", lambda *a: 1 / 0)
+        tap.controlled_stop(run, stop)                          # an error here is contained too
+        assert "ZeroDivisionError" in tap.failed
