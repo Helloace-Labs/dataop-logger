@@ -7,7 +7,8 @@ const fmt = s => `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`
 const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const human = s => esc(String(s ?? "").replace(/_/g, " "));
 const runs = DATA.runs;
-const editable = DATA.editable;
+// A dataset synced from Aftershock is read only here (its reviews come from the cloud); the server may still switch datasets.
+const editable = DATA.editable && !DATA.synced;
 let filter = "all", current = null;
 // Batches: the runs collected with one policy version and reviewed together (one DAgger round). Newest first.
 let batches = DATA.batches || [], batchesRev = DATA.batches_rev;
@@ -88,7 +89,7 @@ function outcomePill(r) {
 {                                 // the datasets this viewer knows; switching reloads the page on the other one
   const sel = document.getElementById("dsel"), list = DATA.datasets && DATA.datasets.length ? DATA.datasets : [{ root: DATA.root, name: DATA.dataset }];
   sel.innerHTML = list.map(d => `<option value="${esc(d.root)}" ${d.root === DATA.root ? "selected" : ""}>${esc(d.name)}${d.runs != null ? ` · ${d.runs} runs` : ""}</option>`).join("");
-  sel.disabled = !editable || list.length < 2;
+  sel.disabled = !DATA.editable || list.length < 2;
   sel.onchange = async () => {
     try { await call({ op: "ws_open", root: sel.value }); location.reload(); }
     catch (err) { sel.value = DATA.root; alertBar(err.message); }
@@ -525,8 +526,10 @@ function render(r, t0) {
     <div class="title"><h2>Run ${runNo(r)}</h2>${outcomePill(r)}
       <span class="task">${esc(r.task)}</span>
       ${locked(r) ? `<span class="pill tag" title="This run's batch is locked for export; unlock the batch to edit">locked</span>` : ""}
+      ${r.review.locked ? `<span class="pill tag" title="Its pack is locked in Aftershock${r.review.locked.at ? " since " + esc(r.review.locked.at) : ""}">locked in Aftershock</span>` : ""}
       ${editable && !r.review.error ? `<button class="btn ${e.reviewed ? "done" : ""} revbtn" id="reviewed" aria-pressed="${!!e.reviewed}" ${locked(r) ? "disabled" : ""}
         title="${e.reviewed ? "Marked as reviewed. Click to mark it as not reviewed" : "Mark this run as reviewed once its labels look right"}">${e.reviewed ? "✓ Reviewed" : "Mark reviewed"}</button>` : ""}</div>
+    ${DATA.synced ? `<div class="banner ${DATA.synced.error ? "bad" : ""}">${esc(DATA.synced.message.charAt(0).toUpperCase() + DATA.synced.message.slice(1))}, so this page is read only. Change reviews in Aftershock's Review page.</div>` : ""}
     ${r.review.error ? `<div class="banner bad">This run's review file could not be read, so editing is off: ${esc(r.review.error)}</div>` : ""}
     <div class="videos">${r.videos.map(v => `<figure><video muted playsinline preload="auto" data-t0="${v.t0}" src="../../${esc(v.src)}"></video>
       <figcaption>${esc(v.key)}</figcaption></figure>`).join("") || `<div class="empty">This episode has no video.</div>`}</div>

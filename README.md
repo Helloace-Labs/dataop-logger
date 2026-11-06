@@ -214,6 +214,8 @@ A local page: every run with its outcome and a strip showing who drove each fram
 
 The recorded data is never changed. Labels and cuts you make in the page are saved to a separate file next to each run (see below). Use `--read-only` for a page that cannot save anything, and `--build-only` to write `dataop/view/index.html` without starting a server.
 
+A dataset whose reviews are synced from Aftershock (it has `dataop/sync.json`, written by the Aftershock station app) always opens read only: its reviews are changed in Aftershock and synced back, and every local review change, from the page or a script, is refused.
+
 ![viewer](docs/viewer.png)
 
 When runs carry `failure_mode` and `subgoals`, the run list opens with failed runs grouped by failure mode. Click a group to filter the list.
@@ -411,6 +413,7 @@ The logger is before 1.0, so a minor change may change behavior. Changes since 0
 - A quarantine retry (`run.retry_quarantine()`, and the spill on close) accepts a folder already at the destination only if it is a complete record of this run's frames; otherwise it raises and keeps the frames in memory.
 - The bounded queue example holds the robot inside the run block on `ControlledStop`, then re-raises.
 - `review.file_format` returns `None` only when a run has no review file. A file that cannot be read, is not valid JSON or is in no known format raises `ReviewError` (it returned `None` before); a `review.json` link whose target is gone counts as unreadable, and `review.load` refuses it instead of reading it as an empty review. `migrate-reviews` counts such a file as refused and exits nonzero, in `--dry-run` too.
+- A dataset with `dataop/sync.json` (written by the Aftershock station app when it syncs reviews from the cloud) is read only for reviews: every review change raises `ReviewError`, the viewer refuses edits on it, and a damaged marker counts as synced. The viewer's run state has a new `locked` field (the review's lock, set while its pack is locked in Aftershock).
 - `review_format.accept` and `decide_many` refuse a proposed reading whose label was replaced or taken back; a bulk accept that includes one accepts nothing. `replace` refuses a new reading of such a label, and `undo` refuses a step (and `undoable` leaves it out) whose undo would make such a reading accepted again. The new helper `review_format.obsolete_reading(review, edit)` says why, or returns `None`. The viewer shows each proposed reading with its label's text and span and offers no Accept for an obsolete one.
 
 ## License

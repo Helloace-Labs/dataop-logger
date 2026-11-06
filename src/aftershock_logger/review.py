@@ -51,6 +51,7 @@ import pyarrow.parquet as pq
 
 from . import review_format as fmt
 from . import store
+from . import sync
 
 KINDS = fmt.KINDS + ("segment_plan",)       # segment_plan: the format 1 name for segments, still accepted as input
 TRAIN_USE = fmt.TRAIN_USE
@@ -179,7 +180,8 @@ def transaction(run_path: Path, manifest: dict | None = None, expect_rev: int | 
     """Load one run's review under an exclusive cross-process lock, let the caller replace box["review"] with the
     result of format 2 operations, and save it if it changed. The batches lock is held shared from the lock check to
     the write (taken first, as batches.set_status does), so a batch cannot be locked or its files moved between the
-    check and the edit. Yields {"review", "what", "now", "t"}; "what" names the step (from recording())."""
+    check and the edit. A dataset synced from Aftershock (sync.py) refuses every change here. Yields {"review",
+    "what", "now", "t"}; "what" names the step (from recording())."""
     from . import batches
     run_path = Path(run_path)
     if manifest is None:
@@ -190,7 +192,8 @@ def transaction(run_path: Path, manifest: dict | None = None, expect_rev: int | 
         try:
             try:
                 batches.check_editable(root, run_path.name)
-            except batches.BatchError as e:
+                sync.check_editable(root)
+            except (batches.BatchError, sync.SyncedError) as e:
                 raise ReviewError(str(e)) from None
             review = load(run_path, manifest)
             if expect_rev is not None and review["rev"] != expect_rev:
