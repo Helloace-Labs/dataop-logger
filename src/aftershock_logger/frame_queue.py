@@ -135,6 +135,8 @@ class FrameQueue:
             return len(self._items)
 
     def _tell(self):
+        if not self._stop_told:
+            self.run._live("stop_seen", self._stop)          # the live tap shows the stop at once (never raises)
         self._stop_told = True
         return self._stop
 

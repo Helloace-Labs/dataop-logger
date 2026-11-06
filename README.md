@@ -193,6 +193,27 @@ except ControlledStop as stop:
 
 If the queue fills or a write fails (a full disk, for example), `put()` raises `ControlledStop`. Hold the robot inside the run block, as above, then let the stop leave the block. Do not hold it only in a handler outside the block: leaving the block first waits for the frame writer (up to `stop_timeout`, 10 s by default) and writes the quarantine to disk, and the robot would keep its last command all that time. Every frame the logger accepted is written to `dataop/quarantine/<run_id>/` with the reason, and the run is never saved as a complete episode. If even that write fails, the stop says the frames were not written and they stay in memory: call `run.retry_quarantine()` once there is space. Closing the `RunLogger` retries too and, if the disk is still full, writes them to a spill folder and says where; the stop's message is updated too. On a robot, pass `RunLogger(..., spill_dir=...)` with a persistent folder on a different disk from the dataset: the default (`~/.local/share/aftershock-logger/spill`) survives reboots but is usually on the same disk that just filled up. `aftershock-logger validate --repair` checks quarantined runs and keeps them. Details are in [SPEC.md](SPEC.md).
 
+## Live status for a station (Watch)
+
+When a station app watches your recording (Aftershock's Watch mode), turn on the live tap. It writes a small live status of the run in progress to `dataop/live/` for a process on the same computer to read, and never slows or stops your loop:
+
+```python
+log = RunLogger(dataset, action_schema=schema, live=True)
+with log.run(task=TASK, policy=policy) as run:
+    q = run.queue()
+    for each tick:
+        q.put(frame, sent_action=a, base_action=a, control_mode="base", inference_id=k, chunk_offset=j,
+              obs_ns=t_obs, sent_ns=t_sent,
+              camera_ns={"top": t_top, "wrist": t_wrist})   # optional: each camera's capture time, for dropouts
+    run.end(termination_reason="success")
+```
+
+- `dataop/live/status.json` is the current run (frame, who drives, prompt and subtask when you pass them, the latest `observation.state` with its names, the action schema), the last run and its outcome, and any controlled stop. It is rewritten at least once a second and at once on each change.
+- `dataop/live/events.jsonl` has one numbered record per change: run start, every control mode change (a takeover of a few frames included), run end, a controlled stop, and record check results while recording (a camera that stopped sending new frames, when you pass `camera_ns`; a command outside the action schema's bounds, when it declares them).
+- Camera previews (`dataop/live/preview/<camera>.jpg`, at most 320 px wide) are written only while the station asks for them through `dataop/live/preview.want`. Without a request no image is copied or encoded.
+- If the tap cannot write (a read only folder, a missing encoder), it warns once, writes `dataop/live/error.json` and stays off until the next run. Your recording is the same byte for byte with the tap on, off or failed.
+- `dataop/live/` is not part of the dataset or the sidecar: `validate`, `import`, `export` and uploads ignore it. Details are in [SPEC.md](SPEC.md), Live tap.
+
 ## Command line
 
 ```bash
@@ -410,6 +431,7 @@ Every per-tick field is also available as `item["dataop.<field>"]`. `missing="ex
   runs/<run_id>/predictions.parquet # only with log_predictions=True
   index.jsonl                       # summary of committed runs
   quarantine/                       # runs repair could not match, and runs stopped through the queue, kept for inspection
+  live/                             # only with RunLogger(live=True): live status for a local reader, not part of the dataset
 ```
 
 The full field list and design are in [SPEC.md](SPEC.md).
@@ -429,6 +451,8 @@ The design and code went through five rounds of review between Claude (Anthropic
 ## Changes
 
 The logger is before 1.0, so a minor change may change behavior. Changes since 0.1.0:
+
+- `RunLogger(..., live=True)` turns on the live tap (off by default), and `run.add_frame` and `queue.put` take an optional `camera_ns` used only by it. See Live status for a station (Watch).
 
 - `RunLogger.close()` raises a `RunError` when a frame writer that timed out is still inside LeRobot's `add_frame`. The dataset's writer lock is then kept until that thread returns (a background thread releases it, or the lock goes when the process ends), so no second writer can open the dataset meanwhile.
 - `validate.quarantine_entries` has a new entry kind, `"unreadable"`, for a quarantine folder whose `manifest.json` is missing or not valid JSON. `validate` reports it as an error and `validate --repair` as left untouched.

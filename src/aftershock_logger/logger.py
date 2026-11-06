@@ -76,7 +76,8 @@ class RunLogger:
 
     def __init__(self, dataset, action_schema: ActionSchema, obs_timestamp_kind: str = "bundle_completion",
                  action_key: str = "action", batch: str | None = None,
-                 planner: PlannerInfo | dict | None | str = UNKNOWN, spill_dir: str | None = None):
+                 planner: PlannerInfo | dict | None | str = UNKNOWN, spill_dir: str | None = None,
+                 live: bool = False):
         """batch: the batch new runs join (opened if it does not exist). Without it, runs join the batch that is
         collecting, or a new batch named after the policy.
 
@@ -85,7 +86,11 @@ class RunLogger:
 
         spill_dir: where close() writes a stopped run's frames when they still cannot be written to the dataset's
         quarantine folder. On a robot, set it to a persistent folder on a different disk from the dataset. The
-        default is a per-user folder (default_spill_dir()), which is usually on the same disk as the dataset."""
+        default is a per-user folder (default_spill_dir()), which is usually on the same disk as the dataset.
+
+        live: turn on the live tap (logger task L10): a background thread writes the run's live status to
+        dataop/live/ for a local reader such as a station, and camera previews only while that reader asks for them.
+        Off by default; it never changes what is recorded and its errors never reach the caller. See live.py."""
         if obs_timestamp_kind not in ("capture", "bundle_completion"):
             raise ValueError("obs_timestamp_kind must be 'capture' or 'bundle_completion'")
         self.dataset = dataset
@@ -102,6 +107,10 @@ class RunLogger:
         self._unsaved_runs: list[Run] = []                # stopped runs whose frames are only in memory
         self._stuck_writers: list = []                    # frame writer threads still inside LeRobot's add_frame
         self._lock_handed_off = False
+        self.live_tap = None
+        if live:
+            from .live import LiveTap
+            self.live_tap = LiveTap(self)
 
     def close(self) -> None:
         """Release the writer lock. A stopped run whose frames are still only in memory is written to quarantine
@@ -109,28 +118,43 @@ class RunLogger:
 
         A frame writer that timed out may still be inside LeRobot's add_frame and can still change the dataset's
         files. The lock is then kept until that thread returns (a background thread releases it), so no other
-        writer can open the dataset meanwhile, and the RunError says so."""
+        writer can open the dataset meanwhile, and the RunError says so. A live tap thread that has not finished
+        within its short close wait keeps the lock the same way, so it can never write over a newer writer's live
+        files; that case raises nothing."""
         problems = []
         try:
             if self._active is not None and self._active.state == "active":
                 self._active.discard()
         finally:
             stuck = [t for t in self._stuck_writers if t.is_alive()]
-            if not stuck:
-                self._lock.release()
+            if stuck:
+                problems.append(f"a frame writer is still inside LeRobot's add_frame, so {self._lock.path} stays "
+                                "locked until it returns (or this process ends); no other writer can open the "
+                                "dataset meanwhile")
+            problems += self._spill_unsaved()
+            tap_thread = None
+            if self.live_tap is not None:
+                self.live_tap.close()                  # the last status says closed, before the lock goes
+                t = self.live_tap._thread
+                tap_thread = t if t is not None and t.is_alive() else None
+            waiting = stuck + ([tap_thread] if tap_thread is not None else [])
+            if not waiting:
+                if not self._lock_handed_off:
+                    self._lock.release()
             elif not self._lock_handed_off:
                 self._lock_handed_off = True
                 lock = self._lock
 
                 def release_when_done():
-                    for t in stuck:
+                    for t in waiting:
                         t.join()
                     lock.release()
                 threading.Thread(target=release_when_done, name="dataop-lock-release", daemon=True).start()
-            if stuck:
-                problems.append(f"a frame writer is still inside LeRobot's add_frame, so {self._lock.path} stays "
-                                "locked until it returns (or this process ends); no other writer can open the "
-                                "dataset meanwhile")
+        if problems:
+            raise RunError("; ".join(problems))
+
+    def _spill_unsaved(self) -> list[str]:
+        problems = []
         for run in list(self._unsaved_runs):
             try:
                 run.retry_quarantine()
@@ -152,13 +176,13 @@ class RunLogger:
             if run._stop is not None:
                 run._stop.quarantine_path, run._stop.spilled = path, True
                 run._stop._settle()
+                run._live("controlled_stop", run._stop)
             hint = "" if self.spill_dir else (" (the default spill folder, usually on the same disk as the dataset; "
                                               "set spill_dir to a persistent folder on a different disk)")
             problems.append(f"run {run.run_id}: {len(rows)} frames could not be written to the dataset's quarantine "
                             f"({first}) and were spilled to {path}{hint}; move that folder to "
                             f"{store.quarantine_dir(self.root)} when there is space")
-        if problems:
-            raise RunError("; ".join(problems))
+        return problems
 
     def __enter__(self):
         return self
@@ -207,6 +231,8 @@ class RunLogger:
             raise RunError("the dataset has unsaved frames; save or clear the episode buffer before starting a run")
         r = Run(self, task, policy, env, log_predictions, planned)
         self._active = r
+        if self.live_tap is not None:
+            self.live_tap.run_started(r)
         try:
             yield r
         except BaseException as exc:
@@ -262,6 +288,12 @@ class Run:
         self._blocks_logger = False                        # True while that record stops the logger
         self._stop = None                                  # the ControlledStop that ended this run
 
+    def _live(self, hook: str, *args) -> None:
+        """Tell the live tap, if any (its hooks never raise)."""
+        tap = self.logger.live_tap
+        if tap is not None:
+            getattr(tap, hook)(self, *args)
+
     # ── recording ────────────────────────────────────────────────────────────
 
     def _require(self, *states):
@@ -273,13 +305,16 @@ class Run:
                   blend_weight: float | None = None, safety_modified: bool = False, obs_skew_ns: int = -1,
                   inference_id: int = -1, chunk_offset: int = -1, reward: float | None = None,
                   terminated: bool = False, truncated: bool = False, prompt: str = UNKNOWN,
-                  prompt_rev: int | str = UNKNOWN, subtask_cmd=_AUTO, control_gen: int | str = UNKNOWN) -> int:
+                  prompt_rev: int | str = UNKNOWN, subtask_cmd=_AUTO, control_gen: int | str = UNKNOWN,
+                  camera_ns=None) -> int:
         """Add one frame to LeRobot first, then the sidecar row. Returns the frame index.
 
         obs_ns and sent_ns are required monotonic-clock readings (time.monotonic_ns()) taken by the caller.
         Optional, "unknown" when not given: prompt (the text the policy received on this frame), prompt_rev (counts
         prompt changes), control_gen (the command generation counter) and subtask_cmd (the subtask id the planner
         commanded, or None when no planner commanded one).
+        camera_ns: optional {camera: capture time from time.monotonic_ns()}, used only by the live tap (REC-04 while
+        recording: a camera whose capture time stops moving has a gap). It is not recorded in the sidecar.
         """
         self._require("active")
         if self._queue is not None:
@@ -290,7 +325,7 @@ class Run:
                                    safety_modified=safety_modified, obs_skew_ns=obs_skew_ns,
                                    inference_id=inference_id, chunk_offset=chunk_offset, reward=reward,
                                    terminated=terminated, truncated=truncated, prompt=prompt, prompt_rev=prompt_rev,
-                                   subtask_cmd=subtask_cmd, control_gen=control_gen)
+                                   subtask_cmd=subtask_cmd, control_gen=control_gen, camera_ns=camera_ns)
         try:
             self._write_frame(frame, row)
         except BaseException:
@@ -305,7 +340,7 @@ class Run:
                  inference_id: int = -1, chunk_offset: int = -1, reward: float | None = None,
                  terminated: bool = False, truncated: bool = False, prompt: str = UNKNOWN,
                  prompt_rev: int | str = UNKNOWN, subtask_cmd=_AUTO,
-                 control_gen: int | str = UNKNOWN) -> tuple[dict, dict]:
+                 control_gen: int | str = UNKNOWN, camera_ns=None) -> tuple[dict, dict]:
         """Check one frame against the rules and the frames accepted before it. Returns the frame for LeRobot and
         the sidecar row, and counts the frame as accepted. Touches neither LeRobot nor the disk."""
         if subtask_cmd is _AUTO:
@@ -394,6 +429,8 @@ class Run:
         self._seq.accept(planned)
         self._last = row
         self._count += 1
+        if self.logger.live_tap is not None:
+            self.logger.live_tap.frame(self, frame, row, camera_ns)
         return frame, row
 
     def _write_frame(self, frame: dict, row: dict) -> None:
@@ -521,6 +558,7 @@ class Run:
                      "rl_ready": all(r["reward_valid"] for r in self._rows)}
         self._write_files("staged")
         self.state = "staged"
+        self._live("run_ended")
 
     def discard(self) -> None:
         """Re-record: drop the LeRobot episode buffer and everything this run logged."""
@@ -533,12 +571,14 @@ class Run:
             if not self._queue.close():                        # the writer may still be inside LeRobot
                 self.logger.broken = "a frame writer did not finish within its timeout"
                 self.state = "discarded"
+                self._live("run_state", "discarded")
                 raise RunError(f"run discarded, but {self.logger.broken}; open a new dataset writer")
             self._queue = None
         adapter.reset_episode_buffer(self.dataset)
         if self.run_path.exists():
             shutil.rmtree(self.run_path)
         self.state = "discarded"
+        self._live("run_state", "discarded")
 
     def _quarantine_stopped(self):
         """After a ControlledStop: wait for the writer, reset the LeRobot buffer, write every accepted frame to
@@ -546,6 +586,7 @@ class Run:
         from .frame_queue import write_partial
         q = self._queue
         stop = q.stopped
+        self._live("stop_seen", stop)                          # once per run; before the writer wait
         joined = q.close()
         written, pending, observations, dropped = q.snapshot()
         reset_error = None
@@ -583,12 +624,16 @@ class Run:
                        "run.retry_quarantine(), or close the RunLogger, which retries and then spills them")
             self.logger.broken = f"{self.logger.broken}; {unsaved}" if reset_error else unsaved
             stop._settle()
+            self._live("controlled_stop", stop)
+            self._live("run_state", "quarantined")
             if not isinstance(e, Exception):
                 raise
         else:
             self._unsaved_quarantine = None
             stop.quarantine_path = self.quarantine_path
             stop._settle()
+            self._live("controlled_stop", stop)
+            self._live("run_state", "quarantined")
         return stop
 
     def retry_quarantine(self):
@@ -607,6 +652,7 @@ class Run:
         if self._stop is not None:
             self._stop.quarantine_path, self._stop.quarantine_error = self.quarantine_path, None
             self._stop._settle()
+            self._live("controlled_stop", self._stop)
         if self._blocks_logger:
             self.logger.broken = None
             self._blocks_logger = False
@@ -616,6 +662,7 @@ class Run:
         adapter.reset_episode_buffer(self.dataset)
         store.quarantine(self.logger.root, self.run_path, reason)
         self.state = "quarantined"
+        self._live("run_state", "quarantined")
 
     def _check_rows(self) -> None:
         rows = self._rows
@@ -723,6 +770,7 @@ class Run:
                                     self._manifest("staged", save_error=f"{type(e).__name__}: {e}"))
             self.state = "save_failed"
             self.logger.broken = f"{type(e).__name__}: {e}"
+            self._live("run_state", "save_failed")
             raise
         after = adapter.total_episodes(self.dataset)
         if after != before + 1 or self.episode_index != before:
@@ -730,6 +778,7 @@ class Run:
             store.atomic_write_json(self.run_path / "manifest.json", self._manifest("staged", save_error=msg))
             self.state = "save_failed"
             self.logger.broken = msg
+            self._live("run_state", "save_failed")
             raise RunError(f"LeRobot saved an unexpected episode index ({msg}); run validate --repair")
         try:
             em = adapter.saved_episode(self.dataset, self.episode_index)
@@ -744,9 +793,11 @@ class Run:
             store.atomic_write_json(self.run_path / "manifest.json", self._manifest("staged", save_error=msg))
             self.state = "save_failed"
             self.logger.broken = msg
+            self._live("run_state", "save_failed")
             raise RunError(msg)
         store.atomic_write_json(self.run_path / "manifest.json", self._manifest("committed"))
         self.state = "committed"
+        self._live("run_state", "committed")
         store.rebuild_index(self.logger.root)
         try:
             batches.join(self.logger.root, self.run_id, self.logger.batch,
