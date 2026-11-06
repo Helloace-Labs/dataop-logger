@@ -914,3 +914,35 @@ def test_a_write_failure_after_the_last_put_is_shown_before_the_block_ends(tmp_p
         time.sleep(0.7)
     phases = [e["phase"] for e in kinds(L.read_events(ds.root), "controlled_stop")]
     assert phases == ["detected", "quarantined"]
+
+
+def test_a_late_detection_never_lands_after_or_over_the_final_stop(tmp_path):
+    """The tap thread claims the detection and pauses before publishing it while the run block publishes where the
+    frames went: the final state stays, and the events come in order."""
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, live=True) as log:
+        tap = log.live_tap
+        run = types.SimpleNamespace(run_id="r-1")
+        stop = types.SimpleNamespace(reason="write_failed", detail="d", frames=3, spilled=False,
+                                     quarantine_path=ds.root / "dataop" / "quarantine" / "r-1")
+        real, entered, gate = tap._stop_update, threading.Event(), threading.Event()
+
+        def paused(r, s, phase):
+            if phase == "detected":
+                entered.set()
+                gate.wait(5)
+            real(r, s, phase)
+        tap._stop_update = paused
+        t = threading.Thread(target=tap.stop_seen, args=(run, stop))
+        t.start()
+        assert entered.wait(3)
+        final = threading.Thread(target=tap.controlled_stop, args=(run, stop))
+        final.start()
+        time.sleep(0.2)
+        gate.set()
+        t.join(3), final.join(3)
+        tap.stop_seen(run, stop)                                # a second detection is never published
+        assert tap.stop["phase"] == "quarantined" and tap.stop["quarantine"] == "dataop/quarantine/r-1"
+        time.sleep(0.7)
+    phases = [e["phase"] for e in kinds(L.read_events(ds.root), "controlled_stop")]
+    assert phases == ["detected", "quarantined"]

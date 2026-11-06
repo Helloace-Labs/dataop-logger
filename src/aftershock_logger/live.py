@@ -225,6 +225,7 @@ class LiveTap:
         self._pending: collections.deque = collections.deque()
         self._dropped = 0
         self._dead = False
+        self._stop_lock = threading.Lock()                     # stop publication: memory only, never file work
         try:
             self._setup(logger)
         except Exception as e:                                 # noqa: BLE001 (never in the way of recording)
@@ -521,16 +522,19 @@ class LiveTap:
     def stop_seen(self, run, stop) -> None:
         """A ControlledStop was detected: the caller was told, the run block is leaving with it, or the tap thread
         saw the queue stop. Published once per run, before the writer wait and the quarantine write."""
-        if self._stop_seen_for == run.run_id:
-            return
-        self._stop_seen_for = run.run_id
-        self._stop_update(run, stop, "detected")
+        with self._stop_lock:                                  # never after, or over, the frames' final place
+            if self._stop_seen_for == run.run_id:
+                return
+            self._stop_seen_for = run.run_id
+            self._stop_update(run, stop, "detected")
 
     def controlled_stop(self, run, stop) -> None:
         """Where the stopped run's frames went: after the quarantine write, a retry or a spill."""
         q = getattr(stop, "quarantine_path", None)
         phase = "spilled" if getattr(stop, "spilled", False) else "quarantined" if q is not None else "not_written"
-        self._stop_update(run, stop, phase)
+        with self._stop_lock:
+            self._stop_seen_for = run.run_id                   # a late detection is not published after this
+            self._stop_update(run, stop, phase)
 
     def _stop_update(self, run, stop, phase: str) -> None:
         try:
