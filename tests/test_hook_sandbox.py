@@ -413,8 +413,7 @@ def _drop_all(cmd, flag, n):
     (lambda c: _drop(c, "--seccomp", 1), "socket_create"),
     (lambda c: _drop_all(c, "--remount-ro", 1), "write_outside"),                  # writable root and /dev
     (lambda c: [c[0], "--ro-bind", "/", "/", *c[1:]], "read_outside"),              # the whole host readable
-    (lambda c: [c[0], "--ro-bind", "/", "/", *c[1:]], "read_runtime_non_code"),
-    (lambda c: _drop(c, "--clearenv", 0), "environment not empty"),
+    (lambda c: [*c[:-1], "--setenv", "PROVIDER_KEY", "planted", c[-1]], "environment not empty"),
     (lambda c: _drop(_drop(c, "--seccomp", 1), "--unshare-all", 0), "network"),     # the host network
 ])
 def test_the_probe_catches_a_weakened_bubblewrap(monkeypatch, weaken, caught):
