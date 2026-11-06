@@ -586,6 +586,7 @@ class Run:
         from .frame_queue import write_partial
         q = self._queue
         stop = q.stopped
+        self._live("stop_seen", stop)                          # once per run; before the writer wait
         joined = q.close()
         written, pending, observations, dropped = q.snapshot()
         reset_error = None

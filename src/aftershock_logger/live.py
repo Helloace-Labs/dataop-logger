@@ -230,7 +230,10 @@ class LiveTap:
         except Exception as e:                                 # noqa: BLE001 (never in the way of recording)
             self._dead = True                                  # every hook returns at once from now on
             self._fail(e)
-            self._warn()
+            try:                                               # warned from a thread, never on the caller's
+                threading.Thread(target=self._warn, name="aftershock-live-tap-warn", daemon=True).start()
+            except BaseException:                              # noqa: BLE001
+                pass
             return
         self._thread = threading.Thread(target=self._loop, name="aftershock-live-tap", daemon=True)
         self._thread.start()
@@ -260,7 +263,9 @@ class LiveTap:
         self.state_names = _state_names(logger.dataset)
         self.image_keys = _image_keys(logger.dataset)
         # Camera ids for status keys and preview file names: cleaned of private names, unique.
-        self.cam_given = {k: camera_name(k) for k in self.image_keys}         # what a caller's camera_ns may use
+        self.cam_given = {k: k[len(IMAGE_PREFIX):] if k.startswith(IMAGE_PREFIX) else k
+                          for k in self.image_keys}                             # what a caller's camera_ns may use
+        self.cam_keys = {k: self.scrub(k) for k in self.image_keys}            # cleaned before any character change
         self.cam_names = {}
         for k in self.image_keys:
             cam = camera_name(self.scrub(self.cam_given[k]))
@@ -289,6 +294,7 @@ class LiveTap:
         self.file_records = 0
         self._files_ready = False
         self._error_written = None
+        self._stop_seen_for = None
 
     # ── caller's thread ──────────────────────────────────────────────────────
 
@@ -382,7 +388,7 @@ class LiveTap:
             cams = self._cameras(run, frame, i, obs_ns, camera_ns) if self.image_keys else {}
             self._snap = {"run_id": run.run_id, "frame": i, "frames": i + 1, "control_mode": mode[0],
                           "expert_source": mode[1], "prompt": row.get("prompt"), "subtask_cmd": row.get("subtask_cmd"),
-                          "state": _own_state(frame.get(STATE_KEY)), "cams": cams}
+                          "state": _own_state(frame.get(STATE_KEY)), "cams": cams, "rec": self._rec}
         except Exception as e:                                 # noqa: BLE001
             self._fail(e)
 
@@ -426,7 +432,7 @@ class LiveTap:
             t = int(got) if isinstance(got, (int, np.integer)) and not isinstance(got, bool) else obs_ns
             if cam not in self.cameras:
                 hw = _image_hw(v)
-                self.cameras = {**self.cameras, cam: {"height": hw[0] if hw else None,
+                self.cameras = {**self.cameras, cam: {"key": self.cam_keys[key], "height": hw[0] if hw else None,
                                                       "width": hw[1] if hw else None}}
             times[cam] = (t, i)
             if camera_ns is not None:
@@ -513,7 +519,11 @@ class LiveTap:
             self._fail(e)
 
     def stop_seen(self, run, stop) -> None:
-        """The caller has just been told of a ControlledStop (before the writer wait and the quarantine write)."""
+        """A ControlledStop was detected: the caller was told, the run block is leaving with it, or the tap thread
+        saw the queue stop. Published once per run, before the writer wait and the quarantine write."""
+        if self._stop_seen_for == run.run_id:
+            return
+        self._stop_seen_for = run.run_id
         self._stop_update(run, stop, "detected")
 
     def controlled_stop(self, run, stop) -> None:
@@ -568,6 +578,9 @@ class LiveTap:
             try:
                 if not self._files_ready:
                     self._prepare_files()
+                q = self.queue_ref
+                if q is not None and q._stop is not None:      # a write failed in the background: show it now
+                    self.stop_seen(q.run, q._stop)
                 self._check_preview()
                 wrote_events = self._flush_events()
                 now = time.monotonic()
@@ -675,15 +688,15 @@ class LiveTap:
         return True
 
     def _status(self, closed: bool) -> dict:
-        r, snap, rec = self.run, self._snap, self._rec          # each read once: whole objects, never half updated
+        r, snap = self.run, self._snap                          # each read once: whole objects, never half updated
         run = joint = None
         cams = {}
         if r is not None:
             run = dict(r)
             start = run.pop("start_ns")
             run["elapsed_s"] = round((time.monotonic_ns() - start) / 1e9, 3)
-            run["rec"] = rec
             mine = snap is not None and snap["run_id"] == r["run_id"]
+            run["rec"] = snap["rec"] if mine else self._new_rec()     # the counts as of the frame shown
             for k in ("frame", "frames", "control_mode", "expert_source", "prompt", "subtask_cmd"):
                 run[k] = snap[k] if mine else ({"frame": -1, "frames": 0}.get(k))
             joint = {"key": STATE_KEY, "names": self.state_names, "values": _vector(snap["state"]) if mine else None}

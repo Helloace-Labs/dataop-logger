@@ -10,6 +10,7 @@ import sys
 import textwrap
 import threading
 import time
+import types
 from pathlib import Path
 
 import numpy as np
@@ -218,95 +219,81 @@ def test_status_carries_run_joint_state_schema_and_cameras(tmp_path):
     assert st["action_schema"] == {"id": SCHEMA.id, "names": list(NAMES), "units": list(SCHEMA.units),
                                    "space": "joint_position", "rate_hz": 30}
     assert set(st["cameras"]) == {"top", "wrist"} and st["cameras"]["top"]["width"] == 32
+    assert st["cameras"]["wrist"]["key"] == "observation.images.wrist" and st["cameras"]["top"]["frame"] == 4
     assert st["queue"]["capacity"] == 60 and st["controlled_stop"] is None
     assert st["preview"] == {"active": False, "interval_s": None, "frames": {}}
 
 
 # ── 2. Cost on the caller's thread ──────────────────────────────────────────
 
-def _call_costs(run_add):
-    costs = []
-
-    def timed(*a, **k):
-        t = time.perf_counter_ns()
-        try:
-            return run_add(*a, **k)
-        finally:
-            costs.append(time.perf_counter_ns() - t)
-    return timed, costs
-
-
-def _replay_full_calls(tmp_path, name, live, n, hw, queued):
-    """The whole add_frame or put call, timed, in a real time replay with the tap on or off."""
-    ds = make_ds(tmp_path, name, cams=2, hw=hw)
-    with RunLogger(ds, SCHEMA, live=live) as log:
-        with log.run(task=TASK, policy=POLICY) as run:
-            add, costs = _call_costs(run.queue().put if queued else run.add_frame)
-            t0 = time.monotonic_ns()
-            for i in range(n):
-                add(frame(i, 2, hw), **kw(i, "expert" if 100 <= i < 103 else "base", time.monotonic_ns()))
-                time.sleep(max(0.0, (t0 + (i + 1) * PERIOD_NS - time.monotonic_ns()) / 1e9))
-            run.end(termination_reason="success")
-        healthy = log.live_tap is None or (log.live_tap.failed is None and log.live_tap.writes > 0)
-    return costs, healthy
-
-
-def _hook_costs(log, wall=True):
-    """Wrap the tap's frame hook to time it: the tap's extra cost per add_frame or put. Wall time includes waits for
-    the interpreter lock held by other threads; thread CPU time is the tap's own work."""
-    tap, real, costs = log.live_tap, log.live_tap.frame, []
-    clock = time.perf_counter_ns if wall else time.thread_time_ns
-
-    def timed(*a, **k):
-        t = clock()
-        real(*a, **k)
-        costs.append(clock() - t)
-    tap.frame = timed
-    return costs
-
-
 def _p99(xs):
     return statistics.quantiles(xs, n=100)[98] / 1e6
 
 
+def _replay(tmp_path, name, n, hw, queued, live, preview=False, wall=True):
+    """A real time replay timing each whole add_frame or put call and, with the tap on, the tap's own hook (on wall
+    clock time, or on the hook's thread CPU time). Returns (whole call times, hook times, tap or None)."""
+    ds = make_ds(tmp_path, name, cams=2, hw=hw)
+    whole, hook = [], []
+    with RunLogger(ds, SCHEMA, live=live) as log:
+        tap = log.live_tap
+        stop = threading.Event()
+        if tap is not None:
+            real, clock = tap.frame, (time.perf_counter_ns if wall else time.thread_time_ns)
+
+            def timed(*a, **k):
+                t = clock()
+                real(*a, **k)
+                hook.append(clock() - t)
+            tap.frame = timed
+        if preview:
+            want = L.live_dir(ds.root) / L.PREVIEW_WANT
+            want.parent.mkdir(parents=True, exist_ok=True)
+            want.write_text('{"interval_s": 1}')
+            assert wait_for(lambda: tap.preview_interval_ns, 2)
+
+            def touch():                                     # keep the request fresh, as the station does
+                while not stop.wait(1.0):
+                    os.utime(want)
+            threading.Thread(target=touch, daemon=True).start()
+        with log.run(task=TASK, policy=POLICY) as run:
+            add = run.queue().put if queued else run.add_frame
+            t0 = time.monotonic_ns()
+            for i in range(n):
+                f, k = frame(i, 2, hw), kw(i, "expert" if 100 <= i < 103 else "base", time.monotonic_ns())
+                t = time.perf_counter_ns()
+                add(f, **k)
+                whole.append(time.perf_counter_ns() - t)
+                time.sleep(max(0.0, (t0 + (i + 1) * PERIOD_NS - time.monotonic_ns()) / 1e9))
+            run.end(termination_reason="success")
+        stop.set()
+        if tap is not None:
+            assert tap.failed is None and tap.writes > 0       # every measured tap stayed healthy
+    return whole, hook, tap
+
+
 @pytest.mark.parametrize("queued", [False, True], ids=["add_frame", "put"])
 def test_tap_cost_per_frame_stays_small(tmp_path, queued):
-    """Acceptance 2 at reduced length, on the hook's thread CPU time (150 samples make a wall clock p99 a single
-    lock wait). AFTERSHOCK_LIVE_BENCH=1 runs the full 2,000 frame replay at 30 fps with two 480x640 cameras on wall
-    clock time, also times the whole call with the tap off and on, and prints the numbers for the pull request."""
+    """Acceptance 2. Three matched real time replays per path: tap off, tap on with no preview request, tap on
+    with a preview every second; each times the whole call, and the tap's hook. The short run asserts the hook on
+    its thread CPU time (150 samples make a wall clock p99 a single lock wait). AFTERSHOCK_LIVE_BENCH=1 runs 2,000
+    frames with two 480x640 cameras, asserts the hook on wall clock time, and prints every figure for the pull
+    request. Whole call times are reported, not asserted: with add_frame they include LeRobot's own image writes,
+    whose jitter is larger than the budget with the tap off too."""
     bench = os.environ.get("AFTERSHOCK_LIVE_BENCH") == "1"
     n, hw = (2000, (480, 640)) if bench else (150, (120, 160))
-    out = {}
-    for preview in (False, True):
-        ds = make_ds(tmp_path, f"ds{int(preview)}", cams=2, hw=hw)
-        with RunLogger(ds, SCHEMA, live=True) as log:
-            if preview:
-                L.live_dir(ds.root).mkdir(parents=True, exist_ok=True)
-                (L.live_dir(ds.root) / L.PREVIEW_WANT).write_text('{"interval_s": 1}')
-                wait_for(lambda: log.live_tap.preview_interval_ns, 2)
-            costs = _hook_costs(log, wall=bench)
-            stop = threading.Event()
-            if preview:                                          # keep the request fresh, as the station does
-                def touch():
-                    while not stop.wait(1.0):
-                        os.utime(L.live_dir(ds.root) / L.PREVIEW_WANT)
-                threading.Thread(target=touch, daemon=True).start()
-            record(log, n=n, takeover=range(100, 103), cams=2, hw=hw, realtime=True, queued=queued)
-            stop.set()
-            out[preview] = (_p99(costs), max(costs) / 1e6, log.live_tap.copies, log.live_tap.encodes)
-    full_off, _ = _replay_full_calls(tmp_path, "full_off", False, n, hw, queued)
-    full_on, healthy = _replay_full_calls(tmp_path, "full_on", True, n, hw, queued)
-    assert healthy
+    off, _, _ = _replay(tmp_path, "off", n, hw, queued, live=False)
+    on, hook_on, tap_on = _replay(tmp_path, "on", n, hw, queued, live=True, wall=bench)
+    pv, hook_pv, tap_pv = _replay(tmp_path, "pv", n, hw, queued, live=True, preview=True, wall=bench)
     if bench:
-        print(f"\nwhole {'put' if queued else 'add_frame'} call, tap off p99 {_p99(full_off):.3f} ms, tap on (no "
-              f"preview) p99 {_p99(full_on):.3f} ms, medians {statistics.median(full_off) / 1e6:.3f} and "
-              f"{statistics.median(full_on) / 1e6:.3f} ms")
-        print(f"\nlive tap cost per {'put' if queued else 'add_frame'}, {n} frames at 30 fps, two {hw} cameras: "
-              f"no preview p99 {out[False][0]:.3f} ms (max {out[False][1]:.3f}); "
-              f"preview every 1 s p99 {out[True][0]:.3f} ms (max {out[True][1]:.3f}), "
-              f"{out[True][2]} frames copied, {out[True][3]} encoded")
-    assert out[False][0] < 0.5 and out[False][2] == 0 and out[False][3] == 0
-    assert out[True][0] < 1.5 and out[True][2] >= 2 * (n // 30 - 2) and out[True][3] >= 2
+        name = "put" if queued else "add_frame"
+        print(f"\n{name}, {n} frames at 30 fps, two {hw} cameras. Whole call p99 (median): tap off "
+              f"{_p99(off):.3f} ({statistics.median(off) / 1e6:.3f}) ms, tap on {_p99(on):.3f} "
+              f"({statistics.median(on) / 1e6:.3f}) ms, tap on with preview {_p99(pv):.3f} "
+              f"({statistics.median(pv) / 1e6:.3f}) ms. Tap hook p99: {_p99(hook_on):.3f} ms with no preview, "
+              f"{_p99(hook_pv):.3f} ms with preview ({tap_pv.copies} frames copied, {tap_pv.encodes} encoded)")
+    assert _p99(hook_on) < 0.5 and tap_on.copies == 0 and tap_on.encodes == 0
+    assert _p99(hook_pv) < 1.5 and tap_pv.copies >= n // 30 and tap_pv.encodes >= 2   # a late frame delays a copy
 
 
 # ── 4. Preview only on request ──────────────────────────────────────────────
@@ -866,3 +853,64 @@ def test_a_controlled_stop_shows_when_it_is_detected_and_again_when_its_frames_a
     phases = [e["phase"] for e in kinds(L.read_events(ds.root), "controlled_stop")]
     assert phases == ["detected", "not_written", "quarantined"]
     assert L.read_status(ds.root)["controlled_stop"]["quarantine"] == f"dataop/quarantine/{run.run_id}"
+
+
+# ── Codex round 1 confirmation ──────────────────────────────────────────────
+
+def test_rec_counts_are_read_with_the_frame_they_belong_to(tmp_path):
+    """The status taken after the REC counts changed but before the frame's snapshot was published shows the
+    counts of the frame it shows."""
+    ds = make_ds(tmp_path, cams=1)
+    taken = []
+    with RunLogger(ds, BOUNDED, live=True) as log:
+        tap = log.live_tap
+        real = tap._cameras
+
+        def between(*a, **k):                                # runs after _rec05 and before the snapshot
+            taken.append(tap._status(False))
+            return real(*a, **k)
+        tap._cameras = between
+        record(log, n=6, cams=1, action=lambda i: np.full(6, 500.0, np.float32))
+    for st in taken[1:]:
+        assert st["run"]["rec"]["REC-05"]["frames"] == st["run"]["frames"]
+
+
+def test_camera_names_holding_the_root_or_home_are_cleaned_before_they_become_ids(tmp_path):
+    home = os.path.expanduser("~")
+    root = tmp_path / "ds"
+    keys = [f"observation.images.{root}/top", f"observation.images.{home}/wrist", "observation.images.side"]
+    feats = {k: {"dtype": "image", "shape": (4, 4, 3)} for k in keys}
+    logger = types.SimpleNamespace(root=root, schema=SCHEMA,
+                                   dataset=types.SimpleNamespace(features=feats))
+    tap = L.LiveTap(logger)
+    try:
+        ids = list(tap.cam_names.values())
+        assert len(set(ids)) == 3 and "side" in ids
+        for cam in ids:
+            for private in (str(root), str(tmp_path), home, home.strip("/").replace("/", "_")):
+                assert private not in cam
+        assert all(str(root) not in k and home not in k for k in tap.cam_keys.values())
+    finally:
+        tap.close()
+
+
+@pytest.mark.parametrize("leave", ["normally", "by_an_exception"])
+def test_a_write_failure_after_the_last_put_is_shown_before_the_block_ends(tmp_path, monkeypatch, leave):
+    ds = make_ds(tmp_path)
+
+    def failing(f):
+        raise OSError(28, "No space left on device")
+    with RunLogger(ds, SCHEMA, live=True) as log:
+        with pytest.raises((ControlledStop, ValueError)):
+            with log.run(task=TASK, policy=POLICY) as run:
+                q = run.queue()
+                monkeypatch.setattr(ds, "add_frame", failing)
+                q.put(frame(0), **kw(0))                     # accepted; the write fails in the background
+                st = wait_for(lambda: (L.read_status(ds.root) or {}).get("controlled_stop") and
+                              L.read_status(ds.root), 3)
+                assert st["controlled_stop"]["phase"] == "detected" and st["run"]["state"] == "active"
+                if leave == "by_an_exception":
+                    raise ValueError("the caller's own error")
+        time.sleep(0.7)
+    phases = [e["phase"] for e in kinds(L.read_events(ds.root), "controlled_stop")]
+    assert phases == ["detected", "quarantined"]
