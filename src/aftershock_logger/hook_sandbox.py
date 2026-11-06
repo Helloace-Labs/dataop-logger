@@ -18,8 +18,8 @@ Sandbox modes:
   macos-seatbelt   macOS `sandbox-exec` with a deny-by-default profile. RLIMIT_AS is not enforced on macOS, so the
                    parent reads the child's memory footprint every 20 ms and kills it over the limit.
   linux-bwrap      Linux bubblewrap: new user, mount, pid, network, ipc and uts namespaces, only the paths above
-                   mounted read only (non-code runtime files hidden behind /dev/null, only the result files
-                   writable), and a seccomp filter that refuses fork, clone, socket and io_uring, so one process
+                   mounted read only (each runtime folder as a private copy of its code files, each needed
+                   shared library as a single file, only the result files writable), and a seccomp filter that refuses fork, clone, socket and io_uring, so one process
                    holds all the memory and RLIMIT_AS bounds it.
 
 Before a mode is used for the first time in a process, a probe child tries what a hostile hook would try (read and
@@ -153,7 +153,7 @@ def _runtime() -> dict:
     libdir, ldlib = sysconfig.get_config_var("LIBDIR"), sysconfig.get_config_var("LDLIBRARY")
     if libdir and ldlib and os.path.isfile(os.path.join(libdir, ldlib)):
         files.append(os.path.realpath(os.path.join(libdir, ldlib)))
-    return {"dirs": sorted({stdlib, np_dir, *libs}), "files": sorted(set(files)),
+    return {"dirs": [stdlib, *sorted({np_dir, *libs} - {stdlib})], "files": sorted(set(files)),
             "hidden": [os.path.join(stdlib, "site-packages")]}
 
 
@@ -184,18 +184,23 @@ def _seatbelt_profile(job: str, writable: list[str]) -> str:
     rt = _runtime()
     _readable(job)
     _check_paths(writable)
-    code = " ".join(f'(require-all (subpath {q(d)}) (regex #"{CODE_FILE}"))' for d in rt["dirs"])
-    dirs = " ".join(f"(require-all (subpath {q(d)}) (vnode-type DIRECTORY))" for d in rt["dirs"])
+    def code(ds):
+        return " ".join(f'(require-all (subpath {q(d)}) (regex #"{CODE_FILE}"))'
+                        f" (require-all (subpath {q(d)}) (vnode-type DIRECTORY))" for d in ds)
+    # The last matching rule wins. The standard library is granted first, then its site-packages is denied, then
+    # numpy is granted, so a numpy installed inside that site-packages stays readable and nothing else there is.
+    std, rest = rt["dirs"][:1], rt["dirs"][1:]
     return "\n".join([
         "(version 1)",
         "(deny default)",
         f"(allow process-exec (literal {q(os.path.realpath(sys.executable))}))",
-        f"(allow file-read* {code} {dirs} " + " ".join(f"(literal {q(f)})" for f in rt["files"]) + ")",
-        f"(allow file-read* (subpath {q(os.path.join(job, 'in'))}))",
-        # the dynamic loader, system libraries and the root folder itself; nothing under /Users, /private/etc, ...
-        '(allow file-read* (literal "/") (subpath "/usr/lib") (subpath "/System") (subpath "/private/var/db/dyld")'
-        ' (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',
+        f"(allow file-read* {code(std)})",
         "(deny file-read* " + " ".join(f"(subpath {q(h)})" for h in rt["hidden"]) + ")",
+        f"(allow file-read* {code(rest)} " + " ".join(f"(literal {q(f)})" for f in rt["files"]) + ")",
+        f"(allow file-read* (subpath {q(os.path.join(job, 'in'))}))",
+        # the root folder itself (the interpreter stats it at start) and three devices; the system libraries come
+        # from the dyld shared cache, so nothing under /usr, /System, /Users or /private is readable
+        '(allow file-read* (literal "/") (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',
         "(allow file-write* (literal \"/dev/null\") " + " ".join(f"(literal {q(p)})" for p in writable) + ")",
         # hardware facts numpy reads and uname; not kern.proc* or kern.procargs*, which would list other processes
         # and their command lines
@@ -210,23 +215,74 @@ def _seatbelt_profile(job: str, writable: list[str]) -> str:
     ]) + "\n"
 
 
-_MASKS: dict[tuple, list[str]] = {}
+_MIRRORS: dict[tuple, dict[str, str]] = {}
 
 
-def _non_code_files(dirs: list[str]) -> list[str]:
-    """Regular files under the runtime folders that are not code. Linux mode hides each one behind /dev/null."""
+def _mirror(dirs: list[str], hidden: list[str]) -> dict[str, str]:
+    """Linux mode: a private read-only copy of each runtime folder that holds only its code files (hard linked when
+    possible, else copied) and none of the hidden folders, mounted over the original path. Built once per process;
+    a file added to the runtime later is simply not in it. Empty folders stand in for runtime folders nested inside
+    another (numpy inside site-packages), so their own mounts have a place to go."""
+    import atexit
     import re
-    key = tuple(dirs)
-    if key not in _MASKS:
-        pat, out = re.compile(CODE_FILE), []
-        for d in dirs:
-            for root, subdirs, files in os.walk(d):
-                subdirs[:] = [x for x in subdirs if not os.path.islink(os.path.join(root, x))]
-                out += [os.path.join(root, f) for f in files
-                        if not pat.search(f) and not os.path.islink(os.path.join(root, f))]
-        _check_paths(out)
-        _MASKS[key] = sorted(out)
-    return _MASKS[key]
+    key = (tuple(dirs), tuple(hidden))
+    if key in _MIRRORS:
+        return _MIRRORS[key]
+    pat = re.compile(CODE_FILE)
+    base = os.path.realpath(tempfile.mkdtemp(prefix="aftershock-hook-runtime-"))
+    atexit.register(shutil.rmtree, base, True)
+    out = {}
+    for i, d in enumerate(dirs):
+        dst = os.path.join(base, str(i))
+        skip = [h for h in hidden if h == d or h.startswith(d + "/")] + [x for x in dirs if x != d and x.startswith(d + "/")]
+        for root, subdirs, files in os.walk(d):
+            rel = os.path.relpath(root, d)
+            os.makedirs(os.path.join(dst, rel), 0o700, exist_ok=True)
+            subdirs[:] = [x for x in subdirs if not os.path.islink(os.path.join(root, x))
+                          and not any(os.path.join(root, x) == k or os.path.join(root, x).startswith(k + "/")
+                                      for k in skip)]
+            for f in files:
+                src = os.path.join(root, f)
+                if pat.search(f) and not os.path.islink(src) and os.path.isfile(src):
+                    target = os.path.join(dst, rel, f)
+                    try:
+                        os.link(src, target)
+                    except OSError:
+                        shutil.copy2(src, target)
+        for x in dirs:                                         # mount points for nested runtime folders
+            if x != d and x.startswith(d + "/"):
+                os.makedirs(os.path.join(dst, os.path.relpath(x, d)), 0o700, exist_ok=True)
+        out[d] = dst
+    _MIRRORS[key] = out
+    return out
+
+
+_LIBS: dict[tuple, list[str]] = {}
+
+
+def _shared_libs(binaries: list[str]) -> list[str]:
+    """Linux mode: the shared libraries (and the loader) the interpreter and the runtime's extension modules need,
+    from ldd. Only these library files are mounted, never whole library folders."""
+    key = tuple(binaries)
+    if key in _LIBS:
+        return _LIBS[key]
+    ldd = shutil.which("ldd")
+    if not ldd:
+        raise SandboxUnavailable("ldd is missing, so the libraries a hook needs cannot be listed")
+    libs = set()
+    for b in binaries:
+        try:
+            r = subprocess.run([ldd, b], capture_output=True, text=True, timeout=30, env={})
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        for line in r.stdout.splitlines():
+            parts = line.split()
+            path = parts[2] if len(parts) >= 3 and parts[1] == "=>" else parts[0] if parts else ""
+            if path.startswith("/") and os.path.exists(path):
+                libs.add(path)
+    _check_paths(sorted(libs))
+    _LIBS[key] = sorted(libs)
+    return _LIBS[key]
 
 
 # syscalls the Linux child may not make: new processes or threads, any socket, io_uring (which can open sockets)
@@ -258,28 +314,32 @@ def seccomp_program(machine: str | None = None) -> bytes:
 
 
 def _bwrap_cmd(bwrap: str, job: str, seccomp_fd: int | None = None) -> list[str]:
+    import re
     rt = _runtime()
+    _readable(job)
     exe = os.path.realpath(sys.executable)
+    mirror = _mirror(rt["dirs"], rt["hidden"])
+    pat = re.compile(r"\.so(\.[0-9]+)*$")
+    exts = [os.path.join(src, root_rel, f) for d, m in mirror.items() for src in [d]
+            for root_rel, f in ((os.path.relpath(r, m), f) for r, _, fs in os.walk(m) for f in fs) if pat.search(f)]
     cmd = [bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--cap-drop", "ALL",
            "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
-    for p in ("/lib", "/lib64", "/lib32", "/usr/lib", "/usr/lib64", "/usr/lib32", "/etc/ld.so.cache"):
-        if os.path.exists(p):                                     # the loader and C library
-            cmd += ["--ro-bind", p, p]
-    for p in _readable(job):
-        cmd += ["--ro-bind", p, p]
-    for p in _non_code_files(rt["dirs"]):
-        cmd += ["--ro-bind", "/dev/null", p]
-    for h in rt["hidden"]:
-        if os.path.isdir(h):
-            cmd += ["--tmpfs", h]
-    out = os.path.join(job, "out")
-    _check_paths([out])
-    cmd += ["--ro-bind", out, out]                                # no new files in the output folder
+    if os.path.isfile("/etc/ld.so.cache"):                        # where the loader looks a library up
+        cmd += ["--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache"]
+    for lib in _shared_libs([exe, *rt["files"][1:], *exts]):
+        cmd += ["--ro-bind", os.path.realpath(lib), lib]
+    for f in rt["files"]:
+        cmd += ["--ro-bind", f, f]
+    for d in sorted(rt["dirs"], key=len):                         # outer folders first, so nested mounts land inside
+        cmd += ["--ro-bind", mirror[d], d]
+    inp, out = os.path.join(job, "in"), os.path.join(job, "out")
+    _check_paths([inp, out])
+    cmd += ["--ro-bind", inp, inp, "--ro-bind", out, out]         # no new files in the output folder
     for f in _RESULT_FILES:                                       # only the precreated result files are writable
         cmd += ["--bind", os.path.join(out, f), os.path.join(out, f)]
     if seccomp_fd is not None:
         cmd += ["--seccomp", str(seccomp_fd)]
-    cmd += ["--chdir", os.path.join(job, "in"), exe]
+    cmd += ["--chdir", inp, exe]
     return cmd
 
 
@@ -312,6 +372,19 @@ def sandbox_mode() -> str:
 
 PROBES = ("read_outside", "read_runtime_non_code", "write_outside", "write_new_output", "network", "unix_socket",
           "fork", "other_process", "other_process_info")
+
+
+def _judge(mode: str, got: dict) -> list[str]:
+    """What the probe report shows got through. On Linux a socket must not even be created (the seccomp filter),
+    because the parent's listeners are outside the child's mounts and a failed connect would prove nothing."""
+    names = PROBES + (("socket_create",) if mode == "linux-bwrap" else ())
+    bad = [k for k in names if not str(got.get(k, "")).startswith("denied")]
+    if got.get("env"):
+        bad.append(f"environment not empty ({len(got['env'])} variables)")
+    want = {"RLIMIT_CPU", "RLIMIT_FSIZE", "RLIMIT_NOFILE", "RLIMIT_CORE"} | ({"RLIMIT_AS"} if mode == "linux-bwrap" else set())
+    if not want <= set(got.get("limits", [])):
+        bad.append(f"limits not set: {sorted(want - set(got.get('limits', [])))}")
+    return bad
 
 
 def _runtime_non_code_sample() -> str | None:
@@ -354,7 +427,7 @@ def _probe(mode: str) -> str:
             got = json.loads(res["stdout"])
         except ValueError:
             return "probe printed no report"
-        bad = [k for k in PROBES if not str(got.get(k, "")).startswith("denied")]
+        bad = _judge(mode, got)
         for name, s_ in (("network", lsn), ("unix_socket", ulsn)):
             try:
                 s_.accept()[0].close()
@@ -365,11 +438,6 @@ def _probe(mode: str) -> str:
             bad.append("write_new_output (file created)")
         if Path(job, "written").exists():
             bad.append("write_outside (file created)")
-        if got.get("env"):
-            bad.append(f"environment not empty ({len(got['env'])} variables)")
-        want = {"RLIMIT_CPU", "RLIMIT_FSIZE", "RLIMIT_NOFILE", "RLIMIT_CORE"} | ({"RLIMIT_AS"} if mode == "linux-bwrap" else set())
-        if not want <= set(got.get("limits", [])):
-            bad.append(f"limits not set: {sorted(want - set(got.get('limits', [])))}")
         return "; ".join(bad)
     except SandboxUnavailable as e:
         return str(e)
@@ -502,10 +570,11 @@ def _read_result(path: Path, limit: int, what: str) -> bytes:
         raise ValueError(f"no {what} file") from None
     except OSError as e:
         raise ValueError(f"{what} file could not be opened safely ({e.strerror})") from None
+    st = os.fstat(fd)
+    if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
+        os.close(fd)
+        raise ValueError(f"{what} is not a plain file")
     with io.FileIO(fd, "rb") as f:
-        st = os.fstat(fd)
-        if not stat.S_ISREG(st.st_mode) or st.st_nlink != 1:
-            raise ValueError(f"{what} is not a plain file")
         if st.st_size > limit:
             raise ValueError(f"{what} file is larger than {limit} bytes")
         data = f.read(limit + 1)

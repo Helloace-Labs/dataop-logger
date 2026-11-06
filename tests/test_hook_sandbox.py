@@ -235,9 +235,11 @@ def test_hook_cannot_write_a_huge_file_or_any_other_file(tmp_path):
     ("def h(run):\n    return {'kepe': 1}\n", "unknown keys"),
     ("import os\ndef h(run):\n    os._exit(0)\n", "bad result"),
     ("import os\ndef h(run):\n    p = os.path.join(os.path.dirname(__file__), '..', 'out', 'result.json')\n"
-     "    os.unlink(p); os.symlink('/etc/hosts', p)\n    os._exit(0)\n", "could not be opened safely"),
+     "    os.unlink(p); os.symlink('/etc/hosts', p)\n    os._exit(0)\n",
+     "could not be opened safely" if platform.system() == "Darwin" else ""),
     ("import os\ndef h(run):\n    p = os.path.join(os.path.dirname(__file__), '..', 'out', 'result.json')\n"
-     "    os.unlink(p); os.mkfifo(p)\n    os._exit(0)\n", "not a plain file"),
+     "    os.unlink(p); os.mkfifo(p)\n    os._exit(0)\n",
+     "not a plain file" if platform.system() == "Darwin" else ""),         # Linux refuses the unlink itself
     ("import os, signal\ndef h(run):\n    os.kill(os.getpid(), signal.SIGSEGV)\n", "signal"),
     ("def g(run):\n    return {}\n", "no function"),
 ])
@@ -357,7 +359,36 @@ def test_hook_cannot_read_another_processes_command_line_or_environment(tmp_path
     assert r.status == "not_run" and r.hook_reason is None, r.reason
 
 
-def test_bwrap_command_isolates_everything_and_binds_only_the_result_files_writable(tmp_path):
+def _fake_runtime(tmp_path, nested=True):
+    """A runtime tree: a standard library with a license, a site-packages with another package and a secret, and
+    numpy either inside that site-packages or beside it."""
+    std = tmp_path / "py" / "lib" / "python3.x"
+    (std / "lib-dynload").mkdir(parents=True)
+    (std / "os.py").write_text("")
+    (std / "lib-dynload" / "_x.so").write_text("")
+    (std / "LICENSE.txt").write_text("license")
+    sp = std / "site-packages"
+    (sp / "other").mkdir(parents=True)
+    (sp / "other" / "__init__.py").write_text("")
+    (sp / "token.env").write_text("FAKE=1")
+    npd = (sp if nested else tmp_path / "venv") / "numpy"
+    (npd / "_core").mkdir(parents=True)
+    (npd / "__init__.py").write_text("")
+    (npd / "_core" / "_m.so").write_text("")
+    (npd / "notes.txt").write_text("data")
+    exe = tmp_path / "py" / "bin" / "python3"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    return {"dirs": [str(std), str(npd)], "files": [str(exe)], "hidden": [str(sp)]}
+
+
+@pytest.mark.parametrize("nested", [True, False])
+def test_bwrap_command_mounts_only_code_and_the_result_files(tmp_path, monkeypatch, nested):
+    rt = _fake_runtime(tmp_path, nested)
+    monkeypatch.setattr(HS, "_runtime", lambda: rt)
+    monkeypatch.setattr(HS, "_MIRRORS", {})
+    monkeypatch.setattr(HS, "_shared_libs", lambda bins: ["/lib/x/libc.so.6"])
+    monkeypatch.setattr(HS, "_check_paths", lambda paths: None)        # the fake tree lives in the test folder
     job = os.path.realpath(tmp_path / "job")
     os.makedirs(os.path.join(job, "in"))
     os.makedirs(os.path.join(job, "out"))
@@ -365,20 +396,76 @@ def test_bwrap_command_isolates_everything_and_binds_only_the_result_files_writa
     for flag in ("--unshare-all", "--die-with-parent", "--new-session", "--clearenv"):
         assert flag in cmd
     assert "--share-net" not in cmd and cmd[cmd.index("--seccomp") + 1] == "7"
-    writable = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--bind"]
-    assert writable == [os.path.join(job, "out", f) for f in HS._RESULT_FILES]
-    ro = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--ro-bind"]
-    home = os.path.realpath(os.path.expanduser("~"))
-    assert os.path.join(job, "in") in ro and os.path.join(job, "out") in ro and job not in ro
-    assert all(p != "/" and not home.startswith(p.rstrip("/") + "/") and p != home for p in ro)
-    assert "/usr" not in ro and sys.prefix not in ro
-    masked = {cmd[i + 2] for i, a in enumerate(cmd) if a == "--ro-bind" and cmd[i + 1] == "/dev/null"}
-    sample = HS._runtime_non_code_sample()
-    assert sample in masked                                      # a license or data file in the runtime is hidden
-    assert all(not p.endswith((".py", ".so")) for p in masked)
-    for h in HS._runtime()["hidden"]:
-        if os.path.isdir(h):
-            assert cmd[cmd.index(h) - 1] == "--tmpfs"
+    pairs = [(cmd[i], cmd[i + 1], cmd[i + 2]) for i in range(len(cmd) - 2) if cmd[i] in ("--bind", "--ro-bind")]
+    assert [d for k, _, d in pairs if k == "--bind"] == [os.path.join(job, "out", f) for f in HS._RESULT_FILES]
+    dests = [d for _, _, d in pairs]
+    assert not any(d in ("/lib", "/usr", "/usr/lib", "/lib64") for d in dests)          # no whole library folders
+    assert "--tmpfs" not in cmd[cmd.index("/tmp") + 1:]                                  # no writable hiding mounts
+    std, npd = rt["dirs"]
+    assert dests.index(std) < dests.index(npd) or not nested
+    src = {d: s_ for _, s_, d in pairs}
+    m_std, m_np = Path(src[std]), Path(src[npd])
+    got = sorted(str(p.relative_to(m_std)) for p in m_std.rglob("*") if p.is_file())
+    assert got == ["lib-dynload/_x.so", "os.py"]                   # no license, nothing from site-packages
+    assert sorted(str(p.relative_to(m_np)) for p in m_np.rglob("*") if p.is_file()) == ["__init__.py", "_core/_m.so"]
+    if nested:                                                     # the mount point for numpy exists, empty
+        holder = m_std / "site-packages" / "numpy"
+        assert holder.is_dir() and not any(holder.iterdir())
+        assert not (m_std / "site-packages" / "other").exists()
+
+
+@pytest.mark.parametrize("nested", [True, False])
+def test_seatbelt_profile_denies_site_packages_but_keeps_numpy(tmp_path, monkeypatch, nested):
+    rt = _fake_runtime(tmp_path, nested)
+    monkeypatch.setattr(HS, "_runtime", lambda: rt)
+    monkeypatch.setattr(HS, "_check_paths", lambda paths: None)
+    prof = HS._seatbelt_profile(str(tmp_path / "job"), [])
+    std, npd = rt["dirs"]
+    i_std = prof.index(f'(subpath "{std}")')
+    i_deny = prof.index(f'(deny file-read* (subpath "{rt["hidden"][0]}"))')
+    i_np = prof.index(f'(subpath "{npd}")')
+    assert i_std < i_deny < i_np                                   # the last match wins
+    assert '(subpath "/usr' not in prof and '(subpath "/System' not in prof
+
+
+def test_linux_probe_requires_that_no_socket_can_be_created():
+    clean = {k: "denied: 1" for k in HS.PROBES}
+    clean.update(env=[], limits=["RLIMIT_CPU", "RLIMIT_FSIZE", "RLIMIT_NOFILE", "RLIMIT_CORE", "RLIMIT_AS"])
+    assert HS._judge("linux-bwrap", {**clean, "socket_create": "denied"}) == []
+    assert "socket_create" in HS._judge("linux-bwrap", {**clean, "socket_create": "allowed: ['unix']"})
+    assert "socket_create" in HS._judge("linux-bwrap", clean)       # a missing answer is not a denial
+    assert HS._judge("macos-seatbelt", clean) == []
+    assert any("limits" in b for b in HS._judge("linux-bwrap", {**clean, "socket_create": "denied", "limits": []}))
+
+
+@pytest.mark.parametrize("make,want", [
+    (lambda p: os.symlink("/etc/hosts", p), "could not be opened safely"),
+    (lambda p: os.mkfifo(p), "not a plain file"),
+    (lambda p: os.mkdir(p), "not a plain file"),
+    (lambda p: os.link(p.parent.parent / "other", p), "not a plain file"),
+])
+def test_parent_reads_only_plain_result_files(tmp_path, make, want):
+    out = tmp_path / "out"
+    out.mkdir()
+    (tmp_path / "other").write_text('{"keys": []}')
+    for f in HS._RESULT_FILES:
+        (out / f).write_text("")
+    (out / "result.json").unlink()
+    make(out / "result.json")
+    with pytest.raises(ValueError, match=want):
+        HS._result_meta(out)
+
+
+def test_parent_refuses_extra_output_files(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    for f in HS._RESULT_FILES:
+        (out / f).write_text("")
+    (out / "result.json").write_text('{"keys": []}')
+    assert HS._result_meta(out) == {"keys": []}
+    (out / "extra").write_text("")
+    with pytest.raises(ValueError, match="not just the result files"):
+        HS._result_meta(out)
 
 
 def _bpf(prog: bytes, arch: int, nr: int) -> int:

@@ -117,6 +117,16 @@ def _probe(job: str, done: list) -> None:
         out["unix_socket"] = "allowed"
     except OSError as e:
         out["unix_socket"] = f"denied: {e.errno}"
+    made = []
+    for kind, make in (("unix", lambda: socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)),
+                       ("inet", lambda: socket.socket(socket.AF_INET, socket.SOCK_STREAM)),
+                       ("pair", lambda: socket.socketpair()[0])):
+        try:
+            make().close()
+            made.append(kind)
+        except OSError:
+            pass
+    out["socket_create"] = f"allowed: {made}" if made else "denied"
     try:
         pid = os.fork()
         if pid == 0:
