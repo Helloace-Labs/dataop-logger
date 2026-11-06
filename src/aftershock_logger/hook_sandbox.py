@@ -759,8 +759,11 @@ def run_hook(hook: Hook, run: dict, limits: Limits | None = None) -> HookResult:
             return HookResult("not_run", f"stopped: {res['killed']}", stderr=res["stderr"], info=info)
         if res["code"] != 0:
             why = _tail(res["stderr"]) or f"exit code {res['code']}"
-            if res["code"] is not None and res["code"] < 0:
-                why = f"killed by signal {-res['code']}" + (f": {why}" if _tail(res["stderr"]) else "")
+            sig = -res["code"] if res["code"] is not None and res["code"] < 0 else None
+            if mode == "linux-bwrap" and res["code"] is not None and 128 < res["code"] < 128 + 65:
+                sig = res["code"] - 128                  # bubblewrap exits with 128 + the signal that ended the child
+            if sig:
+                why = f"killed by signal {sig}" + (f": {why}" if _tail(res["stderr"]) else "")
             return HookResult("not_run", f"failed: {why}", stderr=res["stderr"], info=info)
         out = Path(job, "out")
         try:
