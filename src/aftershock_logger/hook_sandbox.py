@@ -218,46 +218,76 @@ def _seatbelt_profile(job: str, writable: list[str]) -> str:
 _MIRRORS: dict[tuple, dict[str, str]] = {}
 
 
-def _mirror(dirs: list[str], hidden: list[str]) -> dict[str, str]:
+def _code_files(dirs: list[str], hidden: list[str], d: str):
+    """(relative folder, file) for every code file under runtime folder d: no symlinks, nothing in a hidden folder
+    or in another runtime folder nested inside d (that one is mounted on its own)."""
+    import re
+    pat = re.compile(CODE_FILE)
+    skip = [h for h in hidden if h == d or h.startswith(d + "/")] + [x for x in dirs if x != d and x.startswith(d + "/")]
+    for root, subdirs, files in os.walk(d):
+        rel = os.path.relpath(root, d)
+        subdirs[:] = [x for x in subdirs if not os.path.islink(os.path.join(root, x))
+                      and not any(os.path.join(root, x) == k or os.path.join(root, x).startswith(k + "/")
+                                  for k in skip)]
+        yield rel, None
+        for f in files:
+            src = os.path.join(root, f)
+            if pat.search(f) and not os.path.islink(src) and os.path.isfile(src):
+                yield rel, f
+
+
+def _mirror(dirs: list[str], hidden: list[str], leaves: tuple = ()) -> dict[str, str]:
     """Linux mode: a private read-only copy of each runtime folder that holds only its code files (hard linked when
     possible, else copied) and none of the hidden folders, mounted over the original path. Built once per process;
     a file added to the runtime later is simply not in it. Empty folders stand in for runtime folders nested inside
-    another (numpy inside site-packages), so their own mounts have a place to go."""
+    another (numpy inside site-packages), and empty files for the shared libraries in `leaves` that lie inside a
+    runtime folder (a bundled library under its symlink name), so their own mounts have a place to go."""
     import atexit
-    import re
-    key = (tuple(dirs), tuple(hidden))
+    key = (tuple(dirs), tuple(hidden), tuple(leaves))
     if key in _MIRRORS:
         return _MIRRORS[key]
-    pat = re.compile(CODE_FILE)
     base = os.path.realpath(tempfile.mkdtemp(prefix="aftershock-hook-runtime-"))
     atexit.register(shutil.rmtree, base, True)
     out = {}
     for i, d in enumerate(dirs):
         dst = os.path.join(base, str(i))
-        skip = [h for h in hidden if h == d or h.startswith(d + "/")] + [x for x in dirs if x != d and x.startswith(d + "/")]
-        for root, subdirs, files in os.walk(d):
-            rel = os.path.relpath(root, d)
-            os.makedirs(os.path.join(dst, rel), 0o700, exist_ok=True)
-            subdirs[:] = [x for x in subdirs if not os.path.islink(os.path.join(root, x))
-                          and not any(os.path.join(root, x) == k or os.path.join(root, x).startswith(k + "/")
-                                      for k in skip)]
-            for f in files:
-                src = os.path.join(root, f)
-                if pat.search(f) and not os.path.islink(src) and os.path.isfile(src):
-                    target = os.path.join(dst, rel, f)
-                    try:
-                        os.link(src, target)
-                    except OSError:
-                        shutil.copy2(src, target)
+        for rel, f in _code_files(dirs, hidden, d):
+            if f is None:
+                os.makedirs(os.path.join(dst, rel), 0o700, exist_ok=True)
+                continue
+            src, target = os.path.join(d, rel, f), os.path.join(dst, rel, f)
+            try:
+                os.link(src, target)
+            except OSError:
+                shutil.copy2(src, target)
         for x in dirs:                                         # mount points for nested runtime folders
             if x != d and x.startswith(d + "/"):
                 os.makedirs(os.path.join(dst, os.path.relpath(x, d)), 0o700, exist_ok=True)
+        for leaf in leaves:                                    # mount points for libraries inside this folder
+            if leaf.startswith(d + "/") and not any(x != d and x.startswith(d + "/") and leaf.startswith(x + "/")
+                                                    for x in dirs):
+                t = os.path.join(dst, os.path.relpath(leaf, d))
+                os.makedirs(os.path.dirname(t), 0o700, exist_ok=True)
+                if not os.path.lexists(t):
+                    os.close(os.open(t, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
         out[d] = dst
     _MIRRORS[key] = out
     return out
 
 
 _LIBS: dict[tuple, list[str]] = {}
+
+
+def _parse_ldd(text: str) -> list[str]:
+    """Library paths from ldd output, spaces kept: `name => /path (0x...)` or `/path (0x...)`. Only existing
+    regular files are kept, so a misread line can never turn into a folder mount."""
+    import re
+    out = []
+    for line in text.splitlines():
+        m = re.match(r"^\s*(?:\S+ => )?(/.*) \(0x[0-9a-fA-F]+\)\s*$", line)
+        if m and os.path.isfile(m.group(1)):
+            out.append(m.group(1))
+    return out
 
 
 def _shared_libs(binaries: list[str]) -> list[str]:
@@ -275,11 +305,7 @@ def _shared_libs(binaries: list[str]) -> list[str]:
             r = subprocess.run([ldd, b], capture_output=True, text=True, timeout=30, env={})
         except (OSError, subprocess.TimeoutExpired):
             continue
-        for line in r.stdout.splitlines():
-            parts = line.split()
-            path = parts[2] if len(parts) >= 3 and parts[1] == "=>" else parts[0] if parts else ""
-            if path.startswith("/") and os.path.exists(path):
-                libs.add(path)
+        libs.update(_parse_ldd(r.stdout))
     _check_paths(sorted(libs))
     _LIBS[key] = sorted(libs)
     return _LIBS[key]
@@ -318,20 +344,21 @@ def _bwrap_cmd(bwrap: str, job: str, seccomp_fd: int | None = None) -> list[str]
     rt = _runtime()
     _readable(job)
     exe = os.path.realpath(sys.executable)
-    mirror = _mirror(rt["dirs"], rt["hidden"])
     pat = re.compile(r"\.so(\.[0-9]+)*$")
-    exts = [os.path.join(src, root_rel, f) for d, m in mirror.items() for src in [d]
-            for root_rel, f in ((os.path.relpath(r, m), f) for r, _, fs in os.walk(m) for f in fs) if pat.search(f)]
+    exts = [os.path.join(d, rel, f) for d in rt["dirs"] for rel, f in _code_files(rt["dirs"], rt["hidden"], d)
+            if f and pat.search(f)]
+    libs = _shared_libs([exe, *rt["files"][1:], *exts])
+    mirror = _mirror(rt["dirs"], rt["hidden"], tuple(sorted({*libs, *rt["files"]})))
     cmd = [bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--cap-drop", "ALL",
            "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
     if os.path.isfile("/etc/ld.so.cache"):                        # where the loader looks a library up
         cmd += ["--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache"]
-    for lib in _shared_libs([exe, *rt["files"][1:], *exts]):
-        cmd += ["--ro-bind", os.path.realpath(lib), lib]
-    for f in rt["files"]:
-        cmd += ["--ro-bind", f, f]
     for d in sorted(rt["dirs"], key=len):                         # outer folders first, so nested mounts land inside
         cmd += ["--ro-bind", mirror[d], d]
+    for f in rt["files"]:                                         # files after folders, so no folder hides them
+        cmd += ["--ro-bind", f, f]
+    for lib in libs:
+        cmd += ["--ro-bind", os.path.realpath(lib), lib]
     inp, out = os.path.join(job, "in"), os.path.join(job, "out")
     _check_paths([inp, out])
     cmd += ["--ro-bind", inp, inp, "--ro-bind", out, out]         # no new files in the output folder

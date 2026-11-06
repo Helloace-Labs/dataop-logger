@@ -387,7 +387,10 @@ def test_bwrap_command_mounts_only_code_and_the_result_files(tmp_path, monkeypat
     rt = _fake_runtime(tmp_path, nested)
     monkeypatch.setattr(HS, "_runtime", lambda: rt)
     monkeypatch.setattr(HS, "_MIRRORS", {})
-    monkeypatch.setattr(HS, "_shared_libs", lambda bins: ["/lib/x/libc.so.6"])
+    alias = Path(rt["dirs"][1]) / "_core" / "libblas.so"            # a bundled library reached by a symlink
+    (Path(rt["dirs"][1]) / "_core" / "libblas.so.3").write_text("")
+    alias.symlink_to("libblas.so.3")
+    monkeypatch.setattr(HS, "_shared_libs", lambda bins: ["/lib/x/libc.so.6", str(alias)])
     monkeypatch.setattr(HS, "_check_paths", lambda paths: None)        # the fake tree lives in the test folder
     job = os.path.realpath(tmp_path / "job")
     os.makedirs(os.path.join(job, "in"))
@@ -407,7 +410,11 @@ def test_bwrap_command_mounts_only_code_and_the_result_files(tmp_path, monkeypat
     m_std, m_np = Path(src[std]), Path(src[npd])
     got = sorted(str(p.relative_to(m_std)) for p in m_std.rglob("*") if p.is_file())
     assert got == ["lib-dynload/_x.so", "os.py"]                   # no license, nothing from site-packages
-    assert sorted(str(p.relative_to(m_np)) for p in m_np.rglob("*") if p.is_file()) == ["__init__.py", "_core/_m.so"]
+    assert sorted(str(p.relative_to(m_np)) for p in m_np.rglob("*") if p.is_file()) == \
+        ["__init__.py", "_core/_m.so", "_core/libblas.so", "_core/libblas.so.3"]
+    assert (m_np / "_core" / "libblas.so").stat().st_size == 0        # an empty mount point, not a copy
+    assert dests.index(str(alias)) > dests.index(npd)                  # mounted after the folder that holds it
+    assert src[str(alias)] == os.path.realpath(alias)
     if nested:                                                     # the mount point for numpy exists, empty
         holder = m_std / "site-packages" / "numpy"
         assert holder.is_dir() and not any(holder.iterdir())
@@ -426,6 +433,23 @@ def test_seatbelt_profile_denies_site_packages_but_keeps_numpy(tmp_path, monkeyp
     i_np = prof.index(f'(subpath "{npd}")')
     assert i_std < i_deny < i_np                                   # the last match wins
     assert '(subpath "/usr' not in prof and '(subpath "/System' not in prof
+
+
+def test_ldd_parsing_keeps_spaces_and_only_regular_files(tmp_path):
+    spaced = tmp_path / "my libs"
+    spaced.mkdir()
+    lib = spaced / "libz.so.1"
+    lib.write_text("")
+    (tmp_path / "my").mkdir()                                          # the prefix a split on spaces would find
+    text = (f"\tlinux-vdso.so.1 (0x00007ffd)\n"
+            f"\tlibz.so.1 => {lib} (0x00007f01)\n"
+            f"\tlibq.so.2 => {tmp_path}/my (0x00007f02)\n"
+            f"\tlibmissing.so => not found\n"
+            f"\t{tmp_path / 'my'} (0x00007f03)\n"
+            f"\t/lib64/ld-linux-x86-64.so.2 (0x00007f04)\n")
+    got = HS._parse_ldd(text)
+    assert str(lib) in got
+    assert all(os.path.isfile(p) for p in got) and str(tmp_path / "my") not in got
 
 
 def test_linux_probe_requires_that_no_socket_can_be_created():
