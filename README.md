@@ -363,6 +363,15 @@ training never samples across a gap. The output is a normal LeRobot v3.0 dataset
 `--dry-run` to see per-run counts and reasons first, and `--hook file.py:function` for task-specific selection.
 `--runs id1,id2` limits a batch to chosen runs.
 
+A hook never runs inside the logger. Each run's call starts a sandboxed child (macOS `sandbox-exec`, or Linux
+bubblewrap) with an empty environment, no network, no access to other processes, read access only to Python, numpy
+and its own inputs, and write access only to its result files, with a time limit (`--hook-timeout`, 60 s), a memory
+limit (`--hook-memory-mb`, 1024) and caps on file and printed output. Data goes in and out as JSON and `.npy` files,
+and the result must have the exact shape and dtype (`keep` bool, `action` float). A hook must be one file that
+imports only the standard library and numpy. If the hook fails, times out, hits a limit or returns a bad result, the
+export fails and names the hook and the reason. On a machine that cannot give this isolation, export refuses to run
+a hook. `dataop_export.json` records the hook's file digest and the sandbox mode and limits used.
+
 ## Training with the extra fields
 
 ```python
