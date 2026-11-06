@@ -236,16 +236,18 @@ def _code_files(dirs: list[str], hidden: list[str], d: str):
                 yield rel, f
 
 
-def _mirror(dirs: list[str], hidden: list[str], leaves: tuple = (), links: tuple = ()) -> dict[str, str]:
+def _mirror(dirs: list[str], hidden: list[str], leaves: tuple = (), links: tuple = (),
+            folders: tuple = ()) -> dict[str, str]:
     """Linux mode: a private read-only copy of each runtime folder that holds only its code files (hard linked when
     possible, else copied) and none of the hidden folders, mounted over the original path. Built once per process;
     a file added to the runtime later is simply not in it. Empty folders stand in for runtime folders nested inside
     another (numpy inside site-packages), and empty files for the shared libraries in `leaves` that lie inside a
     runtime folder (a bundled library under its symlink name), so their own mounts have a place to go. Each
     (path, target) in `links` inside a runtime folder is a symlinked folder the loader passes through; it is
-    recreated in the copy as the same symlink. A symlink exposes nothing: only mounted files can be reached."""
+    recreated in the copy as the same symlink, and each folder in `folders` inside a runtime folder exists in the
+    copy (empty unless it holds code). A symlink exposes nothing: only mounted files can be reached."""
     import atexit
-    key = (tuple(dirs), tuple(hidden), tuple(leaves), tuple(links))
+    key = (tuple(dirs), tuple(hidden), tuple(leaves), tuple(links), tuple(folders))
     if key in _MIRRORS:
         return _MIRRORS[key]
     base = os.path.realpath(tempfile.mkdtemp(prefix="aftershock-hook-runtime-"))
@@ -272,6 +274,9 @@ def _mirror(dirs: list[str], hidden: list[str], leaves: tuple = (), links: tuple
                 os.makedirs(os.path.dirname(t), 0o700, exist_ok=True)
                 if not os.path.lexists(t):
                     os.close(os.open(t, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
+        for f in folders:                                      # plain folders on a library's path
+            if _owner(dirs, f) == d:
+                os.makedirs(os.path.join(dst, os.path.relpath(f, d)), 0o700, exist_ok=True)
         for link, target in links:                             # symlinked folders on a library's path
             if _owner(dirs, link) == d:
                 t = os.path.join(dst, os.path.relpath(link, d))
@@ -299,11 +304,13 @@ def _canon_lib(path: str) -> str:
     return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
 
 
-def _folder_links(paths: list[str]) -> list[tuple[str, str]]:
+def _folder_links(paths: list[str]) -> tuple[list[tuple[str, str]], list[str]]:
     """Every symlinked folder the kernel passes through when it opens one of paths (as ldd printed them), as
-    (symlink path, its target), following `..` and the targets' own symlinked folders the way the kernel does.
-    The sandbox recreates these symlinks so the loader's own spellings resolve to the canonical mounts."""
+    (symlink path, its target), following `..` and the targets' own symlinked folders the way the kernel does,
+    and every plain folder it passes through. The sandbox recreates these symlinks, and these folders empty, so
+    the loader's own spellings resolve to the canonical mounts without any host folder's contents."""
     out: dict[str, str] = {}
+    folders: set[str] = set()
 
     def walk(path: str, depth: int) -> None:
         if depth > 40:                                      # the kernel's own symlink limit
@@ -322,10 +329,11 @@ def _folder_links(paths: list[str]) -> list[tuple[str, str]]:
                 walk(os.path.join(os.path.dirname(nxt), target, "x"), depth + 1)
                 cur = os.path.realpath(nxt)
             else:
+                folders.add(nxt)
                 cur = nxt
     for p in paths:
         walk(p, 0)
-    return sorted(out.items())
+    return sorted(out.items()), sorted(folders)
 
 
 def _parse_ldd(text: str) -> list[str]:
@@ -400,13 +408,16 @@ def _bwrap_cmd(bwrap: str, job: str, seccomp_fd: int | None = None) -> list[str]
             if f and pat.search(f)]
     raw = _shared_libs([exe, *rt["files"][1:], *exts])
     libs = sorted({_canon_lib(x) for x in raw})
-    links = _folder_links(raw)
+    links, folders = _folder_links(raw)
     _check_paths(libs)
-    mirror = _mirror(rt["dirs"], rt["hidden"], tuple(sorted({*libs, *rt["files"]})), tuple(links))
+    mirror = _mirror(rt["dirs"], rt["hidden"], tuple(sorted({*libs, *rt["files"]})), tuple(links), tuple(folders))
     cmd = [bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--cap-drop", "ALL",
            "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
     if os.path.isfile("/etc/ld.so.cache"):                        # where the loader looks a library up
         cmd += ["--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache"]
+    for f in folders:                                             # empty folders the loader walks through
+        if _owner(rt["dirs"], f) is None:
+            cmd += ["--dir", f]
     for d in sorted(rt["dirs"], key=len):                         # outer folders first, so nested mounts land inside
         cmd += ["--ro-bind", mirror[d], d]
     for link, target in links:                                    # symlinked folders outside the runtime copies

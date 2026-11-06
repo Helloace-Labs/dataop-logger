@@ -472,6 +472,9 @@ def test_loader_spellings_through_symlinked_folders_keep_working(tmp_path, monke
     libs_dir.mkdir()
     (libs_dir / "libgfortran.so.5").write_text("")
     (npd / "_libs").symlink_to("../numpy.libs")                       # a symlinked folder inside a runtime folder
+    (npd.parent / "scratch").mkdir()                                  # a plain folder outside every runtime folder
+    (npd.parent / "scratch" / "secret.txt").write_text("not for hooks")
+    (npd / "_via").symlink_to("../scratch/../numpy.libs")              # its target walks through scratch, then ..
     rt["dirs"].append(str(libs_dir))
     sysroot = tmp_path / "sys"                                        # merged /usr: lib64 -> usr/lib64
     (sysroot / "usr" / "lib64").mkdir(parents=True)
@@ -479,12 +482,14 @@ def test_loader_spellings_through_symlinked_folders_keep_working(tmp_path, monke
     (sysroot / "lib64").symlink_to("usr/lib64")
     interp = f"{sysroot}/lib64/ld-linux-x86-64.so.2"                   # the ELF interpreter, as the kernel asks for it
     bundled = f"{npd}/_libs/libgfortran.so.5"
-    (tmp_path / "ldd").write_text(f"\tlibgfortran.so.5 => {bundled} (0x00007f01)\n\t{interp} (0x00007f02)\n")
+    via = f"{npd}/_via/libgfortran.so.5"
+    (tmp_path / "ldd").write_text(f"\tlibgfortran.so.5 => {bundled} (0x00007f01)\n\t{interp} (0x00007f02)\n"
+                                  f"\tlibgfortran.so.5 => {via} (0x00007f03)\n")
     monkeypatch.setattr(HS, "_runtime", lambda: rt)
     monkeypatch.setattr(HS, "_MIRRORS", {})
     monkeypatch.setattr(HS, "_shared_libs", lambda bins: HS._parse_ldd((tmp_path / "ldd").read_text()))
     monkeypatch.setattr(HS, "_check_paths", lambda paths: None)
-    assert HS._parse_ldd((tmp_path / "ldd").read_text()) == [bundled, interp]   # ldd's spelling is kept
+    assert HS._parse_ldd((tmp_path / "ldd").read_text()) == [bundled, interp, via]   # ldd's spelling is kept
     job = os.path.realpath(tmp_path / "job")
     os.makedirs(os.path.join(job, "in"))
     os.makedirs(os.path.join(job, "out"))
@@ -499,7 +504,14 @@ def test_loader_spellings_through_symlinked_folders_keep_working(tmp_path, monke
     m_np = Path(src[str(npd)])                                        # the alias inside numpy is in its copy
     assert (m_np / "_libs").is_symlink() and os.readlink(m_np / "_libs") == "../numpy.libs"
     assert str(libs_dir / "libgfortran.so.5") in src
-    for spelled in (interp, bundled):                                 # every spelling's canonical place is mounted
+    assert os.readlink(m_np / "_via") == "../scratch/../numpy.libs"
+    dirs_made = [cmd[i + 1] for i in range(len(cmd) - 1) if cmd[i] == "--dir"]
+    assert str(npd.parent / "scratch") in dirs_made                     # walked through, recreated empty
+    assert not any(d == str(npd.parent / "scratch") or s_.startswith(str(npd.parent / "scratch"))
+                   for s_, d in pairs)                                # never mounted from the host
+    first_mount = min(i for i in range(len(cmd) - 2) if cmd[i] == "--ro-bind" and cmd[i + 2] in rt["dirs"])
+    assert all(cmd.index(d) < first_mount for d in dirs_made)         # before the mounts, which land on top
+    for spelled in (interp, bundled, via):                            # every spelling's canonical place is mounted
         assert HS._canon_lib(spelled) in src
 
 
