@@ -395,6 +395,36 @@ def test_the_probe_catches_a_weakened_sandbox(monkeypatch, weaken, caught):
         HS.sandbox_mode()
 
 
+def _drop(cmd, flag, n):
+    i = cmd.index(flag)
+    return cmd[:i] + cmd[i + 1 + n:]
+
+
+def _drop_all(cmd, flag, n):
+    while flag in cmd:
+        cmd = _drop(cmd, flag, n)
+    return cmd
+
+
+@pytest.mark.skipif(platform.system() != "Linux" or MODE != "linux-bwrap" and not REQUIRED,
+                    reason="weakens the real bubblewrap command")
+@pytest.mark.parametrize("weaken,caught", [
+    (lambda c: _drop(c, "--seccomp", 1), "fork"),                                   # processes and sockets
+    (lambda c: _drop(c, "--seccomp", 1), "socket_create"),
+    (lambda c: _drop_all(c, "--remount-ro", 1), "write_outside"),                  # writable root and /dev
+    (lambda c: [c[0], "--ro-bind", "/", "/", *c[1:]], "read_outside"),              # the whole host readable
+    (lambda c: [c[0], "--ro-bind", "/", "/", *c[1:]], "read_runtime_non_code"),
+    (lambda c: _drop(c, "--clearenv", 0), "environment not empty"),
+    (lambda c: _drop(_drop(c, "--seccomp", 1), "--unshare-all", 0), "network"),     # the host network
+])
+def test_the_probe_catches_a_weakened_bubblewrap(monkeypatch, weaken, caught):
+    real = HS._bwrap_cmd
+    monkeypatch.setattr(HS, "_bwrap_cmd", lambda *a, **k: weaken(real(*a, **k)))
+    monkeypatch.setattr(HS, "_PROVEN", {})
+    with pytest.raises(HS.SandboxUnavailable, match=caught):
+        HS.sandbox_mode()
+
+
 @pytest.mark.skipif(platform.system() != "Darwin", reason="reads another process through a macOS sysctl")
 def test_hook_cannot_read_another_processes_command_line_or_environment(tmp_path):
     spec = _hook(tmp_path, f"""
