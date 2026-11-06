@@ -169,8 +169,16 @@ def _seatbelt_profile(job: str, writable: list[str]) -> str:
         '(allow file-read* (literal "/") (subpath "/usr/lib") (subpath "/System") (subpath "/private/var/db/dyld")'
         ' (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',
         "(allow file-write* (literal \"/dev/null\") " + " ".join(f"(literal {q(p)})" for p in writable) + ")",
-        "(allow sysctl-read)",
+        # hardware facts numpy reads and uname; not kern.proc* or kern.procargs*, which would list other processes
+        # and their command lines
+        '(allow sysctl-read (sysctl-name-prefix "hw.") (sysctl-name "kern.osrelease") (sysctl-name "kern.ostype")'
+        ' (sysctl-name "kern.version") (sysctl-name "kern.osversion") (sysctl-name "kern.osproductversion")'
+        ' (sysctl-name "kern.hostname"))',
         "(allow signal (target self))",
+        # not covered by deny default: without this a process can read another process's command line and
+        # environment (KERN_PROCARGS2) and its details (proc_pidinfo)
+        "(deny process-info*)",
+        "(allow process-info* (target self))",
     ]) + "\n"
 
 
@@ -178,7 +186,7 @@ def _bwrap_cmd(bwrap: str, job: str) -> list[str]:
     exe = _python()[0]
     cmd = [bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--cap-drop", "ALL",
            "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
-    for p in ("/usr", "/lib", "/lib64", "/lib32", "/bin"):        # the system loader and C library
+    for p in ("/usr", "/lib", "/lib64", "/lib32", "/bin", "/etc/ld.so.cache"):   # the loader and C library
         if os.path.exists(p):
             cmd += ["--ro-bind", p, p]
     for p in _readable(job):
@@ -236,7 +244,8 @@ def _probe(mode: str) -> str:
             got = json.loads(res["stdout"])
         except ValueError:
             return "probe printed no report"
-        bad = [k for k in ("read_outside", "write_outside", "network", "other_process") if got.get(k) == "allowed"]
+        bad = [k for k in ("read_outside", "write_outside", "network", "other_process", "other_process_info")
+               if got.get(k) != "denied" and not str(got.get(k, "")).startswith("denied")]
         try:
             lsn.accept()[0].close()
             bad.append("network (connection reached the parent)")
@@ -451,7 +460,7 @@ def run_hook(hook: Hook, run: dict, limits: Limits | None = None) -> HookResult:
                 raise ValueError("action has non-finite values on kept frames")
             reason = meta.get("reason")
             if reason is not None:
-                reason = _tail(str(reason), 200)
+                reason = " ".join("".join(c if c.isprintable() else " " for c in str(reason)).split())[:200]
         except (OSError, ValueError, KeyError, TypeError) as e:
             return HookResult("not_run", f"bad result: {e}", stderr=res["stderr"], info=info)
         return HookResult("ok", keep=k2, action=a2, hook_reason=reason, stderr=res["stderr"], info=info)

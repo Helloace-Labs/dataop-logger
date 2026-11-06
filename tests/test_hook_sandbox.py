@@ -321,3 +321,50 @@ def test_export_fails_with_the_hook_name_and_records_the_sandbox(tmp_path):
     assert rec["hook"]["file_sha256"] == HS.load(spec).file_sha256
     assert rec["hook"]["limits"]["timeout_s"] == 60 and rec["hook"]["results_sha256"]
     assert rep["frames"] == 2 and rep["hook"]["sandbox"] == MODE
+
+
+@pytest.mark.skipif(platform.system() != "Darwin", reason="weakens the macOS profile")
+@pytest.mark.parametrize("weaken,caught", [
+    ("(allow network*)", "network"),
+    ("(allow file-read*)", "read_outside"),
+    ("(allow file-write*)", "write_outside"),
+    ("(allow process-info*)", "other_process_info"),
+])
+def test_the_probe_catches_a_weakened_sandbox(monkeypatch, weaken, caught):
+    real = HS._seatbelt_profile
+    monkeypatch.setattr(HS, "_seatbelt_profile", lambda job, writable: real(job, writable) + weaken + "\n")
+    monkeypatch.setattr(HS, "_PROVEN", {})
+    with pytest.raises(HS.SandboxUnavailable, match=caught):
+        HS.sandbox_mode()
+
+
+@pytest.mark.skipif(platform.system() != "Darwin", reason="reads another process through a macOS sysctl")
+def test_hook_cannot_read_another_processes_command_line_or_environment(tmp_path):
+    spec = _hook(tmp_path, f"""
+        import ctypes
+        def h(run):
+            libc = ctypes.CDLL(None, use_errno=True)
+            mib = (ctypes.c_int * 3)(1, 49, {os.getpid()})
+            size = ctypes.c_size_t(1 << 16); buf = ctypes.create_string_buffer(1 << 16)
+            if libc.sysctl(mib, 3, buf, ctypes.byref(size), None, 0) == 0 and size.value > 8:
+                return {{'reason': 'read it'}}
+            raise PermissionError('denied')
+        """)
+    r = _call(spec)
+    assert r.status == "not_run" and r.hook_reason is None, r.reason
+
+
+def test_bwrap_command_isolates_everything_and_binds_only_the_output_writable(tmp_path):
+    job = os.path.realpath(tmp_path / "job")
+    os.makedirs(os.path.join(job, "in"))
+    os.makedirs(os.path.join(job, "out"))
+    cmd = HS._bwrap_cmd("/usr/bin/bwrap", job)
+    for flag in ("--unshare-all", "--die-with-parent", "--new-session", "--clearenv"):
+        assert flag in cmd
+    assert "--share-net" not in cmd
+    writable = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--bind"]
+    assert writable == [os.path.join(job, "out")]
+    ro = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--ro-bind"]
+    home = os.path.realpath(os.path.expanduser("~"))
+    assert os.path.join(job, "in") in ro and job not in ro
+    assert all(p != "/" and not home.startswith(p.rstrip("/") + "/") and p != home for p in ro)

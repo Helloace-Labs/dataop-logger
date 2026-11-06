@@ -34,8 +34,36 @@ def _numpy(np_dir: str):
                                                 submodule_search_locations=[np_dir])
     mod = importlib.util.module_from_spec(sp)
     sys.modules["numpy"] = mod
-    sp.loader.exec_module(mod)
+    threads = ("OPENBLAS_NUM_THREADS", "OMP_NUM_THREADS", "MKL_NUM_THREADS")
+    for k in threads:                                 # one BLAS thread keeps memory small under RLIMIT_AS
+        os.environ[k] = "1"
+    try:
+        sp.loader.exec_module(mod)
+    finally:
+        for k in threads:                             # the hook still sees an empty environment
+            os.environ.pop(k, None)
     return mod
+
+
+def _other_process_info(pid: int) -> str:
+    """Try to read another process's command line and environment: /proc on Linux, KERN_PROCARGS2 on macOS."""
+    if sys.platform.startswith("linux"):
+        try:
+            with open(f"/proc/{pid}/environ", "rb") as f:
+                return "allowed" if f.read(1) else "denied: empty"
+        except OSError as e:
+            return f"denied: {e.errno}"
+    try:
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        mib = (ctypes.c_int * 3)(1, 49, pid)                 # CTL_KERN, KERN_PROCARGS2
+        size = ctypes.c_size_t(1 << 16)
+        buf = ctypes.create_string_buffer(1 << 16)
+        if libc.sysctl(mib, 3, buf, ctypes.byref(size), None, 0) == 0 and size.value > 8:
+            return "allowed"
+        return f"denied: {ctypes.get_errno()}"
+    except Exception as e:                                  # noqa: BLE001 - no ctypes means no way in either
+        return f"denied: {type(e).__name__}"
 
 
 def _probe(job: str, done: list) -> None:
@@ -66,6 +94,7 @@ def _probe(job: str, done: list) -> None:
         out["other_process"] = "allowed"
     except OSError as e:
         out["other_process"] = f"denied: {e.errno}"
+    out["other_process_info"] = _other_process_info(int(open(os.path.join(job, "in", "parent")).read()))
     sys.stdout.write(json.dumps(out))
     sys.stdout.flush()
     os._exit(4)
