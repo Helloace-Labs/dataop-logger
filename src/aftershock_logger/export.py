@@ -26,8 +26,11 @@ written with LeRobot's own writer (videos re-encoded, stats recomputed). `val` >
 
 A hook (`module:function` or a .py file path with `:function`) may change the selection for task-specific rules:
 it is called per run with a dict (manifest, effective review, ticks as numpy arrays, keep, action) and returns
-{"keep": bool[n]?, "action": float32[n, dim]?, "reason": str?}. The record stores the hook's file digest and a digest
-of what it returned.
+{"keep": bool[n]?, "action": float[n, dim]?, "reason": str?}. It never runs in this process: hook_sandbox.py runs it
+in a sandboxed child with no network, no environment, no other files and time and memory limits, and refuses to run
+it at all on a machine that cannot give that isolation. A hook that fails, times out, hits a limit or returns the
+wrong shape or dtype fails the export with the hook's name and the reason; it is never skipped. The record stores the
+hook spec, its file digest, the sandbox mode and limits, and a digest of what it returned.
 
 `dataop_export.json` in the output records the source batches and their locks, each run's review digest and data
 digests, the dataset lists digest, source LeRobot file digests, recipe and parameters, versions, per-run counts and
@@ -36,8 +39,6 @@ reasons, and a digest of the written data.
 from __future__ import annotations
 
 import hashlib
-import importlib
-import importlib.util
 import json
 import shutil
 import uuid
@@ -49,6 +50,7 @@ import pyarrow.parquet as pq
 
 from . import batches as B
 from . import events as ev
+from . import hook_sandbox as HS
 from . import lists as ls
 from . import review as rv
 from . import store
@@ -167,20 +169,15 @@ def spans(keep: np.ndarray, min_len: int = 1) -> list[tuple[int, int]]:
 
 
 def _load_hook(spec: str | None):
+    """Find and read the hook file and prove this machine can sandbox it. No hook code runs in this process."""
     if not spec:
-        return None, None
-    mod, _, fn = spec.rpartition(":")
-    if not mod or not fn:
-        raise ExportError("a hook is module:function or path/to/file.py:function")
-    if mod.endswith(".py"):
-        path = Path(mod).expanduser().resolve()
-        sp = importlib.util.spec_from_file_location(f"dataop_hook_{path.stem}", path)
-        module = importlib.util.module_from_spec(sp)
-        sp.loader.exec_module(module)
-    else:
-        module = importlib.import_module(mod)
-        path = Path(module.__file__)
-    return getattr(module, fn), store.sha256(path.read_bytes())
+        return None
+    try:
+        return HS.load(spec)
+    except HS.SandboxUnavailable as e:
+        raise ExportError(f"export refuses to run the code hook {spec}: {e}") from None
+    except (ValueError, OSError) as e:
+        raise ExportError(f"hook {spec}: {e}") from None
 
 
 # ── reading source frames (generic: any features, video or not) ───────────────
@@ -305,9 +302,11 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
            outcomes: list[str] | None = None, val: float = 0.0, min_span: int = 1, hook: str | None = None,
            allow_unlocked: bool = False, dry_run: bool = False, repo_id: str | None = None, by: str = "human",
            drop_features: list[str] | None = None, runs: list[str] | None = None,
-           runs_by_root: dict[str, list[str]] | None = None) -> dict:
+           runs_by_root: dict[str, list[str]] | None = None, hook_timeout_s: float = 60.0,
+           hook_memory_mb: int = 1024) -> dict:
     """runs limits every source to those run ids; runs_by_root limits each dataset (by resolved path) to its own
-    chosen ids, so copies of a dataset that share run ids stay apart."""
+    chosen ids, so copies of a dataset that share run ids stay apart. A hook runs once per run in a sandboxed child
+    (hook_sandbox.py) with hook_timeout_s and hook_memory_mb as its limits; any hook failure fails the export."""
     if recipe not in RECIPES:
         raise ExportError(f"recipe must be one of {RECIPES}")
     if not 0.0 <= val < 1.0:
@@ -322,7 +321,10 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
                 raise ExportError(f"{p} already exists; export never overwrites, pick a new folder")
     opts = {"with_success": with_success, "zero_on_success": zero_on_success, "segments": segments,
             "outcomes": outcomes, "min_span": min_span}
-    hook_fn, hook_sha = _load_hook(hook)
+    if not (hook_timeout_s > 0 and hook_memory_mb > 0):
+        raise ExportError("hook_timeout_s and hook_memory_mb must be positive")
+    hook_obj = _load_hook(hook)
+    hook_limits = HS.Limits(timeout_s=float(hook_timeout_s), memory_mb=int(hook_memory_mb))
     drop = tuple(drop_features or ())
     if "action" in drop:
         raise ExportError("the action feature cannot be dropped")
@@ -379,21 +381,17 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
     runs_out, hook_results = [], []
     for root, src, lists, b, p, m, s in plan_runs:
         keep, action, why = select(s, recipe, opts, lists)
-        if hook_fn is not None:
-            res = hook_fn({"manifest": m, "effective": s["effective"], "ticks": {k: s[k] for k in (
+        if hook_obj is not None:
+            res = HS.run_hook(hook_obj, {"manifest": m, "effective": s["effective"], "ticks": {k: s[k] for k in (
                 "base", "expert", "sent", "base_valid", "expert_valid", "safety_modified", "mode")},
-                "keep": keep.copy(), "action": action.copy(), "recipe": recipe}) or {}
-            if "keep" in res:
-                k2 = np.asarray(res["keep"], bool)
-                if k2.shape != keep.shape:
-                    raise ExportError(f"hook returned keep of shape {k2.shape} for run {m['run_id']}")
-                why["hook" + (f": {res['reason']}" if res.get("reason") else "")] = int((keep & ~k2).sum())
-                keep = k2
-            if "action" in res:
-                a2 = np.asarray(res["action"], np.float32)
-                if a2.shape != action.shape or not np.all(np.isfinite(a2[keep])):
-                    raise ExportError(f"hook returned bad actions for run {m['run_id']}")
-                action = a2
+                "keep": keep.copy(), "action": action.copy(), "recipe": recipe}, hook_limits)
+            if res.status != "ok":                    # not_run: the export fails, the hook is never skipped
+                raise ExportError(f"hook {hook} did not run for run {m['run_id']} ({res.reason})")
+            if res.keep is not None:
+                why["hook" + (f": {res.hook_reason}" if res.hook_reason else "")] = int((keep & ~res.keep).sum())
+                keep = res.keep
+            if res.action is not None:
+                action = res.action
             hook_results.append(store.sha256(keep.tobytes() + action.tobytes()))
         sp = spans(keep, min_span)
         dropped_short = int(keep.sum()) - sum(b_ - a for a, b_ in sp)
@@ -412,6 +410,9 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
                                             "runs": sorted(runs) if runs is not None else None,
                                             "runs_by_root": pick and {k: sorted(v) for k, v in sorted(pick.items())}},
               "sources": src_records, "dry_run": dry_run,
+              **({"hook": {"spec": hook, "file_sha256": hook_obj.file_sha256, "sandbox": hook_obj.mode,
+                           "limits": hook_limits.as_dict(), "results_sha256": store.json_sha256(hook_results)}}
+                 if hook_obj is not None else {}),
               "episodes": sum(len(r["spans"]) for r in runs_out) + (len(base_src.eps) if base_src is not None else 0),
               "frames": sum(r["kept"] for r in runs_out) +
                         (int(base_src.eps["length"].sum()) if base_src is not None else 0),
@@ -469,8 +470,7 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
     from .logger import _DATAOP_VERSION, _lerobot_version
     record = {**report, "export_id": export_id, "at": B._now(), "by": by, "written": written,
               "versions": {"dataop_logger": _DATAOP_VERSION, "lerobot": _lerobot_version()},
-              "hook": hook and {"spec": hook, "file_sha256": hook_sha,
-                                "results_sha256": store.json_sha256(hook_results)},
+              "hook": report.get("hook"),
               "split": val > 0 and {"method": "sha256(run_id)[:12] / 16^12 < val", "val": val}}
     regs = []
     for root, ref in sources:

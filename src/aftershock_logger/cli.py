@@ -162,7 +162,10 @@ def _main(argv=None) -> int:
     xp.add_argument("--outcomes", help="only runs with these outcomes, comma separated (success,failure,...)")
     xp.add_argument("--val", type=float, default=0.0, help="share of runs for a second dataset <into>_val")
     xp.add_argument("--min-span", type=int, default=1, help="drop kept stretches shorter than this many frames")
-    xp.add_argument("--hook", help="module:function or file.py:function for task-specific selection")
+    xp.add_argument("--hook", help="module:function or file.py:function for task-specific selection; it runs in a "
+                    "sandboxed child (no network, no secrets, only its inputs), and any failure fails the export")
+    xp.add_argument("--hook-timeout", type=float, default=60.0, help="seconds a hook may take per run")
+    xp.add_argument("--hook-memory-mb", type=int, default=1024, help="memory a hook may use per run")
     xp.add_argument("--drop-features", help="leave these features out, comma separated (to combine datasets)")
     xp.add_argument("--allow-unlocked", action="store_true", help="export a batch that is not locked (recorded)")
     xp.add_argument("--repo-id", help="repo id written into the new dataset's metadata")
@@ -186,7 +189,7 @@ def _main(argv=None) -> int:
                            base=a.base, segments=split(a.segments), outcomes=split(a.outcomes), val=a.val,
                            min_span=a.min_span, hook=a.hook, allow_unlocked=a.allow_unlocked, dry_run=a.dry_run,
                            repo_id=a.repo_id, by=a.by, drop_features=split(a.drop_features),
-                           runs=split(a.runs))
+                           runs=split(a.runs), hook_timeout_s=a.hook_timeout, hook_memory_mb=a.hook_memory_mb)
         except (X.ExportError, BatchError) as e:
             print(f"error: {e}", file=sys.stderr)
             return 2
