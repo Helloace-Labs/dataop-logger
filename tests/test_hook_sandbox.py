@@ -175,6 +175,22 @@ def test_hook_cannot_read_a_planted_secret_or_anything_outside_its_inputs(tmp_pa
 
 
 @needs_sandbox
+@pytest.mark.parametrize("where", ["/", "/tmp", "/dev", "/dev/shm", "{inp}/.."])
+def test_hook_cannot_store_anything_in_the_sandbox_itself(tmp_path, where):
+    """Not even in the sandbox's own root, /tmp or /dev: storage there would be bounded by no limit."""
+    spec = _hook(tmp_path, f"""
+        import os
+        def h(run):
+            d = {where!r}.replace('{{inp}}', os.getcwd())
+            with open(os.path.join(d, 'aftershock-stored'), 'xb') as f:
+                f.write(b'x' * 1000)
+            return {{'reason': 'stored'}}
+        """)
+    r = _call(spec)
+    assert r.status == "not_run", r
+
+
+@needs_sandbox
 def test_hook_cannot_write_outside_or_start_or_signal_processes(tmp_path):
     target = tmp_path / "pwned.txt"
     spec = _hook(tmp_path, f"""
@@ -439,7 +455,8 @@ def test_bwrap_command_mounts_only_code_and_the_result_files(tmp_path, monkeypat
     assert [d for k, _, d in pairs if k == "--bind"] == [os.path.join(job, "out", f) for f in HS._RESULT_FILES]
     dests = [d for _, _, d in pairs]
     assert not any(d in ("/lib", "/usr", "/usr/lib", "/lib64") for d in dests)          # no whole library folders
-    assert "--tmpfs" not in cmd[cmd.index("/tmp") + 1:]                                  # no writable hiding mounts
+    assert "--tmpfs" not in cmd                                                          # no writable tmpfs at all
+    assert cmd[cmd.index("--seccomp") - 4:cmd.index("--seccomp")] == ["--remount-ro", "/dev", "--remount-ro", "/"]
     std, npd = rt["dirs"]
     assert dests.index(std) < dests.index(npd) or not nested
     src = {d: s_ for _, s_, d in pairs}

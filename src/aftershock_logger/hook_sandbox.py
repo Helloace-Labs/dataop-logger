@@ -412,7 +412,7 @@ def _bwrap_cmd(bwrap: str, job: str, seccomp_fd: int | None = None) -> list[str]
     _check_paths(libs)
     mirror = _mirror(rt["dirs"], rt["hidden"], tuple(sorted({*libs, *rt["files"]})), tuple(links), tuple(folders))
     cmd = [bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--cap-drop", "ALL",
-           "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
+           "--proc", "/proc", "--dev", "/dev"]                    # no /tmp: the job folder is mounted on its own
     if os.path.isfile("/etc/ld.so.cache"):                        # where the loader looks a library up
         cmd += ["--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache"]
     for f in folders:                                             # empty folders the loader walks through
@@ -432,6 +432,10 @@ def _bwrap_cmd(bwrap: str, job: str, seccomp_fd: int | None = None) -> list[str]
     cmd += ["--ro-bind", inp, inp, "--ro-bind", out, out]         # no new files in the output folder
     for f in _RESULT_FILES:                                       # only the precreated result files are writable
         cmd += ["--bind", os.path.join(out, f), os.path.join(out, f)]
+    # bwrap builds its root and /dev on writable tmpfs; once every mount is in place both turn read only, so the hook
+    # can store nothing there (tmpfs pages are bounded by neither RLIMIT_AS nor RLIMIT_FSIZE). The result file
+    # binds are mounts of their own and stay writable; device nodes such as /dev/null work on a read-only mount.
+    cmd += ["--remount-ro", "/dev", "--remount-ro", "/"]
     if seccomp_fd is not None:
         cmd += ["--seccomp", str(seccomp_fd)]
     cmd += ["--chdir", inp, exe]

@@ -76,12 +76,16 @@ def _probe(job: str, done: list) -> None:
         out["read_outside"] = "allowed"
     except OSError as e:
         out["read_outside"] = f"denied: {e.errno}"
-    try:
-        with open(os.path.join(job, "written"), "wb") as f:
-            f.write(b"x")
-        out["write_outside"] = "allowed"
-    except OSError as e:
-        out["write_outside"] = f"denied: {e.errno}"
+    wrote, errs = [], []
+    for target in (os.path.join(job, "written"), "/aftershock-probe", "/tmp/aftershock-probe",
+                   "/dev/aftershock-probe", "/dev/shm/aftershock-probe"):
+        try:                                          # beside the job, and every place a sandbox root could hold
+            with open(target, "xb") as f:
+                f.write(b"x")
+            wrote.append(target)
+        except OSError as e:
+            errs.append(e.errno)
+    out["write_outside"] = f"allowed: {wrote}" if wrote else f"denied: {errs}"
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         s.settimeout(2)
@@ -143,6 +147,7 @@ def _probe(job: str, done: list) -> None:
 
 def main() -> None:
     job, np_dir, lim = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+    os.environ.pop("PWD", None)                       # bubblewrap sets PWD to the input folder after --clearenv
     try:
         done = _limits(lim)
         os.closerange(3, 1 << 16)
