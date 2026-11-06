@@ -18,3 +18,9 @@ Items 1, 4, 5 and 6 confirmed.
 | Item | Severity | Decision | What changed |
 | --- | --- | --- | --- |
 | 8 (race) | Medium | Changed | Stop publication is serialized by one lock (`_stop_lock`, memory only, no file work inside): the detection claim, the status assignment and the event append happen together, and publishing where the frames went also marks the run as seen, so a late detection is never published after or over the final state. Test: `test_a_late_detection_never_lands_after_or_over_the_final_stop` (the detection paused after its claim while the final state is published). |
+
+## Third confirmation (`round1_confirm3_codex.md`)
+
+| Item | Severity | Decision | What changed |
+| --- | --- | --- | --- |
+| 8 (lock) | Medium | Changed | The quarantine path is made relative to the root before the lock is taken; `_stop_update` under `_stop_lock` only builds the status dict and appends the event. |

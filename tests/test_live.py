@@ -927,11 +927,11 @@ def test_a_late_detection_never_lands_after_or_over_the_final_stop(tmp_path):
                                      quarantine_path=ds.root / "dataop" / "quarantine" / "r-1")
         real, entered, gate = tap._stop_update, threading.Event(), threading.Event()
 
-        def paused(r, s, phase):
+        def paused(r, s, phase, rel=None):
             if phase == "detected":
                 entered.set()
                 gate.wait(5)
-            real(r, s, phase)
+            real(r, s, phase, rel)
         tap._stop_update = paused
         t = threading.Thread(target=tap.stop_seen, args=(run, stop))
         t.start()

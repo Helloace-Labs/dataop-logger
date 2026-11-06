@@ -532,21 +532,21 @@ class LiveTap:
         """Where the stopped run's frames went: after the quarantine write, a retry or a spill."""
         q = getattr(stop, "quarantine_path", None)
         phase = "spilled" if getattr(stop, "spilled", False) else "quarantined" if q is not None else "not_written"
+        rel = None
+        if q is not None and phase == "quarantined":           # path work before the lock, never inside it
+            try:
+                rel = str(Path(q).resolve().relative_to(self.root.resolve()))
+            except (ValueError, OSError, AttributeError):
+                rel = None                                     # outside the dataset: no path is shown
         with self._stop_lock:
             self._stop_seen_for = run.run_id                   # a late detection is not published after this
-            self._stop_update(run, stop, phase)
+            self._stop_update(run, stop, phase, rel)
 
-    def _stop_update(self, run, stop, phase: str) -> None:
+    def _stop_update(self, run, stop, phase: str, rel: str | None = None) -> None:
+        """Memory only (called under _stop_lock): the stop's status and its event."""
         try:
             if self._closing or self._dead:
                 return
-            q = getattr(stop, "quarantine_path", None) if phase != "detected" else None
-            rel = None
-            if q is not None and phase == "quarantined":
-                try:
-                    rel = str(Path(q).resolve().relative_to(self.root.resolve()))
-                except ValueError:
-                    rel = None                                 # outside the dataset: no path is shown
             self.stop = {"run_id": run.run_id, "reason": stop.reason, "detail": stop.detail, "frames": stop.frames,
                          "phase": phase, "quarantine": rel, "quarantine_written": phase in ("quarantined", "spilled"),
                          "at": _now_iso()}
