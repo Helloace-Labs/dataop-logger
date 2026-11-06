@@ -26,7 +26,9 @@ def _available() -> str | None:
 
 
 MODE = _available()
-needs_sandbox = pytest.mark.skipif(MODE is None and platform.system() != "Darwin",
+# CI sets this on a machine that must have a working sandbox, so the sandboxed tests can never skip there
+REQUIRED = os.environ.get("AFTERSHOCK_REQUIRE_HOOK_SANDBOX") == "1"
+needs_sandbox = pytest.mark.skipif(MODE is None and platform.system() != "Darwin" and not REQUIRED,
                                    reason="no hook sandbox on this machine (export refuses hooks here; see "
                                           "test_no_sandbox_means_export_refuses_the_hook)")
 
@@ -34,6 +36,40 @@ needs_sandbox = pytest.mark.skipif(MODE is None and platform.system() != "Darwin
 def test_macos_always_has_a_proven_sandbox():
     if platform.system() == "Darwin":
         assert MODE == "macos-seatbelt"
+
+
+def test_a_required_sandbox_is_present_and_proven():
+    if not REQUIRED:
+        pytest.skip("AFTERSHOCK_REQUIRE_HOOK_SANDBOX is not set")
+    try:
+        mode = HS.sandbox_mode()
+    except HS.SandboxUnavailable as e:
+        pytest.fail(f"the sandbox is required here but unavailable: {e}")
+    assert mode == ("macos-seatbelt" if platform.system() == "Darwin" else "linux-bwrap")
+
+
+@pytest.mark.skipif(platform.system() != "Linux" or not REQUIRED, reason="the real Linux runtime, in CI")
+def test_real_linux_runtime_has_the_loader_spellings_and_hooks_run_through_them(tmp_path):
+    """On the CI runner (merged /usr, numpy wheel with numpy.libs) the loader asks for the ELF interpreter under the
+    symlinked /lib64 and for numpy's bundled libraries through `..`. Both spellings must be present here, so the
+    sandboxed hook tests really go through them, and a hook that imports numpy must run."""
+    import re
+    rt = HS._runtime()
+    exts = [os.path.join(d, rel, f) for d in rt["dirs"] for rel, f in HS._code_files(rt["dirs"], rt["hidden"], d)
+            if f and re.search(r"\.so(\.[0-9]+)*$", f)]
+    raw = HS._shared_libs([os.path.realpath(sys.executable), *rt["files"][1:], *exts])
+    links, _ = HS._folder_links(raw)
+    assert any(link in ("/lib64", "/lib") for link, _ in links), (links, raw)
+    assert any("/../" in p for p in raw), raw
+    spec = _hook(tmp_path, """
+        def h(run):
+            a = run['ticks']['expert']
+            a = (a @ np.linalg.inv(np.eye(3) * 2.0)).astype(np.float32)   # the bundled BLAS, through its .. path
+            return {'keep': run['keep'], 'action': a, 'reason': 'blas'}
+        """)
+    r = _call(spec)
+    assert r.status == "ok", r.reason
+    assert np.allclose(r.action, 0.5)
 
 
 def _hook(tmp_path, body: str, name: str = "hook.py") -> str:
