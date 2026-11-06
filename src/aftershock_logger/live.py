@@ -101,7 +101,7 @@ class _Scrub:
                     obj = obj.replace(path, repl)
             return obj
         if isinstance(obj, dict):
-            return {k: self(v) for k, v in obj.items()}
+            return {self(k) if isinstance(k, str) else k: self(v) for k, v in obj.items()}   # keys too
         if isinstance(obj, (list, tuple)):
             return [self(v) for v in obj]
         return obj
@@ -139,6 +139,15 @@ def _vector(v) -> list | None:
         v = v.detach().cpu().numpy()
     a = np.asarray(v, dtype=np.float64).reshape(-1)
     return [float(x) if math.isfinite(x) else None for x in a.tolist()]
+
+
+def _own_state(v):
+    """An owned copy of observation.state, so a caller that reuses its array or tensor cannot change the snapshot."""
+    if v is None:
+        return None
+    if hasattr(v, "detach") and hasattr(v, "cpu"):
+        return v.detach().cpu().numpy().copy()
+    return np.array(v, dtype=np.float64, copy=True).reshape(-1)
 
 
 def _image_hw(v) -> tuple[int, int] | None:
@@ -221,6 +230,7 @@ class LiveTap:
         except Exception as e:                                 # noqa: BLE001 (never in the way of recording)
             self._dead = True                                  # every hook returns at once from now on
             self._fail(e)
+            self._warn()
             return
         self._thread = threading.Thread(target=self._loop, name="aftershock-live-tap", daemon=True)
         self._thread.start()
@@ -249,13 +259,22 @@ class LiveTap:
         self.high = None if schema.high is None else np.asarray(schema.high, np.float32)
         self.state_names = _state_names(logger.dataset)
         self.image_keys = _image_keys(logger.dataset)
-        self.cam_names = {k: camera_name(k) for k in self.image_keys}
+        # Camera ids for status keys and preview file names: cleaned of private names, unique.
+        self.cam_given = {k: camera_name(k) for k in self.image_keys}         # what a caller's camera_ns may use
+        self.cam_names = {}
+        for k in self.image_keys:
+            cam = camera_name(self.scrub(self.cam_given[k]))
+            n, base = 2, cam
+            while cam in self.cam_names.values():
+                cam, n = f"{base}_{n}", n + 1
+            self.cam_names[k] = cam
         # snapshot, written by the caller's thread, read by the tap thread
         self.run = None                     # dict for the run in progress, else None
         self.last_run = None
         self.stop = None                    # the latest controlled stop
-        self.state_value = None
-        self.cameras: dict[str, dict] = {}
+        self._snap = None                   # the last frame's values, replaced whole by each frame
+        self._rec = self._new_rec()         # REC-04 and REC-05 counts of the run, replaced whole on each change
+        self.cameras: dict[str, dict] = {}  # per camera its image size, replaced whole when a camera is first seen
         self.queue_ref = None
         self._mode = None                   # (control_mode, expert_source) of the last frame
         self._cam_state: dict[str, dict] = {}  # REC-04 per camera -> {last_ns, last_frame, open_from}
@@ -274,20 +293,41 @@ class LiveTap:
     # ── caller's thread ──────────────────────────────────────────────────────
 
     def _fail(self, e: BaseException) -> None:
-        """Turn the tap off until the next run starts, warn once, and leave error.json for the reader."""
-        msg = f"{type(e).__name__}: {e}"
-        self.failed = msg
-        if not self._warned:
-            self._warned = True
-            warnings.warn(f"aftershock-logger live tap stopped ({msg}); recording continues", RuntimeWarning,
-                          stacklevel=2)
-        self._wake.set()
+        """Turn the tap off until the next run starts. Nothing here can raise or write: the tap thread warns once
+        (a warning filter set to raise cannot reach the caller) and leaves error.json for the reader."""
+        try:
+            self.failed = f"{type(e).__name__}: {e}"
+            self._wake.set()
+        except BaseException:                                  # noqa: BLE001
+            pass
+
+    def _warn(self) -> None:
+        """Tap thread only: one warning per failure, never raised further."""
+        if self._warned:
+            return
+        self._warned = True
+        try:
+            warnings.warn(f"aftershock-logger live tap stopped ({self.failed}); recording continues",
+                          RuntimeWarning, stacklevel=2)
+        except BaseException:                                  # noqa: BLE001 (warnings configured as errors)
+            pass
 
     def _event(self, rec: dict) -> None:
         if len(self._pending) >= PENDING_MAX:                  # the tap thread is not keeping up: drop the oldest
             self._pending.popleft()
             self._dropped += 1
         self._pending.append(rec)
+
+    @staticmethod
+    def _new_rec() -> dict:
+        return {"REC-04": {"gaps": 0, "frames_missed": 0, "open": []},
+                "REC-05": {"frames": 0, "spans": 0, "open": False}}
+
+    def _set_rec(self, check: str, **changes) -> None:
+        """Counters are replaced, never changed in place, so the tap thread always reads one whole version."""
+        rec = dict(self._rec)
+        rec[check] = {**rec[check], **changes}
+        self._rec = rec
 
     def run_started(self, run) -> None:
         try:
@@ -299,18 +339,17 @@ class LiveTap:
                 self._files_ready = False
             now = time.monotonic_ns()
             pol = run.policy
-            self.run = {"run_id": run.run_id, "task": run.task, "task_id": run.task_id, "task_rev": run.task_rev,
-                        "policy": _plain(pol), "planner": _plain(run.planner), "episode_index": run.episode_index,
-                        "started_at": run.started_at, "start_ns": now, "obs_ns": None, "frames": 0, "frame": -1,
-                        "control_mode": None, "expert_source": None, "prompt": None, "subtask_cmd": None,
-                        "state": "active", "termination_reason": None, "task_success": None, "rec": {"REC-04": {"gaps": 0, "frames_missed": 0, "open": []},
-                                                   "REC-05": {"frames": 0, "spans": 0, "open": False}}}
+            self._snap = None
+            self._rec = self._new_rec()
             self.stop = None
-            self.state_value = None
             self.queue_ref = None
             self._mode = None
             self._cam_state = {}
             self._rec05_open = None
+            self.run = {"run_id": run.run_id, "task": run.task, "task_id": run.task_id, "task_rev": run.task_rev,
+                        "policy": _plain(pol), "planner": _plain(run.planner), "episode_index": run.episode_index,
+                        "started_at": run.started_at, "start_ns": now, "state": "active",
+                        "termination_reason": None, "task_success": None}
             self._event({"kind": "run_start", "run_id": run.run_id, "task": run.task, "task_id": run.task_id,
                          "policy": _plain(pol), "planner": _plain(run.planner), "episode_index": run.episode_index,
                          "started_at": run.started_at, "ns": now})
@@ -319,8 +358,9 @@ class LiveTap:
             self._fail(e)
 
     def frame(self, run, frame: dict, row: dict, camera_ns=None) -> None:
-        """One accepted frame. O(1) in the run's length: a few field updates, a bounds test on the action and, only
-        when a preview frame is due, one image copy."""
+        """One accepted frame. O(1) in the run's length: one new snapshot (frame, mode, prompt, an owned copy of the
+        joint state, each camera's time), a bounds test on the action and, only when a preview frame is due, one
+        image copy. The snapshot is published by one assignment, so the tap thread reads one frame's values."""
         if self.failed is not None or self._closing or self._dead:
             return
         try:
@@ -329,71 +369,66 @@ class LiveTap:
                 return
             i = row["frame_index"]
             obs_ns = row["obs_ns"]
-            r["frame"], r["frames"] = i, i + 1
-            r["obs_ns"] = obs_ns
             mode = (row["control_mode"], row["expert_source"])
             if mode != self._mode:
                 self._event({"kind": "control_mode", "run_id": run.run_id, "frame": i, "control_mode": mode[0],
                              "expert_source": mode[1],
                              "previous": None if self._mode is None else self._mode[0], "obs_ns": obs_ns})
                 self._mode = mode
-                r["control_mode"], r["expert_source"] = mode
                 self._wake.set()
-            r["prompt"], r["subtask_cmd"] = row.get("prompt"), row.get("subtask_cmd")
-            s = frame.get(STATE_KEY)
-            self.state_value = s.copy() if isinstance(s, np.ndarray) else s
-            if self._run_queue_missing(run):
+            if self.queue_ref is None and run._queue is not None:
                 self.queue_ref = run._queue
             self._rec05(run, row, i)
-            if self.image_keys:
-                self._cameras(run, frame, i, obs_ns, camera_ns)
+            cams = self._cameras(run, frame, i, obs_ns, camera_ns) if self.image_keys else {}
+            self._snap = {"run_id": run.run_id, "frame": i, "frames": i + 1, "control_mode": mode[0],
+                          "expert_source": mode[1], "prompt": row.get("prompt"), "subtask_cmd": row.get("subtask_cmd"),
+                          "state": _own_state(frame.get(STATE_KEY)), "cams": cams}
         except Exception as e:                                 # noqa: BLE001
             self._fail(e)
-
-    def _run_queue_missing(self, run) -> bool:
-        return self.queue_ref is None and run._queue is not None
 
     def _rec05(self, run, row, i) -> None:
         if self.low is None:
             return
         a = row["sent_action"]
         out = bool((a < self.low).any() or (a > self.high).any())
-        rec = self.run["rec"]["REC-05"]
+        rec = self._rec["REC-05"]
         if out:
-            rec["frames"] += 1
             if self._rec05_open is None:
                 self._rec05_open = i
-                rec["spans"] += 1
-                rec["open"] = True
+                self._set_rec("REC-05", frames=rec["frames"] + 1, spans=rec["spans"] + 1, open=True)
                 bad = [self.schema_info["names"][k] for k in np.flatnonzero((a < self.low) | (a > self.high))]
                 self._event({"kind": "rec_result", "check_id": "REC-05", "result": "warn", "state": "open",
                              "run_id": run.run_id, "frames": [i, None], "dims": bad,
                              "message": f"frame {i} sent a command out of the action schema's bounds "
                                         f"({', '.join(bad)}); kept as sent and flagged"})
                 self._wake.set()
+            else:
+                self._set_rec("REC-05", frames=rec["frames"] + 1)
         elif self._rec05_open is not None:
             start, self._rec05_open = self._rec05_open, None
-            rec["open"] = False
+            self._set_rec("REC-05", open=False)
             self._event({"kind": "rec_result", "check_id": "REC-05", "result": "warn", "state": "closed",
                          "run_id": run.run_id, "frames": [start, i],
                          "message": f"{i - start} frames from frame {start} sent a command out of reach; flagged"})
             self._wake.set()
 
-    def _cameras(self, run, frame, i, obs_ns, camera_ns) -> None:
+    def _cameras(self, run, frame, i, obs_ns, camera_ns) -> dict:
         interval = self.preview_interval_ns
+        times = {}
         for key in self.image_keys:
             v = frame.get(key)
             if v is None:
                 continue
             cam = self.cam_names[key]
-            got = camera_ns.get(cam, camera_ns.get(key)) if camera_ns else None
+            got = None
+            if camera_ns:
+                got = camera_ns.get(self.cam_given[key], camera_ns.get(key))
             t = int(got) if isinstance(got, (int, np.integer)) and not isinstance(got, bool) else obs_ns
-            info = self.cameras.get(cam)
-            if info is None:
+            if cam not in self.cameras:
                 hw = _image_hw(v)
-                info = self.cameras[cam] = {"key": key, "height": hw[0] if hw else None,
-                                            "width": hw[1] if hw else None}
-            info["last_ns"], info["frame"] = t, i
+                self.cameras = {**self.cameras, cam: {"height": hw[0] if hw else None,
+                                                      "width": hw[1] if hw else None}}
+            times[cam] = (t, i)
             if camera_ns is not None:
                 self._rec04(run, cam, t, i, obs_ns)
             if interval is not None and obs_ns >= self._preview_due.get(cam, 0):
@@ -401,12 +436,13 @@ class LiveTap:
                 self._preview_slots[cam] = (_copy_image(v), i, obs_ns)
                 self.copies += 1
                 self._wake.set()
+        return times
 
     def _rec04(self, run, cam, t, i, obs_ns) -> None:
         """A camera whose capture time stops moving for more than GAP_PERIODS frame periods has a gap, opened at once
         and closed (with the frames it missed) when a new frame arrives. Needs camera_ns from the caller."""
         st = self._cam_state.get(cam)
-        rec = self.run["rec"]["REC-04"]
+        rec = self._rec["REC-04"]
         if st is None:
             self._cam_state[cam] = {"last_ns": t, "last_frame": i, "open_from": None}
             return
@@ -414,9 +450,8 @@ class LiveTap:
             if st["open_from"] is not None:
                 start = st["open_from"]
                 seconds = max(0.0, (t - st["last_ns"] - self.period_ns) / 1e9)   # as REC-04: the step less a period
-                missed = max(1, i - start)
-                rec["frames_missed"] += missed
-                rec["open"] = [c for c in rec["open"] if c != cam]
+                self._set_rec("REC-04", frames_missed=rec["frames_missed"] + max(1, i - start),
+                              open=[c for c in rec["open"] if c != cam])
                 review = seconds > LONG_GAP_S
                 self._event({"kind": "rec_result", "check_id": "REC-04", "result": "warn", "state": "closed",
                              "run_id": run.run_id, "camera": cam, "frames": [start, i], "seconds": round(seconds, 3),
@@ -427,8 +462,7 @@ class LiveTap:
             st.update(last_ns=t, last_frame=i, open_from=None)
         elif st["open_from"] is None and obs_ns - st["last_ns"] > GAP_PERIODS * self.period_ns:
             st["open_from"] = st["last_frame"] + 1
-            rec["gaps"] += 1
-            rec["open"] = sorted(set(rec["open"]) | {cam})
+            self._set_rec("REC-04", gaps=rec["gaps"] + 1, open=sorted(set(rec["open"]) | {cam}))
             self._event({"kind": "rec_result", "check_id": "REC-04", "result": "warn", "state": "open",
                          "run_id": run.run_id, "camera": cam, "frames": [st["open_from"], None],
                          "message": f"{cam} camera has sent no new frame since frame {st['last_frame']}"})
@@ -441,9 +475,8 @@ class LiveTap:
             if r is None or r["run_id"] != run.run_id or self._closing or self._dead:
                 return
             end = run._end or {}
-            r["state"] = "staged"
-            r["termination_reason"] = end.get("termination_reason")
-            r["task_success"] = end.get("task_success")
+            self.run = {**r, "state": "staged", "termination_reason": end.get("termination_reason"),
+                        "task_success": end.get("task_success")}
             self._event({"kind": "run_end", "run_id": run.run_id, "frames": len(run._rows),
                          "termination_reason": end.get("termination_reason"), "task_success": end.get("task_success"),
                          "failure_mode": end.get("failure_mode"), "ended_at": run.ended_at, "ns": time.monotonic_ns()})
@@ -458,37 +491,51 @@ class LiveTap:
             if r is None or r["run_id"] != run.run_id or self._closing or self._dead:
                 return
             end = run._end or {}
+            snap = self._snap
+            frames = snap["frames"] if snap and snap["run_id"] == run.run_id else 0
             if r["state"] == "active":                         # no run_end yet: say how the run ended
-                self._event({"kind": "run_end", "run_id": run.run_id, "frames": r["frames"],
+                self._event({"kind": "run_end", "run_id": run.run_id, "frames": frames,
                              "termination_reason": end.get("termination_reason"),
                              "task_success": end.get("task_success"), "failure_mode": end.get("failure_mode"),
                              "ended_at": run.ended_at or _now_iso(), "ns": time.monotonic_ns()})
             self._event({"kind": "run_state", "run_id": run.run_id, "state": state, "ns": time.monotonic_ns()})
-            self.last_run = {"run_id": run.run_id, "state": state, "frames": r["frames"],
+            self.last_run = {"run_id": run.run_id, "state": state, "frames": frames,
                              "termination_reason": end.get("termination_reason"),
                              "task_success": end.get("task_success"), "failure_mode": end.get("failure_mode"),
                              "started_at": r["started_at"], "ended_at": run.ended_at or _now_iso(),
-                             "rec": r["rec"]}
+                             "rec": self._rec}
             self.run = None
+            self._snap = None
             self.queue_ref = None
             self._preview_slots.clear()
             self._wake.set()
         except Exception as e:                                 # noqa: BLE001
             self._fail(e)
 
+    def stop_seen(self, run, stop) -> None:
+        """The caller has just been told of a ControlledStop (before the writer wait and the quarantine write)."""
+        self._stop_update(run, stop, "detected")
+
     def controlled_stop(self, run, stop) -> None:
+        """Where the stopped run's frames went: after the quarantine write, a retry or a spill."""
+        q = getattr(stop, "quarantine_path", None)
+        phase = "spilled" if getattr(stop, "spilled", False) else "quarantined" if q is not None else "not_written"
+        self._stop_update(run, stop, phase)
+
+    def _stop_update(self, run, stop, phase: str) -> None:
         try:
             if self._closing or self._dead:
                 return
-            q = getattr(stop, "quarantine_path", None)
+            q = getattr(stop, "quarantine_path", None) if phase != "detected" else None
             rel = None
-            if q is not None:
+            if q is not None and phase == "quarantined":
                 try:
                     rel = str(Path(q).resolve().relative_to(self.root.resolve()))
                 except ValueError:
-                    rel = None                                 # spilled outside the dataset: no path is shown
+                    rel = None                                 # outside the dataset: no path is shown
             self.stop = {"run_id": run.run_id, "reason": stop.reason, "detail": stop.detail, "frames": stop.frames,
-                         "quarantine": rel, "quarantine_written": q is not None, "at": _now_iso()}
+                         "phase": phase, "quarantine": rel, "quarantine_written": phase in ("quarantined", "spilled"),
+                         "at": _now_iso()}
             self._event({"kind": "controlled_stop", **self.stop, "ns": time.monotonic_ns()})
             self._wake.set()
         except Exception as e:                                 # noqa: BLE001
@@ -544,6 +591,7 @@ class LiveTap:
         if failed is None or self._error_written == failed:
             return
         self._error_written = failed
+        self._warn()
         self.preview_interval_ns = None
         self._preview_slots.clear()
         try:
@@ -627,34 +675,36 @@ class LiveTap:
         return True
 
     def _status(self, closed: bool) -> dict:
-        r = self.run
-        run = None
+        r, snap, rec = self.run, self._snap, self._rec          # each read once: whole objects, never half updated
+        run = joint = None
+        cams = {}
         if r is not None:
-            run = dict(r)                                      # one C-level copy: the caller's thread may write r
+            run = dict(r)
             start = run.pop("start_ns")
-            run.pop("obs_ns", None)
             run["elapsed_s"] = round((time.monotonic_ns() - start) / 1e9, 3)
-            run["rec"] = {k: dict(v) for k, v in dict(run["rec"]).items()}
+            run["rec"] = rec
+            mine = snap is not None and snap["run_id"] == r["run_id"]
+            for k in ("frame", "frames", "control_mode", "expert_source", "prompt", "subtask_cmd"):
+                run[k] = snap[k] if mine else ({"frame": -1, "frames": 0}.get(k))
+            joint = {"key": STATE_KEY, "names": self.state_names, "values": _vector(snap["state"]) if mine else None}
+            sizes = self.cameras
+            for cam, (t, i) in (snap["cams"].items() if mine else ()):
+                cams[cam] = {**sizes.get(cam, {}), "last_ns": t, "frame": i}
         q = self.queue_ref
         queue = None
         if q is not None:
             queue = {"depth": len(q._items), "capacity": q.capacity, "max_depth": q.max_depth}
         interval = self.preview_interval_ns
-        status = {
+        return {
             "live_format": LIVE_FORMAT, "seq": self.status_seq + 1, "pid": self.pid, "at_ns": time.monotonic_ns(),
             "at": _now_iso(), "closed": bool(closed), "writer": "aftershock-logger",
             "last_event_seq": self.event_seq, "run": run, "last_run": self.last_run,
-            "joint_state": None if r is None else {"key": STATE_KEY, "names": self.state_names,
-                                                   "values": _vector(self.state_value)},
-            "action_schema": self.schema_info,
-            "cameras": {c: dict(info) for c, info in list(self.cameras.items())} if r is not None else {},
-            "queue": queue,
+            "joint_state": joint, "action_schema": self.schema_info, "cameras": cams, "queue": queue,
             "controlled_stop": self.stop,
             "preview": {"active": interval is not None,
                         "interval_s": None if interval is None else interval / 1e9,
                         "frames": dict(self._preview_files)},
         }
-        return status
 
     def _write_status(self, closed: bool) -> None:
         body = json.dumps(self.scrub(self._status(closed)), default=str) + "\n"
@@ -698,9 +748,10 @@ class LiveTap:
         pdir = self.dir / PREVIEW_DIR
         pdir.mkdir(exist_ok=True)
         for cam in list(self._preview_slots):
-            img, frame, ns = self._preview_slots.pop(cam)
-            if self.preview_interval_ns is None:               # the request lapsed meanwhile
+            slot = self._preview_slots.pop(cam, None)          # the run may have ended and cleared the slots
+            if slot is None or self.preview_interval_ns is None:
                 continue
+            img, frame, ns = slot
             data = encode_preview(img)
             self.encodes += 1
             _write_atomic(pdir / f"{cam}.jpg", data)
@@ -774,16 +825,30 @@ def read_error(root) -> dict | None:
     return d if isinstance(d, dict) else None
 
 
+def _ident(path: Path):
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    return st.st_dev, st.st_ino
+
+
 def read_events(root, after_seq: int = 0, limit: int | None = None) -> list[dict]:
     """Event records with seq > after_seq, in seq order, from events.1.jsonl and events.jsonl.
 
-    When records after after_seq are gone (rotated past), the list starts with {"kind": "gap", "from_seq", "to_seq"}.
-    When the files hold no seq as high as after_seq (they were removed and a writer started over), the list is
-    [{"kind": "reset", "last_seq"}], and the reader should start again from 0. A torn last line is not returned; it
-    is read once it is whole."""
+    The two files are read again when events.jsonl was replaced while they were read (a rotation in between), so a
+    rotation never hides records. Records are taken once per seq. Wherever records the reader has not seen are gone
+    (rotated past), a {"kind": "gap", "from_seq", "to_seq"} record stands in their place. When the files hold no seq
+    as high as after_seq (they were removed and a writer started over), the list is [{"kind": "reset", "last_seq"}],
+    and the reader should start again from 0. A torn last line is not returned; it is read once it is whole."""
     d = live_dir(root)
-    first, last, recs = None, 0, []
-    for part in (_read_lines(d / EVENTS_OLD), _read_lines(d / EVENTS)):
+    for _ in range(5):
+        before = _ident(d / EVENTS)
+        parts = (_read_lines(d / EVENTS_OLD), _read_lines(d / EVENTS))
+        if _ident(d / EVENTS) == before:
+            break
+    first, last, by_seq = None, 0, {}
+    for part in parts:
         for rec in part:
             if rec.get("kind") == "file_start":
                 v = rec.get("first_seq")
@@ -795,13 +860,17 @@ def read_events(root, after_seq: int = 0, limit: int | None = None) -> list[dict
             if isinstance(v, int) and not isinstance(v, bool):
                 first = v if first is None else min(first, v)
                 last = max(last, v)
-                recs.append(rec)
+                by_seq.setdefault(v, rec)
     if first is None:
         return []
     if last < after_seq:
         return [{"kind": "reset", "last_seq": last}]
-    recs.sort(key=lambda r: r["seq"])
-    out = [r for r in recs if r["seq"] > after_seq]
-    if first > after_seq + 1:
-        out.insert(0, {"kind": "gap", "from_seq": after_seq + 1, "to_seq": first - 1})
+    out, expect = [], after_seq + 1
+    for seq in sorted(k for k in by_seq if k > after_seq):
+        if seq > expect:
+            out.append({"kind": "gap", "from_seq": expect, "to_seq": seq - 1})
+        out.append(by_seq[seq])
+        expect = seq + 1
+    if not out and first > after_seq + 1:
+        out.append({"kind": "gap", "from_seq": after_seq + 1, "to_seq": first - 1})
     return out if limit is None else out[:limit]

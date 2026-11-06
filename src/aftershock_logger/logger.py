@@ -118,30 +118,43 @@ class RunLogger:
 
         A frame writer that timed out may still be inside LeRobot's add_frame and can still change the dataset's
         files. The lock is then kept until that thread returns (a background thread releases it), so no other
-        writer can open the dataset meanwhile, and the RunError says so."""
+        writer can open the dataset meanwhile, and the RunError says so. A live tap thread that has not finished
+        within its short close wait keeps the lock the same way, so it can never write over a newer writer's live
+        files; that case raises nothing."""
         problems = []
         try:
             if self._active is not None and self._active.state == "active":
                 self._active.discard()
         finally:
-            if self.live_tap is not None:
-                self.live_tap.close()                      # the last status says closed, before the lock goes
             stuck = [t for t in self._stuck_writers if t.is_alive()]
-            if not stuck:
-                self._lock.release()
+            if stuck:
+                problems.append(f"a frame writer is still inside LeRobot's add_frame, so {self._lock.path} stays "
+                                "locked until it returns (or this process ends); no other writer can open the "
+                                "dataset meanwhile")
+            problems += self._spill_unsaved()
+            tap_thread = None
+            if self.live_tap is not None:
+                self.live_tap.close()                  # the last status says closed, before the lock goes
+                t = self.live_tap._thread
+                tap_thread = t if t is not None and t.is_alive() else None
+            waiting = stuck + ([tap_thread] if tap_thread is not None else [])
+            if not waiting:
+                if not self._lock_handed_off:
+                    self._lock.release()
             elif not self._lock_handed_off:
                 self._lock_handed_off = True
                 lock = self._lock
 
                 def release_when_done():
-                    for t in stuck:
+                    for t in waiting:
                         t.join()
                     lock.release()
                 threading.Thread(target=release_when_done, name="dataop-lock-release", daemon=True).start()
-            if stuck:
-                problems.append(f"a frame writer is still inside LeRobot's add_frame, so {self._lock.path} stays "
-                                "locked until it returns (or this process ends); no other writer can open the "
-                                "dataset meanwhile")
+        if problems:
+            raise RunError("; ".join(problems))
+
+    def _spill_unsaved(self) -> list[str]:
+        problems = []
         for run in list(self._unsaved_runs):
             try:
                 run.retry_quarantine()
@@ -163,13 +176,13 @@ class RunLogger:
             if run._stop is not None:
                 run._stop.quarantine_path, run._stop.spilled = path, True
                 run._stop._settle()
+                run._live("controlled_stop", run._stop)
             hint = "" if self.spill_dir else (" (the default spill folder, usually on the same disk as the dataset; "
                                               "set spill_dir to a persistent folder on a different disk)")
             problems.append(f"run {run.run_id}: {len(rows)} frames could not be written to the dataset's quarantine "
                             f"({first}) and were spilled to {path}{hint}; move that folder to "
                             f"{store.quarantine_dir(self.root)} when there is space")
-        if problems:
-            raise RunError("; ".join(problems))
+        return problems
 
     def __enter__(self):
         return self
@@ -638,6 +651,7 @@ class Run:
         if self._stop is not None:
             self._stop.quarantine_path, self._stop.quarantine_error = self.quarantine_path, None
             self._stop._settle()
+            self._live("controlled_stop", self._stop)
         if self._blocks_logger:
             self.logger.broken = None
             self._blocks_logger = False

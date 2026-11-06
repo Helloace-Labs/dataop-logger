@@ -138,6 +138,9 @@ def test_realtime_replay_status_is_always_whole_and_events_miss_no_transition(tm
             except ValueError as e:
                 seen["bad"].append(str(e))
                 continue
+            r, js = d.get("run"), d.get("joint_state")
+            if r and js and js["values"] is not None and r["frame"] >= 0 and js["values"][0] != r["frame"]:
+                seen["bad"].append(f"frame {r['frame']} with joint state {js['values'][0]}")   # one frame's values
             if not seen["seqs"] or seen["seqs"][-1] != d["seq"]:
                 seen["seqs"].append(d["seq"])
                 seen["ats"].append((time.monotonic(), d["at_ns"], d["closed"]))
@@ -221,14 +224,43 @@ def test_status_carries_run_joint_state_schema_and_cameras(tmp_path):
 
 # ── 2. Cost on the caller's thread ──────────────────────────────────────────
 
-def _hook_costs(log):
-    """Wrap the tap's frame hook to time it: the tap's extra cost per add_frame or put."""
-    tap, real, costs = log.live_tap, log.live_tap.frame, []
+def _call_costs(run_add):
+    costs = []
 
     def timed(*a, **k):
         t = time.perf_counter_ns()
+        try:
+            return run_add(*a, **k)
+        finally:
+            costs.append(time.perf_counter_ns() - t)
+    return timed, costs
+
+
+def _replay_full_calls(tmp_path, name, live, n, hw, queued):
+    """The whole add_frame or put call, timed, in a real time replay with the tap on or off."""
+    ds = make_ds(tmp_path, name, cams=2, hw=hw)
+    with RunLogger(ds, SCHEMA, live=live) as log:
+        with log.run(task=TASK, policy=POLICY) as run:
+            add, costs = _call_costs(run.queue().put if queued else run.add_frame)
+            t0 = time.monotonic_ns()
+            for i in range(n):
+                add(frame(i, 2, hw), **kw(i, "expert" if 100 <= i < 103 else "base", time.monotonic_ns()))
+                time.sleep(max(0.0, (t0 + (i + 1) * PERIOD_NS - time.monotonic_ns()) / 1e9))
+            run.end(termination_reason="success")
+        healthy = log.live_tap is None or (log.live_tap.failed is None and log.live_tap.writes > 0)
+    return costs, healthy
+
+
+def _hook_costs(log, wall=True):
+    """Wrap the tap's frame hook to time it: the tap's extra cost per add_frame or put. Wall time includes waits for
+    the interpreter lock held by other threads; thread CPU time is the tap's own work."""
+    tap, real, costs = log.live_tap, log.live_tap.frame, []
+    clock = time.perf_counter_ns if wall else time.thread_time_ns
+
+    def timed(*a, **k):
+        t = clock()
         real(*a, **k)
-        costs.append(time.perf_counter_ns() - t)
+        costs.append(clock() - t)
     tap.frame = timed
     return costs
 
@@ -239,8 +271,9 @@ def _p99(xs):
 
 @pytest.mark.parametrize("queued", [False, True], ids=["add_frame", "put"])
 def test_tap_cost_per_frame_stays_small(tmp_path, queued):
-    """Acceptance 2 at reduced length. AFTERSHOCK_LIVE_BENCH=1 runs the full 2,000 frame replay at 30 fps with two
-    480x640 cameras and prints the numbers for the pull request."""
+    """Acceptance 2 at reduced length, on the hook's thread CPU time (150 samples make a wall clock p99 a single
+    lock wait). AFTERSHOCK_LIVE_BENCH=1 runs the full 2,000 frame replay at 30 fps with two 480x640 cameras on wall
+    clock time, also times the whole call with the tap off and on, and prints the numbers for the pull request."""
     bench = os.environ.get("AFTERSHOCK_LIVE_BENCH") == "1"
     n, hw = (2000, (480, 640)) if bench else (150, (120, 160))
     out = {}
@@ -251,7 +284,7 @@ def test_tap_cost_per_frame_stays_small(tmp_path, queued):
                 L.live_dir(ds.root).mkdir(parents=True, exist_ok=True)
                 (L.live_dir(ds.root) / L.PREVIEW_WANT).write_text('{"interval_s": 1}')
                 wait_for(lambda: log.live_tap.preview_interval_ns, 2)
-            costs = _hook_costs(log)
+            costs = _hook_costs(log, wall=bench)
             stop = threading.Event()
             if preview:                                          # keep the request fresh, as the station does
                 def touch():
@@ -261,7 +294,13 @@ def test_tap_cost_per_frame_stays_small(tmp_path, queued):
             record(log, n=n, takeover=range(100, 103), cams=2, hw=hw, realtime=True, queued=queued)
             stop.set()
             out[preview] = (_p99(costs), max(costs) / 1e6, log.live_tap.copies, log.live_tap.encodes)
+    full_off, _ = _replay_full_calls(tmp_path, "full_off", False, n, hw, queued)
+    full_on, healthy = _replay_full_calls(tmp_path, "full_on", True, n, hw, queued)
+    assert healthy
     if bench:
+        print(f"\nwhole {'put' if queued else 'add_frame'} call, tap off p99 {_p99(full_off):.3f} ms, tap on (no "
+              f"preview) p99 {_p99(full_on):.3f} ms, medians {statistics.median(full_off) / 1e6:.3f} and "
+              f"{statistics.median(full_on) / 1e6:.3f} ms")
         print(f"\nlive tap cost per {'put' if queued else 'add_frame'}, {n} frames at 30 fps, two {hw} cameras: "
               f"no preview p99 {out[False][0]:.3f} ms (max {out[False][1]:.3f}); "
               f"preview every 1 s p99 {out[True][0]:.3f} ms (max {out[True][1]:.3f}), "
@@ -625,3 +664,205 @@ def test_close_writes_closed_and_stops_the_thread(tmp_path):
     log.close()
     last = kinds(L.read_events(ds.root), "run_state")[-1]
     assert (last["run_id"], last["state"]) == (run.run_id, "discarded")
+
+
+# ── Codex round 1 ───────────────────────────────────────────────────────────
+
+def test_warnings_set_to_raise_never_reach_the_caller(tmp_path, monkeypatch):
+    """Finding 1: a tap failure warns from the tap thread, and a warning filter that raises cannot stop recording."""
+    import warnings
+    ds = make_ds(tmp_path)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with RunLogger(ds, SCHEMA, live=True) as log:
+            monkeypatch.setattr(log.live_tap, "_rec05", lambda *a: 1 / 0)
+            run = record(log, n=10, queued=True)
+            assert wait_for(lambda: log.live_tap._warned, 2)
+    assert run.state == "committed" and "ZeroDivisionError" in log.live_tap.failed
+
+
+def test_a_rotation_between_the_two_reads_hides_no_record(tmp_path, monkeypatch):
+    """Finding 2: the archive is read, then the writer rotates, then the current file is read."""
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, live=True) as log:
+        record(log, n=6, takeover=(2,))                       # 6 records, all in events.jsonl, no archive yet
+        time.sleep(0.7)
+    d = L.live_dir(ds.root)
+    seqs = [e["seq"] for e in L.read_events(ds.root)]
+    assert seqs == list(range(1, 7)) and not (d / L.EVENTS_OLD).exists()
+    real, done = L._read_lines, []
+
+    def rotate_after_archive(path):
+        out = real(path)
+        if path.name == L.EVENTS_OLD and not done:            # the writer rotates right after the archive was read
+            done.append(1)
+            last = seqs[-1]
+            os.replace(d / L.EVENTS, d / L.EVENTS_OLD)
+            (d / L.EVENTS).write_text(json.dumps({"live_format": 1, "kind": "file_start", "first_seq": last + 1})
+                                      + "\n" + json.dumps({"seq": last + 1, "kind": "run_start"}) + "\n")
+        return out
+    monkeypatch.setattr(L, "_read_lines", rotate_after_archive)
+    got = L.read_events(ds.root, 0)
+    assert done and [e.get("seq") for e in got] == list(range(1, 8))     # read again: nothing hidden, no gap
+
+
+def test_a_hole_in_the_middle_is_a_gap_record(tmp_path):
+    d = L.live_dir(tmp_path / "r")
+    d.mkdir(parents=True)
+    lines = [{"live_format": 1, "kind": "file_start", "first_seq": 1}] + [{"seq": k, "kind": "x"} for k in (1, 2, 5)]
+    (d / L.EVENTS).write_text("".join(json.dumps(x) + "\n" for x in lines))
+    assert L.read_events(tmp_path / "r") == [{"seq": 1, "kind": "x"}, {"seq": 2, "kind": "x"},
+                                             {"kind": "gap", "from_seq": 3, "to_seq": 4}, {"seq": 5, "kind": "x"}]
+
+
+def test_a_tap_still_writing_at_close_keeps_the_lock_until_it_is_done(tmp_path, monkeypatch):
+    """Finding 3: a tap thread blocked past the close wait keeps the writer lock, so a new writer cannot start and
+    be written over; close itself returns and raises nothing."""
+    monkeypatch.setattr(L, "JOIN_S", 0.3)
+    gate, entered = threading.Event(), threading.Event()
+    real = L.encode_preview
+
+    def slow(img, *a, **k):
+        entered.set()
+        gate.wait(10)
+        return real(img, *a, **k)
+    monkeypatch.setattr(L, "encode_preview", slow)
+    ds = make_ds(tmp_path, cams=1)
+    L.live_dir(ds.root).mkdir(parents=True)
+    (L.live_dir(ds.root) / L.PREVIEW_WANT).write_text('{"interval_s": 1}')
+    log = RunLogger(ds, SCHEMA, live=True)
+    assert wait_for(lambda: log.live_tap.preview_interval_ns, 2)
+    with log.run(task=TASK, policy=POLICY) as run:
+        run.add_frame(frame(0, 1), **kw(0))
+        assert entered.wait(3)
+        run.add_frame(frame(1, 1), **kw(1))
+        run.end(termination_reason="success")
+    t = time.monotonic()
+    log.close()                                               # returns although the tap thread is still busy
+    assert time.monotonic() - t < 2 and log.live_tap._thread.is_alive()
+    with pytest.raises(RuntimeError, match="another dataop-logger writer"):
+        RunLogger(ds, SCHEMA)
+    gate.set()
+    log.live_tap._thread.join(5)
+    assert wait_for(lambda: _can_open(ds), 3)
+    st = L.read_status(ds.root)
+    assert st["closed"] is True and st["pid"] == os.getpid()
+
+
+def _can_open(ds):
+    try:
+        RunLogger(ds, SCHEMA).close()
+        return True
+    except RuntimeError:
+        return False
+
+
+def test_the_snapshot_owns_the_joint_state(tmp_path):
+    """Finding 4: a caller that reuses its state array cannot change what the status shows for a frame."""
+    ds = make_ds(tmp_path)
+    state = np.zeros(6, np.float32)
+    with RunLogger(ds, SCHEMA, live=True) as log:
+        with log.run(task=TASK, policy=POLICY) as run:
+            for i in range(5):
+                state[:] = i
+                run.add_frame({"observation.state": state, "task": TASK}, **kw(i))
+            state[:] = 999                                    # reused after the last accepted frame
+            st = log.live_tap._status(False)
+            run.end(termination_reason="success")
+    assert st["run"]["frame"] == 4 and st["joint_state"]["values"] == [4.0] * 6
+
+
+def test_camera_names_with_private_text_are_cleaned_in_keys_and_file_names(tmp_path):
+    """Finding 5: status keys and preview file names carry no host name."""
+    host = socket.gethostname().split(".")[0]
+    if len(host) <= 2:
+        pytest.skip("host name too short to test")
+    key = f"observation.images.{host}"
+    feats = {"observation.state": {"dtype": "float32", "shape": (6,), "names": list(NAMES)},
+             "action": {"dtype": "float32", "shape": (6,), "names": list(NAMES)},
+             key: {"dtype": "image", "shape": (24, 32, 3), "names": ["height", "width", "channels"]}}
+    ds = lerobot_dataset.LeRobotDataset.create("test/cam", fps=30, features=feats, root=tmp_path / "cam",
+                                               use_videos=False)
+    L.live_dir(ds.root).mkdir(parents=True)
+    (L.live_dir(ds.root) / L.PREVIEW_WANT).write_text('{"interval_s": 1}')
+    with RunLogger(ds, SCHEMA, live=True) as log:
+        assert wait_for(lambda: log.live_tap.preview_interval_ns, 2)
+        with log.run(task=TASK, policy=POLICY) as run:
+            for i in range(20):
+                run.add_frame({**frame(i), key: np.zeros((24, 32, 3), np.uint8)}, **kw(i),
+                              camera_ns={host: 1_000_000 + i * PERIOD_NS})
+                time.sleep(0.03)
+            assert wait_for(lambda: list((L.live_dir(ds.root) / "preview").glob("*.jpg")), 3)
+            names = [p.name for p in (L.live_dir(ds.root) / "preview").iterdir()]
+            st = wait_for(lambda: (L.read_status(ds.root) or {}).get("cameras") and L.read_status(ds.root), 3)
+            run.end(termination_reason="success")
+    assert names and not any(host in n for n in names)
+    assert not any(host in c for c in st["cameras"]) and st["cameras"]
+    assert host not in json.dumps(st)
+
+
+def test_ending_a_run_while_a_preview_is_encoded_does_not_stop_the_tap(tmp_path, monkeypatch):
+    """Finding 7: run_state clears the waiting preview slots while the tap thread encodes the first camera."""
+    gate, entered = threading.Event(), threading.Event()
+    real = L.encode_preview
+    calls = []
+
+    def slow(img, *a, **k):
+        calls.append(1)
+        if len(calls) == 1:
+            entered.set()
+            gate.wait(5)
+        return real(img, *a, **k)
+    monkeypatch.setattr(L, "encode_preview", slow)
+    ds = make_ds(tmp_path, cams=2)
+    L.live_dir(ds.root).mkdir(parents=True)
+    (L.live_dir(ds.root) / L.PREVIEW_WANT).write_text('{"interval_s": 1}')
+    with RunLogger(ds, SCHEMA, live=True) as log:
+        assert wait_for(lambda: log.live_tap.preview_interval_ns, 2)
+        with log.run(task=TASK, policy=POLICY) as run:
+            run.add_frame(frame(0, 2), **kw(0))
+            assert entered.wait(3)
+            run.end(termination_reason="success")
+        gate.set()
+        time.sleep(0.8)
+        assert log.live_tap.failed is None
+        record(log, n=3, cams=2)
+        assert log.live_tap.failed is None
+
+
+def test_a_controlled_stop_shows_when_it_is_detected_and_again_when_its_frames_are_written(tmp_path, monkeypatch):
+    """Finding 8: the stop is in the status before the writer wait and the quarantine write; a retry updates it."""
+    from aftershock_logger import frame_queue as FQ
+    ds = make_ds(tmp_path)
+    real_partial, fails = FQ.write_partial, [1]
+
+    def partial_once(*a, **k):
+        if fails:
+            fails.pop()
+            raise OSError(28, "No space left on device")
+        return real_partial(*a, **k)
+    monkeypatch.setattr(FQ, "write_partial", partial_once)
+
+    def failing(f):
+        raise OSError(28, "No space left on device")
+    seen = {}
+    with RunLogger(ds, SCHEMA, live=True) as log:
+        with pytest.raises(ControlledStop):
+            with log.run(task=TASK, policy=POLICY) as run:
+                q = run.queue()
+                monkeypatch.setattr(ds, "add_frame", failing)
+                try:
+                    for i in range(30):
+                        q.put(frame(i), **kw(i))
+                        time.sleep(0.005)
+                except ControlledStop:
+                    seen["status"] = wait_for(lambda: (L.read_status(ds.root) or {}).get("controlled_stop")
+                                              and L.read_status(ds.root), 2)
+                    raise
+        assert run.retry_quarantine() is not None
+        time.sleep(0.7)
+    early = seen["status"]["controlled_stop"]
+    assert early["phase"] == "detected" and early["quarantine"] is None and early["run_id"] == run.run_id
+    phases = [e["phase"] for e in kinds(L.read_events(ds.root), "controlled_stop")]
+    assert phases == ["detected", "not_written", "quarantined"]
+    assert L.read_status(ds.root)["controlled_stop"]["quarantine"] == f"dataop/quarantine/{run.run_id}"
