@@ -27,6 +27,14 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q bubblewrap
           bwrap --version
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor. Allow them for bwrap alone, the way
+      # the README tells hosts to; the restriction stays on for everything else.
+      - name: Allow user namespaces for bubblewrap only
+        run: |
+          printf '%s\n' 'abi <abi/4.0>,' 'include <tunables/global>' \
+            'profile bwrap /usr/bin/bwrap flags=(unconfined) {' '  userns,' '}' | sudo tee /etc/apparmor.d/bwrap
+          sudo apparmor_parser -r /etc/apparmor.d/bwrap
+          bwrap --unshare-all --ro-bind / / true && echo "bwrap can create namespaces"
       - name: Install the logger's test dependencies
         run: python -m pip install numpy pyarrow pytest
       - name: Show the runtime the sandbox will see

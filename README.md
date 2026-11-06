@@ -373,6 +373,18 @@ imports only the standard library and numpy. If the hook fails, times out, hits 
 export fails and names the hook and the reason. On a machine that cannot give this isolation, export refuses to run
 a hook. `dataop_export.json` records the hook's file digest and the sandbox mode and limits used.
 
+On Ubuntu 23.10 and later, AppArmor stops unprivileged user namespaces by default, and bubblewrap then fails with
+`loopback: Failed RTM_NEWADDR: Operation not permitted`, so export refuses hooks. Allow user namespaces for bubblewrap
+alone with a profile in `/etc/apparmor.d/bwrap`, loaded with `sudo apparmor_parser -r /etc/apparmor.d/bwrap`:
+
+```
+abi <abi/4.0>,
+include <tunables/global>
+profile bwrap /usr/bin/bwrap flags=(unconfined) {
+  userns,
+}
+```
+
 ## Training with the extra fields
 
 ```python
