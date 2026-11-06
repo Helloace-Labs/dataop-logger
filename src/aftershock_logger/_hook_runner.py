@@ -94,6 +94,37 @@ def _probe(job: str, done: list) -> None:
         out["other_process"] = "allowed"
     except OSError as e:
         out["other_process"] = f"denied: {e.errno}"
+    rt = open(os.path.join(job, "in", "runtime_file")).read()
+    if rt:
+        try:
+            with open(rt, "rb") as f:
+                f.read(1)
+            out["read_runtime_non_code"] = "allowed"
+        except OSError as e:
+            out["read_runtime_non_code"] = f"denied: {e.errno}"
+    else:
+        out["read_runtime_non_code"] = "denied: no such file in the runtime"
+    try:
+        with open(os.path.join(job, "out", "extra"), "wb") as f:
+            f.write(b"x")
+        out["write_new_output"] = "allowed"
+    except OSError as e:
+        out["write_new_output"] = f"denied: {e.errno}"
+    try:
+        u = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        u.settimeout(2)
+        u.connect(open(os.path.join(job, "in", "unix")).read())
+        out["unix_socket"] = "allowed"
+    except OSError as e:
+        out["unix_socket"] = f"denied: {e.errno}"
+    try:
+        pid = os.fork()
+        if pid == 0:
+            os._exit(0)
+        os.waitpid(pid, 0)
+        out["fork"] = "allowed"
+    except OSError as e:
+        out["fork"] = f"denied: {e.errno}"
     out["other_process_info"] = _other_process_info(int(open(os.path.join(job, "in", "parent")).read()))
     sys.stdout.write(json.dumps(out))
     sys.stdout.flush()
@@ -138,8 +169,10 @@ def main() -> None:
         extra = set(res) - {"keep", "action", "reason"}
         if extra:
             raise TypeError(f"the hook returned unknown keys {sorted(map(str, extra))}")
+        if res.get("reason") is None:
+            res.pop("reason", None)
         info = {"keys": sorted(res)}
-        if "reason" in res and res["reason"] is not None:
+        if "reason" in res:
             if not isinstance(res["reason"], str):
                 raise TypeError("the hook's reason is not a string")
             info["reason"] = res["reason"]

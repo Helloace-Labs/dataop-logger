@@ -233,11 +233,11 @@ def test_hook_cannot_write_a_huge_file_or_any_other_file(tmp_path):
     ("def h(run):\n    return {'action': np.full((10, 3), np.nan)}\n", "non-finite"),
     ("def h(run):\n    return [1, 2]\n", "not a dict"),
     ("def h(run):\n    return {'kepe': 1}\n", "unknown keys"),
-    ("import os\ndef h(run):\n    os._exit(0)\n", "no result file"),
-    ("import os\ndef h(run):\n    os.symlink('/etc/hosts', os.path.join(os.path.dirname(__file__), '..', 'out', "
-     "'result.json'))\n    os._exit(0)\n", "could not be opened safely"),
-    ("import os\ndef h(run):\n    os.mkfifo(os.path.join(os.path.dirname(__file__), '..', 'out', 'result.json'))\n"
-     "    os._exit(0)\n", "not a plain file"),
+    ("import os\ndef h(run):\n    os._exit(0)\n", "bad result"),
+    ("import os\ndef h(run):\n    p = os.path.join(os.path.dirname(__file__), '..', 'out', 'result.json')\n"
+     "    os.unlink(p); os.symlink('/etc/hosts', p)\n    os._exit(0)\n", "could not be opened safely"),
+    ("import os\ndef h(run):\n    p = os.path.join(os.path.dirname(__file__), '..', 'out', 'result.json')\n"
+     "    os.unlink(p); os.mkfifo(p)\n    os._exit(0)\n", "not a plain file"),
     ("import os, signal\ndef h(run):\n    os.kill(os.getpid(), signal.SIGSEGV)\n", "signal"),
     ("def g(run):\n    return {}\n", "no function"),
 ])
@@ -329,6 +329,9 @@ def test_export_fails_with_the_hook_name_and_records_the_sandbox(tmp_path):
     ("(allow file-read*)", "read_outside"),
     ("(allow file-write*)", "write_outside"),
     ("(allow process-info*)", "other_process_info"),
+    ("(allow process-fork)", "fork"),
+    ("(allow network-outbound (remote unix-socket))", "unix_socket"),
+    ("(allow file-read* (subpath \"" + os.path.realpath(os.path.dirname(os.__file__)) + "\"))", "read_runtime_non_code"),
 ])
 def test_the_probe_catches_a_weakened_sandbox(monkeypatch, weaken, caught):
     real = HS._seatbelt_profile
@@ -354,17 +357,119 @@ def test_hook_cannot_read_another_processes_command_line_or_environment(tmp_path
     assert r.status == "not_run" and r.hook_reason is None, r.reason
 
 
-def test_bwrap_command_isolates_everything_and_binds_only_the_output_writable(tmp_path):
+def test_bwrap_command_isolates_everything_and_binds_only_the_result_files_writable(tmp_path):
     job = os.path.realpath(tmp_path / "job")
     os.makedirs(os.path.join(job, "in"))
     os.makedirs(os.path.join(job, "out"))
-    cmd = HS._bwrap_cmd("/usr/bin/bwrap", job)
+    cmd = HS._bwrap_cmd("/usr/bin/bwrap", job, seccomp_fd=7)
     for flag in ("--unshare-all", "--die-with-parent", "--new-session", "--clearenv"):
         assert flag in cmd
-    assert "--share-net" not in cmd
+    assert "--share-net" not in cmd and cmd[cmd.index("--seccomp") + 1] == "7"
     writable = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--bind"]
-    assert writable == [os.path.join(job, "out")]
+    assert writable == [os.path.join(job, "out", f) for f in HS._RESULT_FILES]
     ro = [cmd[i + 1] for i, a in enumerate(cmd) if a == "--ro-bind"]
     home = os.path.realpath(os.path.expanduser("~"))
-    assert os.path.join(job, "in") in ro and job not in ro
+    assert os.path.join(job, "in") in ro and os.path.join(job, "out") in ro and job not in ro
     assert all(p != "/" and not home.startswith(p.rstrip("/") + "/") and p != home for p in ro)
+    assert "/usr" not in ro and sys.prefix not in ro
+    masked = {cmd[i + 2] for i, a in enumerate(cmd) if a == "--ro-bind" and cmd[i + 1] == "/dev/null"}
+    sample = HS._runtime_non_code_sample()
+    assert sample in masked                                      # a license or data file in the runtime is hidden
+    assert all(not p.endswith((".py", ".so")) for p in masked)
+    for h in HS._runtime()["hidden"]:
+        if os.path.isdir(h):
+            assert cmd[cmd.index(h) - 1] == "--tmpfs"
+
+
+def _bpf(prog: bytes, arch: int, nr: int) -> int:
+    """A tiny classic BPF interpreter for the seccomp filter: returns the action for one syscall."""
+    import struct
+    ins = [struct.unpack("<HBBI", prog[i:i + 8]) for i in range(0, len(prog), 8)]
+    data, acc, pc = {0: nr, 4: arch}, 0, 0
+    while True:
+        code, jt, jf, k = ins[pc]
+        if code == 0x20:
+            acc, pc = data[k], pc + 1
+        elif code == 0x15:
+            pc += 1 + (jt if acc == k else jf)
+        elif code == 0x35:
+            pc += 1 + (jt if acc >= k else jf)
+        elif code == 0x06:
+            return k
+        else:
+            raise AssertionError(f"unknown instruction {code:#x}")
+
+
+@pytest.mark.parametrize("machine", ["x86_64", "aarch64"])
+def test_seccomp_filter_blocks_processes_sockets_and_other_architectures(machine):
+    arch, calls = HS._SECCOMP_ARCH[machine]
+    prog = HS.seccomp_program(machine)
+    EPERM, ALLOW, KILL = 0x00050001, 0x7FFF0000, 0x80000000
+    for name, nr in calls.items():
+        assert _bpf(prog, arch, nr) == EPERM, name
+    for nr in (0, 1, 2, 3, 9, 60, 63, 231):                    # read, write, open, close, mmap, exit, ...
+        if nr not in calls.values():
+            assert _bpf(prog, arch, nr) == ALLOW
+    assert _bpf(prog, 0x40000003, 41) == KILL                  # i386 compat calls never pass
+    if machine == "x86_64":
+        assert _bpf(prog, arch, 0x40000000 | 41) == EPERM      # the x32 ABI
+    with pytest.raises(HS.SandboxUnavailable):
+        HS.seccomp_program("riscv64")
+
+
+def _forged(meta_json: str, keep: str = "") -> str:
+    """A hook that skips the runner and writes its own result files, then exits as if all went well."""
+    return ("import os\ndef h(run):\n    out = os.path.join(os.path.dirname(__file__), '..', 'out')\n"
+            f"    open(os.path.join(out, 'result.json'), 'w').write({meta_json!r})\n"
+            + (f"    open(os.path.join(out, 'keep.npy'), 'wb').write({keep!r}.encode())\n" if keep else "")
+            + "    os._exit(0)\n")
+
+
+@needs_sandbox
+@pytest.mark.parametrize("meta,keep,want", [
+    ('{"keys": ["kepe"]}', "", "unknown or repeated"),
+    ('{"keys": ["keep", "keep"]}', "", "unknown or repeated"),
+    ('{"keys": [], "extra": 1}', "", "not a result"),
+    ('{"keys": ["reason"]}', "", "reason does not match"),
+    ('{"keys": [], "reason": 5}', "", "reason does not match"),
+    ('[' * 30000 + ']' * 30000, "", "RecursionError"),
+    ('{"keys": []}', "junk", "keep"),
+    ('not json', "", "bad result"),
+])
+def test_forged_result_metadata_is_not_a_pass(tmp_path, meta, keep, want):
+    r = _call(_hook(tmp_path, _forged(meta, keep)))
+    assert r.status == "not_run" and want in r.reason, r.reason
+
+
+@needs_sandbox
+def test_hook_cannot_read_non_code_files_of_the_runtime(tmp_path):
+    targets = [HS._runtime_non_code_sample()]
+    pyi = os.path.join(os.path.dirname(np.__file__), "__init__.pyi")
+    if os.path.exists(pyi):
+        targets.append(pyi)
+    for i, t in enumerate(x for x in targets if x):
+        r = _call(_hook(tmp_path, f"def h(run):\n    return {{'reason': open({t!r}).read(20)}}\n", f"rt{i}.py"))
+        assert r.status == "not_run", (t, r.reason)
+    r = _call(_hook(tmp_path, "import os\ndef h(run):\n    return {'reason': open(os.__file__).read(5)}\n", "code.py"))
+    assert r.status == "ok"                                     # code files of the runtime stay readable
+
+
+@needs_sandbox
+def test_hook_cannot_reach_a_unix_socket(tmp_path):
+    import tempfile
+    d = os.path.realpath(tempfile.mkdtemp(prefix="ah-", dir="/tmp"))
+    path = os.path.join(d, "s")
+    lsn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    try:
+        lsn.bind(path)
+        lsn.listen(1)
+        lsn.settimeout(0)
+        r = _call(_hook(tmp_path, f"import socket\ndef h(run):\n    s = socket.socket(socket.AF_UNIX)\n"
+                                  f"    s.settimeout(3); s.connect({path!r})\n"))
+        assert r.status == "not_run", r.reason
+        with pytest.raises(BlockingIOError):
+            lsn.accept()
+    finally:
+        lsn.close()
+        os.unlink(path)
+        os.rmdir(d)

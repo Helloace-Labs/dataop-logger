@@ -4,9 +4,10 @@ A hook is user code that changes which frames an export keeps or which action it
 logger's own process. Each call starts a fresh child that has
 
   - an empty environment and no inherited file descriptors except a null stdin and two capped output pipes,
-  - read access only to the Python runtime, numpy, its own copy of the hook file and its input folder, and write
-    access only to the result files in its output folder,
-  - no network, no way to start or signal another process, and
+  - read access only to the code files (CODE_FILE) of the standard library and numpy, the interpreter and its shared
+    library, its own copy of the hook file and its input folder, and write access only to the three result files
+    the parent creates in its output folder,
+  - no network or sockets, no way to start, signal or inspect another process, and
   - a wall clock time limit, a CPU time limit, a memory limit, a file size limit and an output limit.
 
 Data goes in and out as JSON and .npy files in a private temp folder (never pickle). The parent checks every result
@@ -17,7 +18,9 @@ Sandbox modes:
   macos-seatbelt   macOS `sandbox-exec` with a deny-by-default profile. RLIMIT_AS is not enforced on macOS, so the
                    parent reads the child's memory footprint every 20 ms and kills it over the limit.
   linux-bwrap      Linux bubblewrap: new user, mount, pid, network, ipc and uts namespaces, only the paths above
-                   mounted (read only except the output folder), RLIMIT_AS for memory.
+                   mounted read only (non-code runtime files hidden behind /dev/null, only the result files
+                   writable), and a seccomp filter that refuses fork, clone, socket and io_uring, so one process
+                   holds all the memory and RLIMIT_AS bounds it.
 
 Before a mode is used for the first time in a process, a probe child tries what a hostile hook would try (read and
 write outside its folders, open a socket, signal the parent, see the parent's environment). If any of it works, or
@@ -127,12 +130,35 @@ def load(spec: str) -> Hook:
 
 # ── what the child may read ───────────────────────────────────────────────────
 
+CODE_FILE = r"\.(py|pyc|so|dylib)(\.[0-9]+)*$"             # the only files the child may read from the runtime
+
+
 def _python() -> tuple[str, list[str], str]:
-    """The real interpreter binary, the folders the interpreter needs (its prefix), and numpy's package folder."""
+    """The real interpreter binary, the runtime folders the child needs, and numpy's package folder."""
     exe = os.path.realpath(sys.executable)
-    prefixes = sorted({os.path.realpath(sys.base_prefix), os.path.realpath(sys.base_exec_prefix)})
     np_dir = os.path.realpath(os.path.dirname(np.__file__))
-    return exe, prefixes, np_dir
+    return exe, _code_dirs(), np_dir
+
+
+def _runtime() -> dict:
+    """What the interpreter and numpy need, and nothing else of the installation: the standard library folder
+    (without its site-packages), numpy's package folder and its bundled libraries, the interpreter binary and its
+    shared library. From the folders only code files (CODE_FILE) are readable."""
+    import sysconfig
+    stdlib = os.path.realpath(os.path.dirname(os.__file__))
+    np_dir = os.path.realpath(os.path.dirname(np.__file__))
+    libs = [os.path.realpath(p) for p in (np_dir + ".libs", os.path.join(os.path.dirname(np_dir), "numpy.libs"))
+            if os.path.isdir(p)]
+    files = [os.path.realpath(sys.executable)]
+    libdir, ldlib = sysconfig.get_config_var("LIBDIR"), sysconfig.get_config_var("LDLIBRARY")
+    if libdir and ldlib and os.path.isfile(os.path.join(libdir, ldlib)):
+        files.append(os.path.realpath(os.path.join(libdir, ldlib)))
+    return {"dirs": sorted({stdlib, np_dir, *libs}), "files": sorted(set(files)),
+            "hidden": [os.path.join(stdlib, "site-packages")]}
+
+
+def _code_dirs() -> list[str]:
+    return _runtime()["dirs"]
 
 
 def _check_paths(paths: list[str]) -> None:
@@ -146,28 +172,30 @@ def _check_paths(paths: list[str]) -> None:
 
 
 def _readable(job: str) -> list[str]:
-    exe, prefixes, np_dir = _python()
-    libs = [p for p in (np_dir + ".libs", os.path.join(os.path.dirname(np_dir), "numpy.libs")) if os.path.isdir(p)]
-    paths = sorted({*prefixes, np_dir, *libs, os.path.join(job, "in")})
-    if not any(exe.startswith(p + "/") for p in prefixes):
-        paths.append(exe)
+    """Every path the child can read anything from (folders are limited to code files, except its input folder)."""
+    rt = _runtime()
+    paths = sorted({*rt["dirs"], *rt["files"], os.path.join(job, "in")})
     _check_paths(paths)
     return paths
 
 
 def _seatbelt_profile(job: str, writable: list[str]) -> str:
     q = lambda p: '"' + p + '"'                                   # paths were checked by _check_paths
-    exe = _python()[0]
-    reads = _readable(job)
+    rt = _runtime()
+    _readable(job)
     _check_paths(writable)
+    code = " ".join(f'(require-all (subpath {q(d)}) (regex #"{CODE_FILE}"))' for d in rt["dirs"])
+    dirs = " ".join(f"(require-all (subpath {q(d)}) (vnode-type DIRECTORY))" for d in rt["dirs"])
     return "\n".join([
         "(version 1)",
         "(deny default)",
-        f"(allow process-exec (literal {q(exe)}))",
-        "(allow file-read* " + " ".join(f"(subpath {q(p)})" for p in reads) + ")",
+        f"(allow process-exec (literal {q(os.path.realpath(sys.executable))}))",
+        f"(allow file-read* {code} {dirs} " + " ".join(f"(literal {q(f)})" for f in rt["files"]) + ")",
+        f"(allow file-read* (subpath {q(os.path.join(job, 'in'))}))",
         # the dynamic loader, system libraries and the root folder itself; nothing under /Users, /private/etc, ...
         '(allow file-read* (literal "/") (subpath "/usr/lib") (subpath "/System") (subpath "/private/var/db/dyld")'
         ' (literal "/dev/null") (literal "/dev/urandom") (literal "/dev/random"))',
+        "(deny file-read* " + " ".join(f"(subpath {q(h)})" for h in rt["hidden"]) + ")",
         "(allow file-write* (literal \"/dev/null\") " + " ".join(f"(literal {q(p)})" for p in writable) + ")",
         # hardware facts numpy reads and uname; not kern.proc* or kern.procargs*, which would list other processes
         # and their command lines
@@ -182,18 +210,76 @@ def _seatbelt_profile(job: str, writable: list[str]) -> str:
     ]) + "\n"
 
 
-def _bwrap_cmd(bwrap: str, job: str) -> list[str]:
-    exe = _python()[0]
+_MASKS: dict[tuple, list[str]] = {}
+
+
+def _non_code_files(dirs: list[str]) -> list[str]:
+    """Regular files under the runtime folders that are not code. Linux mode hides each one behind /dev/null."""
+    import re
+    key = tuple(dirs)
+    if key not in _MASKS:
+        pat, out = re.compile(CODE_FILE), []
+        for d in dirs:
+            for root, subdirs, files in os.walk(d):
+                subdirs[:] = [x for x in subdirs if not os.path.islink(os.path.join(root, x))]
+                out += [os.path.join(root, f) for f in files
+                        if not pat.search(f) and not os.path.islink(os.path.join(root, f))]
+        _check_paths(out)
+        _MASKS[key] = sorted(out)
+    return _MASKS[key]
+
+
+# syscalls the Linux child may not make: new processes or threads, any socket, io_uring (which can open sockets)
+_SECCOMP_ARCH = {"x86_64": (0xC000003E, {"socket": 41, "socketpair": 53, "clone": 56, "fork": 57, "vfork": 58,
+                                         "io_uring_setup": 425, "clone3": 435}),
+                 "aarch64": (0xC00000B7, {"socket": 198, "socketpair": 199, "clone": 220, "io_uring_setup": 425,
+                                          "clone3": 435})}
+
+
+def seccomp_program(machine: str | None = None) -> bytes:
+    """A classic BPF seccomp filter: another architecture (or the x32 ABI) is killed, the syscalls above fail with
+    EPERM, everything else is allowed. Raises SandboxUnavailable on an architecture it does not know."""
+    import struct
+    m = machine or platform.machine()
+    m = {"amd64": "x86_64", "arm64": "aarch64"}.get(m.lower(), m.lower())
+    if m not in _SECCOMP_ARCH:
+        raise SandboxUnavailable(f"no syscall filter for the {m} architecture, so a code hook cannot be isolated")
+    arch, calls = _SECCOMP_ARCH[m]
+    LD, JEQ, JGE, RET = 0x20, 0x15, 0x35, 0x06
+    ALLOW, KILL, EPERM = 0x7FFF0000, 0x80000000, 0x00050000 | 1
+    nrs = sorted(calls.values())
+    ins = [(LD, 0, 0, 4), (JEQ, 1, 0, arch), (RET, 0, 0, KILL), (LD, 0, 0, 0)]
+    checks = ([(JGE, None, 0, 0x40000000)] if m == "x86_64" else []) + [(JEQ, None, 0, n) for n in nrs]
+    n_checks = len(checks)
+    for i, (code, _, jf, k) in enumerate(checks):
+        ins.append((code, n_checks - i, jf, k))            # jump over the remaining checks and ALLOW to EPERM
+    ins += [(RET, 0, 0, ALLOW), (RET, 0, 0, EPERM)]
+    return b"".join(struct.pack("<HBBI", c, jt, jf, k) for c, jt, jf, k in ins)
+
+
+def _bwrap_cmd(bwrap: str, job: str, seccomp_fd: int | None = None) -> list[str]:
+    rt = _runtime()
+    exe = os.path.realpath(sys.executable)
     cmd = [bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--cap-drop", "ALL",
            "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
-    for p in ("/usr", "/lib", "/lib64", "/lib32", "/bin", "/etc/ld.so.cache"):   # the loader and C library
-        if os.path.exists(p):
+    for p in ("/lib", "/lib64", "/lib32", "/usr/lib", "/usr/lib64", "/usr/lib32", "/etc/ld.so.cache"):
+        if os.path.exists(p):                                     # the loader and C library
             cmd += ["--ro-bind", p, p]
     for p in _readable(job):
         cmd += ["--ro-bind", p, p]
+    for p in _non_code_files(rt["dirs"]):
+        cmd += ["--ro-bind", "/dev/null", p]
+    for h in rt["hidden"]:
+        if os.path.isdir(h):
+            cmd += ["--tmpfs", h]
     out = os.path.join(job, "out")
     _check_paths([out])
-    cmd += ["--bind", out, out, "--chdir", os.path.join(job, "in"), exe]
+    cmd += ["--ro-bind", out, out]                                # no new files in the output folder
+    for f in _RESULT_FILES:                                       # only the precreated result files are writable
+        cmd += ["--bind", os.path.join(out, f), os.path.join(out, f)]
+    if seccomp_fd is not None:
+        cmd += ["--seccomp", str(seccomp_fd)]
+    cmd += ["--chdir", os.path.join(job, "in"), exe]
     return cmd
 
 
@@ -224,11 +310,32 @@ def sandbox_mode() -> str:
     return mode
 
 
+PROBES = ("read_outside", "read_runtime_non_code", "write_outside", "write_new_output", "network", "unix_socket",
+          "fork", "other_process", "other_process_info")
+
+
+def _runtime_non_code_sample() -> str | None:
+    """A file in the runtime folders that is not code (a license or data file), to prove the child cannot read it."""
+    import re
+    pat = re.compile(CODE_FILE)
+    for d in _runtime()["dirs"]:
+        for name in sorted(os.listdir(d)):
+            p = os.path.join(d, name)
+            if os.path.isfile(p) and not os.path.islink(p) and not pat.search(name):
+                return p
+    return None
+
+
 def _probe(mode: str) -> str:
     """Run the runner in probe mode with no hook and report what got through, or "" when everything was denied."""
     job = os.path.realpath(tempfile.mkdtemp(prefix="aftershock-hook-probe-"))
     lsn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    udir = os.path.realpath(tempfile.mkdtemp(prefix="ah-", dir="/tmp"))   # short: unix socket paths are limited
+    ulsn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
     try:
+        ulsn.bind(os.path.join(udir, "s"))
+        ulsn.listen(1)
+        ulsn.settimeout(0)
         lsn.bind(("127.0.0.1", 0))
         lsn.listen(1)
         lsn.settimeout(0)
@@ -237,6 +344,9 @@ def _probe(mode: str) -> str:
         Path(job, "in", "probe").write_text("1")
         Path(job, "in", "port").write_text(str(lsn.getsockname()[1]))
         Path(job, "in", "parent").write_text(str(os.getpid()))
+        Path(job, "in", "unix").write_text(os.path.join(udir, "s"))
+        nc = _runtime_non_code_sample()
+        Path(job, "in", "runtime_file").write_text(nc or "")
         res = _spawn(mode, job, Limits(timeout_s=30, memory_mb=1024), file_bytes=1 << 20)
         if res.get("killed") or res["code"] != 4:
             return f"probe exited with {res['code']}: {res['stderr'][-300:].strip()}"
@@ -244,13 +354,15 @@ def _probe(mode: str) -> str:
             got = json.loads(res["stdout"])
         except ValueError:
             return "probe printed no report"
-        bad = [k for k in ("read_outside", "write_outside", "network", "other_process", "other_process_info")
-               if got.get(k) != "denied" and not str(got.get(k, "")).startswith("denied")]
-        try:
-            lsn.accept()[0].close()
-            bad.append("network (connection reached the parent)")
-        except (BlockingIOError, OSError):
-            pass
+        bad = [k for k in PROBES if not str(got.get(k, "")).startswith("denied")]
+        for name, s_ in (("network", lsn), ("unix_socket", ulsn)):
+            try:
+                s_.accept()[0].close()
+                bad.append(f"{name} (connection reached the parent)")
+            except (BlockingIOError, OSError):
+                pass
+        if sorted(os.listdir(os.path.join(job, "out"))) != sorted(_RESULT_FILES):
+            bad.append("write_new_output (file created)")
         if Path(job, "written").exists():
             bad.append("write_outside (file created)")
         if got.get("env"):
@@ -263,7 +375,9 @@ def _probe(mode: str) -> str:
         return str(e)
     finally:
         lsn.close()
+        ulsn.close()
         shutil.rmtree(job, ignore_errors=True)
+        shutil.rmtree(udir, ignore_errors=True)
 
 
 # ── one child ─────────────────────────────────────────────────────────────────
@@ -272,6 +386,8 @@ def _layout(job: str) -> None:
     os.mkdir(os.path.join(job, "in"), 0o700)
     os.mkdir(os.path.join(job, "out"), 0o700)
     shutil.copyfile(RUNNER, os.path.join(job, "in", "runner.py"))
+    for f in _RESULT_FILES:                           # the child may write these and create nothing else
+        os.close(os.open(os.path.join(job, "out", f), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600))
 
 
 def _footprint(pid: int) -> int | None:
@@ -300,9 +416,21 @@ def _spawn(mode: str, job: str, lim: Limits, file_bytes: int) -> dict:
         prof = _seatbelt_profile(job, [os.path.join(out_dir, f) for f in _RESULT_FILES])
         cmd = ["/usr/bin/sandbox-exec", "-p", prof, exe, *args]
     elif mode == "linux-bwrap":
-        cmd = [*_bwrap_cmd(shutil.which("bwrap"), job), *args]
+        prog = seccomp_program()
+        filt = os.path.join(job, "seccomp.bpf")
+        Path(filt).write_bytes(prog)
+        seccomp_fd = os.open(filt, os.O_RDONLY)
+        cmd = [*_bwrap_cmd(shutil.which("bwrap"), job, seccomp_fd), *args]
     else:
         raise SandboxUnavailable(f"unknown sandbox mode {mode}")
+    try:
+        return _watch(mode, cmd, job, lim, () if mode != "linux-bwrap" else (seccomp_fd,))
+    finally:
+        if mode == "linux-bwrap":
+            os.close(seccomp_fd)
+
+
+def _watch(mode: str, cmd: list[str], job: str, lim: Limits, pass_fds: tuple) -> dict:
     cap = int(lim.output_kb) << 10
     bufs = {"stdout": bytearray(), "stderr": bytearray()}
     over = threading.Event()
@@ -320,7 +448,7 @@ def _spawn(mode: str, job: str, lim: Limits, file_bytes: int) -> dict:
         stream.close()
 
     p = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env={},
-                         close_fds=True, start_new_session=True, cwd=os.path.join(job, "in"))
+                         close_fds=True, pass_fds=pass_fds, start_new_session=True, cwd=os.path.join(job, "in"))
     threads = [threading.Thread(target=drain, args=(p.stdout, bufs["stdout"]), daemon=True),
                threading.Thread(target=drain, args=(p.stderr, bufs["stderr"]), daemon=True)]
     for t in threads:
@@ -338,10 +466,6 @@ def _spawn(mode: str, job: str, lim: Limits, file_bytes: int) -> dict:
                     killed = "its memory could not be measured"
                 elif fp is not None and fp > (int(lim.memory_mb) << 20):
                     killed = f"used more than {lim.memory_mb} MB of memory"
-            if mode == "linux-bwrap" and not killed:
-                extra = [n for n in os.listdir(out_dir) if n not in _RESULT_FILES]
-                if extra:
-                    killed = "wrote files other than its results"
             if killed:
                 break
             time.sleep(POLL)
@@ -388,6 +512,29 @@ def _read_result(path: Path, limit: int, what: str) -> bytes:
     if len(data) > limit:
         raise ValueError(f"{what} file is larger than {limit} bytes")
     return data
+
+
+def _result_meta(out: Path) -> dict:
+    """The child's result.json, checked against the full schema here in the parent, because the runner inside the
+    sandbox shares its process with the hook and cannot be trusted after the hook ran:
+    {"keys": [unique names from keep, action, reason], "reason": str when "reason" is in keys}. The output folder
+    must hold exactly the precreated result files, and a result file whose key is not declared must be empty."""
+    names = sorted(os.listdir(out))
+    if names != sorted(_RESULT_FILES):
+        raise ValueError(f"the output folder holds {names}, not just the result files")
+    meta = json.loads(_read_result(out / "result.json", 64 << 10, "result"))
+    if not isinstance(meta, dict) or not set(meta) <= {"keys", "reason"} or not isinstance(meta.get("keys"), list):
+        raise ValueError("the result file is not a result")
+    keys = meta["keys"]
+    if not all(isinstance(k, str) for k in keys) or len(set(keys)) != len(keys) \
+            or not set(keys) <= {"keep", "action", "reason"}:
+        raise ValueError(f"the result names unknown or repeated keys {keys!r}"[:200])
+    if ("reason" in keys) != ("reason" in meta) or ("reason" in meta and not isinstance(meta["reason"], str)):
+        raise ValueError("the result's reason does not match its keys")
+    for k, f in (("keep", "keep.npy"), ("action", "action.npy")):
+        if k not in keys and _read_result(out / f, 0, k):
+            raise ValueError(f"{f} was written but the result does not declare {k}")
+    return meta
 
 
 def _load_npy(path: Path, dtype, shape: tuple, what: str) -> np.ndarray:
@@ -449,10 +596,8 @@ def run_hook(hook: Hook, run: dict, limits: Limits | None = None) -> HookResult:
             return HookResult("not_run", f"failed: {why}", stderr=res["stderr"], info=info)
         out = Path(job, "out")
         try:
-            meta = json.loads(_read_result(out / "result.json", 64 << 10, "result"))
-            if not isinstance(meta, dict) or not isinstance(meta.get("keys", []), list):
-                raise ValueError("the result file is not a result")
-            keys = set(meta.get("keys", []))
+            meta = _result_meta(out)
+            keys = set(meta["keys"])
             k2 = _load_npy(out / "keep.npy", bool, (n,), "keep") if "keep" in keys else None
             a2 = _load_npy(out / "action.npy", np.float32, action.shape, "action") if "action" in keys else None
             mask = k2 if k2 is not None else keep
@@ -461,8 +606,8 @@ def run_hook(hook: Hook, run: dict, limits: Limits | None = None) -> HookResult:
             reason = meta.get("reason")
             if reason is not None:
                 reason = " ".join("".join(c if c.isprintable() else " " for c in str(reason)).split())[:200]
-        except (OSError, ValueError, KeyError, TypeError) as e:
-            return HookResult("not_run", f"bad result: {e}", stderr=res["stderr"], info=info)
+        except (OSError, ValueError, KeyError, TypeError, RecursionError) as e:
+            return HookResult("not_run", f"bad result: {type(e).__name__ if isinstance(e, RecursionError) else e}", stderr=res["stderr"], info=info)
         return HookResult("ok", keep=k2, action=a2, hook_reason=reason, stderr=res["stderr"], info=info)
     except SandboxUnavailable as e:
         return HookResult("not_run", f"sandbox unavailable: {e}")
