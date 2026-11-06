@@ -188,6 +188,25 @@ def test_hook_cannot_store_anything_in_the_sandbox_itself(tmp_path, where):
         """)
     r = _call(spec)
     assert r.status == "not_run", r
+    assert "self test" not in r.reason and "Error" in r.reason, r.reason   # the hook ran and its write failed
+
+
+@pytest.mark.skipif(platform.system() != "Linux" or MODE != "linux-bwrap" and not REQUIRED,
+                    reason="Linux namespaces")
+def test_hook_cannot_make_a_namespace_or_mount_storage(tmp_path):
+    """A new user namespace would give the hook capabilities to mount a fresh tmpfs, which no limit bounds."""
+    spec = _hook(tmp_path, """
+        import ctypes
+        def h(run):
+            libc = ctypes.CDLL(None, use_errno=True)
+            if libc.unshare(0x10000000 | 0x00020000) != 0:
+                raise OSError(ctypes.get_errno(), 'unshare refused')
+            if libc.mount(b'none', b'/dev', b'tmpfs', 0, None) != 0:
+                raise OSError(ctypes.get_errno(), 'mount refused')
+            return {'reason': 'mounted'}
+        """)
+    r = _call(spec)
+    assert r.status == "not_run" and "unshare refused" in r.reason, r.reason
 
 
 @needs_sandbox
@@ -412,13 +431,19 @@ def _drop_all(cmd, flag, n):
     (lambda c: _drop(c, "--seccomp", 1), "fork"),                                   # processes and sockets
     (lambda c: _drop(c, "--seccomp", 1), "socket_create"),
     (lambda c: _drop_all(c, "--remount-ro", 1), "write_outside"),                  # writable root and /dev
+    ("no-namespace-filter", "unshare"),                                              # nested namespaces allowed
     (lambda c: [c[0], "--ro-bind", "/", "/", *c[1:]], "read_outside"),              # the whole host readable
     (lambda c: [*c[:-1], "--setenv", "PROVIDER_KEY", "planted", c[-1]], "environment not empty"),
     (lambda c: _drop(_drop(c, "--seccomp", 1), "--unshare-all", 0), "network"),     # the host network
 ])
 def test_the_probe_catches_a_weakened_bubblewrap(monkeypatch, weaken, caught):
-    real = HS._bwrap_cmd
-    monkeypatch.setattr(HS, "_bwrap_cmd", lambda *a, **k: weaken(real(*a, **k)))
+    if weaken == "no-namespace-filter":
+        keep = ("unshare", "setns", "mount", "umount2", "pivot_root", "chroot", *HS._MOUNT_API)
+        monkeypatch.setattr(HS, "_SECCOMP_ARCH", {m: (a, {k: v for k, v in c.items() if k not in keep})
+                                                  for m, (a, c) in HS._SECCOMP_ARCH.items()})
+    else:
+        real = HS._bwrap_cmd
+        monkeypatch.setattr(HS, "_bwrap_cmd", lambda *a, **k: weaken(real(*a, **k)))
     monkeypatch.setattr(HS, "_PROVEN", {})
     with pytest.raises(HS.SandboxUnavailable, match=caught):
         HS.sandbox_mode()
@@ -616,8 +641,12 @@ def test_ldd_parsing_keeps_spaces_and_only_regular_files(tmp_path):
 
 def test_linux_probe_requires_that_no_socket_can_be_created():
     clean = {k: "denied: 1" for k in HS.PROBES}
-    clean.update(env=[], limits=["RLIMIT_CPU", "RLIMIT_FSIZE", "RLIMIT_NOFILE", "RLIMIT_CORE", "RLIMIT_AS"])
+    clean.update(env=[], limits=["RLIMIT_CPU", "RLIMIT_FSIZE", "RLIMIT_NOFILE", "RLIMIT_CORE", "RLIMIT_AS"],
+                 unshare="denied: 1", mount="denied: 1")
     assert HS._judge("linux-bwrap", {**clean, "socket_create": "denied"}) == []
+    for k in ("unshare", "mount"):                                  # Linux also needs no namespace and no mount
+        assert k in HS._judge("linux-bwrap", {**clean, "socket_create": "denied", k: "allowed"})
+        assert k in HS._judge("linux-bwrap", {**clean, "socket_create": "denied", k: ""})
     assert "socket_create" in HS._judge("linux-bwrap", {**clean, "socket_create": "allowed: ['unix']"})
     assert "socket_create" in HS._judge("linux-bwrap", clean)       # a missing answer is not a denial
     assert HS._judge("macos-seatbelt", clean) == []
@@ -680,6 +709,8 @@ def test_seccomp_filter_blocks_processes_sockets_and_other_architectures(machine
     EPERM, ALLOW, KILL = 0x00050001, 0x7FFF0000, 0x80000000
     for name, nr in calls.items():
         assert _bpf(prog, arch, nr) == EPERM, name
+    assert {"unshare", "setns", "mount", "umount2", "pivot_root", "chroot", "fsopen", "fsmount", "open_tree",
+            "move_mount", "mount_setattr"} <= set(calls)             # no new namespace, no new mount
     for nr in (0, 1, 2, 3, 9, 60, 63, 231):                    # read, write, open, close, mmap, exit, ...
         if nr not in calls.values():
             assert _bpf(prog, arch, nr) == ALLOW

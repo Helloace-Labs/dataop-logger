@@ -371,10 +371,18 @@ def _shared_libs(binaries: list[str]) -> list[str]:
 
 
 # syscalls the Linux child may not make: new processes or threads, any socket, io_uring (which can open sockets)
+# Namespaces and mounts too: a hook in a new user namespace gets namespace-local capabilities and could mount a
+# fresh tmpfs, which no limit bounds. The new mount API numbers (open_tree .. mount_setattr) are shared by both.
+_MOUNT_API = {"open_tree": 428, "move_mount": 429, "fsopen": 430, "fsconfig": 431, "fsmount": 432, "fspick": 433,
+              "mount_setattr": 442}
 _SECCOMP_ARCH = {"x86_64": (0xC000003E, {"socket": 41, "socketpair": 53, "clone": 56, "fork": 57, "vfork": 58,
-                                         "io_uring_setup": 425, "clone3": 435}),
+                                         "io_uring_setup": 425, "clone3": 435,
+                                         "pivot_root": 155, "chroot": 161, "mount": 165, "umount2": 166,
+                                         "unshare": 272, "setns": 308, **_MOUNT_API}),
                  "aarch64": (0xC00000B7, {"socket": 198, "socketpair": 199, "clone": 220, "io_uring_setup": 425,
-                                          "clone3": 435})}
+                                          "clone3": 435,
+                                          "umount2": 39, "mount": 40, "pivot_root": 41, "chroot": 51,
+                                          "unshare": 97, "setns": 268, **_MOUNT_API})}
 
 
 def seccomp_program(machine: str | None = None) -> bytes:
@@ -476,7 +484,7 @@ PROBES = ("read_outside", "read_runtime_non_code", "write_outside", "write_new_o
 def _judge(mode: str, got: dict) -> list[str]:
     """What the probe report shows got through. On Linux a socket must not even be created (the seccomp filter),
     because the parent's listeners are outside the child's mounts and a failed connect would prove nothing."""
-    names = PROBES + (("socket_create",) if mode == "linux-bwrap" else ())
+    names = PROBES + (("socket_create", "unshare", "mount") if mode == "linux-bwrap" else ())
     bad = [k for k in names if not str(got.get(k, "")).startswith("denied")]
     if got.get("env"):
         bad.append(f"environment not empty ({len(got['env'])} variables)")

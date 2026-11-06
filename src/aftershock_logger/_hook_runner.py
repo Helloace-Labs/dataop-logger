@@ -131,6 +131,14 @@ def _probe(job: str, done: list) -> None:
         except OSError:
             pass
     out["socket_create"] = f"allowed: {made}" if made else "denied"
+    if sys.platform.startswith("linux"):            # a new user namespace would bring capabilities to mount with
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        CLONE_NEWNS, CLONE_NEWUSER = 0x00020000, 0x10000000
+        r = libc.unshare(CLONE_NEWUSER | CLONE_NEWNS)
+        out["unshare"] = "allowed" if r == 0 else f"denied: {ctypes.get_errno()}"
+        r = libc.mount(b"none", b"/dev", b"tmpfs", 0, None)
+        out["mount"] = "allowed" if r == 0 else f"denied: {ctypes.get_errno()}"
     try:
         pid = os.fork()
         if pid == 0:
