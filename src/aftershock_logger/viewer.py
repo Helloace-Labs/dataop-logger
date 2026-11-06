@@ -25,6 +25,7 @@ from . import events as ev
 from . import lists as ls
 from . import review as rv
 from . import store
+from . import sync
 
 
 def _segments(modes, sources) -> list[list]:
@@ -72,11 +73,12 @@ def _review_state(run_path: Path, m: dict) -> dict:
     try:
         r = rv.load(run_path, m)
         return {"edits": r["edits"], "rev": r["rev"], "effective": rv.effective(m, r), "undoable": rv.undoable(r),
+                "locked": r["locked"],
                 **dict(zip(("major", "segments", "drive"), ev.major_events(m, r, modes, sources, with_segments=True))),
                 "error": None}
     except rv.ReviewError as e:                        # shown on the run; editing it is disabled
         blank = rv.empty(m["run_id"])
-        return {"edits": [], "rev": -1, "effective": rv.effective(m, blank), "undoable": [],
+        return {"edits": [], "rev": -1, "effective": rv.effective(m, blank), "undoable": [], "locked": None,
                 **dict(zip(("major", "segments", "drive"), ev.major_events(m, blank, modes, sources, with_segments=True))),
                 "error": str(e)}
 
@@ -128,7 +130,17 @@ def collect(root: Path) -> dict:
     except ls.ListError as e:
         lists = {"version": 1, "rev": -1, "failure_types": [], "task_segments": [], "error": str(e)}
     return {"dataset": root.name, "root": str(root), "runs": runs, "failure_modes": modes, "lists": lists,
-            "editable": False, "datasets": W.datasets(), **_batch_state(root)}
+            "editable": False, "synced": _synced(root), "datasets": W.datasets(), **_batch_state(root)}
+
+
+def _synced(root: Path) -> dict | None:
+    """How the page shows a dataset synced from Aftershock (read only), or None."""
+    s = sync.state(root)
+    return None if s is None else {**s, "message": sync.describe(s)}
+
+
+# What a synced dataset's page may still ask for: the dataset list and switching to another dataset.
+SYNCED_OPS = ("ws_list", "ws_open", "job_status")
 
 
 def _pickable(root: Path, current: bool = False) -> dict:
@@ -248,6 +260,10 @@ class _RangeHandler(http.server.SimpleHTTPRequestHandler):
             if not isinstance(req, dict):
                 raise ValueError("request must be an object")
             op = req.get("op")
+            s = sync.state(self.dataset_root)
+            if s is not None and op not in SYNCED_OPS:     # read only: reviews come from Aftershock (sync.py)
+                return self._json(403, {"error": f"{sync.describe(s)}, so this page is read only",
+                                        "synced": True})
             shown = self.headers.get("X-Dataop-Root")
             if shown is not None and unquote(shown) != str(self.dataset_root) and not str(op).startswith("ws_") \
                     and op != "job_status":
