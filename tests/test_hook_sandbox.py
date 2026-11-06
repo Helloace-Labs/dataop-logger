@@ -435,6 +435,36 @@ def test_seatbelt_profile_denies_site_packages_but_keeps_numpy(tmp_path, monkeyp
     assert '(subpath "/usr' not in prof and '(subpath "/System' not in prof
 
 
+def test_library_reached_through_dotdot_gets_its_mount_point_in_its_own_folder(tmp_path, monkeypatch):
+    rt = _fake_runtime(tmp_path, False)
+    npd = Path(rt["dirs"][1])
+    libs_dir = npd.parent / "numpy.libs"                            # a separate bundled-library runtime folder
+    libs_dir.mkdir()
+    (libs_dir / "libalias-1.so.0").write_text("")
+    (libs_dir / "libalias.so").symlink_to("libalias-1.so.0")          # the alias the loader asks for
+    rt["dirs"].append(str(libs_dir))
+    monkeypatch.setattr(HS, "_runtime", lambda: rt)
+    monkeypatch.setattr(HS, "_MIRRORS", {})
+    dotted = f"{npd}/_core/../../numpy.libs/libalias.so"              # how ldd prints an $ORIGIN/../.. rpath
+    (tmp_path / "ldd").write_text(f"\tlibalias.so => {dotted} (0x00007f01)\n")
+    monkeypatch.setattr(HS, "_shared_libs", lambda bins: HS._parse_ldd((tmp_path / "ldd").read_text()))
+    monkeypatch.setattr(HS, "_check_paths", lambda paths: None)
+    job = os.path.realpath(tmp_path / "job")
+    os.makedirs(os.path.join(job, "in"))
+    os.makedirs(os.path.join(job, "out"))
+    cmd = HS._bwrap_cmd("/usr/bin/bwrap", job, seccomp_fd=7)
+    pairs = [(cmd[i + 1], cmd[i + 2]) for i in range(len(cmd) - 2) if cmd[i] == "--ro-bind"]
+    dests = [d for _, d in pairs]
+    src = {d: s_ for s_, d in pairs}
+    canon = str(libs_dir / "libalias.so")
+    assert dotted not in dests and canon in dests                    # one canonical spelling for the bind
+    assert src[canon] == os.path.realpath(libs_dir / "libalias-1.so.0")
+    assert dests.index(canon) > dests.index(str(libs_dir))           # after the folder that holds it
+    m_libs, m_np = Path(src[str(libs_dir)]), Path(src[str(npd)])
+    assert (m_libs / "libalias.so").is_file() and (m_libs / "libalias.so").stat().st_size == 0
+    assert not (m_np.parent / "numpy.libs").exists()                  # no stray mount point beside the numpy copy
+
+
 def test_ldd_parsing_keeps_spaces_and_only_regular_files(tmp_path):
     spaced = tmp_path / "my libs"
     spaced.mkdir()

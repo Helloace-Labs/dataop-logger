@@ -278,15 +278,22 @@ def _mirror(dirs: list[str], hidden: list[str], leaves: tuple = ()) -> dict[str,
 _LIBS: dict[tuple, list[str]] = {}
 
 
+def _canon_lib(path: str) -> str:
+    """One spelling for a library path: its folder resolved (no `..`, no symlinked folders), its own name kept, so
+    an alias stays an alias. The mirror's mount points, the containment checks and the binds all use this path."""
+    return os.path.join(os.path.realpath(os.path.dirname(path)), os.path.basename(path))
+
+
 def _parse_ldd(text: str) -> list[str]:
     """Library paths from ldd output, spaces kept: `name => /path (0x...)` or `/path (0x...)`. Only existing
-    regular files are kept, so a misread line can never turn into a folder mount."""
+    regular files are kept, so a misread line can never turn into a folder mount. Paths come back canonical
+    (`_canon_lib`), so `numpy/_core/../../numpy.libs/x.so` is placed in the numpy.libs folder."""
     import re
     out = []
     for line in text.splitlines():
         m = re.match(r"^\s*(?:\S+ => )?(/.*) \(0x[0-9a-fA-F]+\)\s*$", line)
         if m and os.path.isfile(m.group(1)):
-            out.append(m.group(1))
+            out.append(_canon_lib(m.group(1)))
     return out
 
 
@@ -347,7 +354,7 @@ def _bwrap_cmd(bwrap: str, job: str, seccomp_fd: int | None = None) -> list[str]
     pat = re.compile(r"\.so(\.[0-9]+)*$")
     exts = [os.path.join(d, rel, f) for d in rt["dirs"] for rel, f in _code_files(rt["dirs"], rt["hidden"], d)
             if f and pat.search(f)]
-    libs = _shared_libs([exe, *rt["files"][1:], *exts])
+    libs = sorted({_canon_lib(x) for x in _shared_libs([exe, *rt["files"][1:], *exts])})
     mirror = _mirror(rt["dirs"], rt["hidden"], tuple(sorted({*libs, *rt["files"]})))
     cmd = [bwrap, "--unshare-all", "--die-with-parent", "--new-session", "--clearenv", "--cap-drop", "ALL",
            "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"]
