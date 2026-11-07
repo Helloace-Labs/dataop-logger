@@ -394,6 +394,14 @@ training never samples across a gap. The output is a normal LeRobot v3.0 dataset
 `--dry-run` to see per-run counts and reasons first, and `--hook file.py:function` for task-specific selection.
 `--runs id1,id2` limits a batch to chosen runs.
 
+Every frame is written with the run's task prompt. With `--prompts task+subtasks --subtask-prompts texts.json`
+(`[{"subtask_id": "grasp", "text": "grasp the cap"}, ...]`, in order), each kept stretch of a labeled run is written
+again for each subtask segment it covers, with that subtask's text: the review's segments, or else the recorded steps
+with moved boundaries, mapped to subtask ids by the review. Frames with no segment, or one with no subtask id, get
+only the task prompt. A kept subtask with no text fails the export. The texts are frozen in `dataop_export.json`, and
+the report lists the frames and episodes written per prompt for each run. The default writes exactly what it did
+before.
+
 A hook never runs inside the logger. Each run's call starts a sandboxed child (macOS `sandbox-exec`, or Linux
 bubblewrap with a syscall filter) with an empty environment, no network or sockets, no new processes or threads, no
 access to other processes, read access only to the code files of Python's standard library and numpy and to its own

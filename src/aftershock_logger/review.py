@@ -627,6 +627,31 @@ def effective(manifest: dict, review: dict) -> dict:
     return out
 
 
+def subtask_segments(manifest: dict, review: dict) -> list[tuple[str | None, int, int]]:
+    """The run's subtask segments in effect, as (subtask_id or None, start, end) in frame order: a `segments` edit in
+    effect replaces the recorded steps (an empty one leaves none); otherwise the recorded steps (the manifest's
+    `subgoals`) with the accepted boundary edits applied, as effective() moves them, each taking its subtask id from
+    the review's legacy_subtask_map (by step index, then by name). A segment or step with no id, or the id
+    `unresolved`, gives None. A format 1 review names its steps without subtask ids, so it gives None throughout."""
+    if fmt.is_format1(review):
+        with _errors():
+            review = fmt.migrate_format1(review, manifest)
+    check_review(manifest, review)
+    n = manifest["length"]
+    plan = next((e["payload"]["segments"] for e in reversed(fmt.active_edits(review)) if e["kind"] == "segments"),
+                None)
+    if plan is not None:
+        return [(None if x["subtask_id"] == fmt.UNRESOLVED else x["subtask_id"], x["start"], x["end"]) for x in plan]
+    lmap = review["legacy_subtask_map"]
+    out = []
+    for i, st in enumerate(effective(manifest, review)["subgoals"]):
+        sid = None
+        if lmap is not None and st.get("name") is not None:
+            sid = fmt._lookup(lmap, i, st["name"]) or fmt._lookup(lmap, None, st["name"])
+        out.append((None if sid in (None, fmt.UNRESOLVED) else sid, st["start_frame"], min(st["end_frame"], n)))
+    return out
+
+
 def train_mask(manifest: dict, review: dict, control_modes: list[str]) -> np.ndarray:
     """Per-frame bool: False for a rejected run, excluded spans, labels whose reading in effect is "exclude", and, on
     a failed run, every frame from the accepted failure start up to the next takeover (the first expert or blend

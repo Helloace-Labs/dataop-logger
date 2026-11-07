@@ -170,6 +170,11 @@ def _main(argv=None) -> int:
     xp.add_argument("--drop-features", help="leave these features out, comma separated (to combine datasets)")
     xp.add_argument("--allow-unlocked", action="store_true", help="export a batch that is not locked (recorded)")
     xp.add_argument("--repo-id", help="repo id written into the new dataset's metadata")
+    xp.add_argument("--prompts", choices=["task", "task+subtasks"], default="task",
+                    help="task: every frame with the task prompt; task+subtasks: labeled frames once more per subtask "
+                    "prompt (needs --subtask-prompts)")
+    xp.add_argument("--subtask-prompts", metavar="FILE.json",
+                    help='the subtask prompt texts in order, as [{"subtask_id": ..., "text": ...}, ...]')
     xp.add_argument("--dry-run", action="store_true", help="count episodes and frames per run; write nothing")
     xp.add_argument("--by", default="human")
     a = p.parse_args(argv)
@@ -186,11 +191,19 @@ def _main(argv=None) -> int:
             srcs.append((root, ref))
         split = lambda v: [x.strip() for x in v.split(",") if x.strip()] if v else None
         try:
+            texts = None
+            if a.subtask_prompts:
+                import json
+                try:
+                    texts = json.loads(Path(a.subtask_prompts).read_text())
+                except (OSError, ValueError) as e:
+                    raise X.ExportError(f"--subtask-prompts {a.subtask_prompts}: {e}") from None
             rep = X.export(srcs, a.recipe, a.into, with_success=a.with_success, zero_on_success=a.zero_on_success,
                            base=a.base, segments=split(a.segments), outcomes=split(a.outcomes), val=a.val,
                            min_span=a.min_span, hook=a.hook, allow_unlocked=a.allow_unlocked, dry_run=a.dry_run,
                            repo_id=a.repo_id, by=a.by, drop_features=split(a.drop_features),
-                           runs=split(a.runs), hook_timeout_s=a.hook_timeout, hook_memory_mb=a.hook_memory_mb)
+                           runs=split(a.runs), hook_timeout_s=a.hook_timeout, hook_memory_mb=a.hook_memory_mb,
+                           prompts=a.prompts, subtask_prompts=texts)
         except (X.ExportError, BatchError) as e:
             print(f"error: {e}", file=sys.stderr)
             return 2

@@ -32,6 +32,14 @@ it at all on a machine that cannot give that isolation. A hook that fails, times
 wrong shape or dtype fails the export with the hook's name and the reason; it is never skipped. The record stores the
 hook spec, its file digest, the sandbox mode and limits, and a digest of what it returned.
 
+Prompts. By default (`prompts="task"`) every frame is written with the run's task prompt. With
+`prompts="task+subtasks"` the caller also passes the subtask prompt texts by subtask id, in order (`subtask_prompts`),
+and each kept span of a labeled run is written once with the task prompt and then once more per subtask: one episode
+for each stretch of the span that lies in one subtask segment in effect (review.subtask_segments), written with that
+subtask's text. Frames with no segment, or an `unresolved` one, get only the task prompt. The texts are taken as given
+and frozen in the record; the logger never reads a task file for them. The report lists, per run, the subtask
+stretches and the frames written per prompt, and the record keeps the prompt texts in the order given.
+
 `dataop_export.json` in the output records the source batches and their locks, each run's review digest and data
 digests, the dataset lists digest, source LeRobot file digests, recipe and parameters, versions, per-run counts and
 reasons, and a digest of the written data.
@@ -56,6 +64,7 @@ from . import review as rv
 from . import store
 
 RECIPES = ("teleop", "dagger", "lora", "filtered", "residual")
+PROMPTS = ("task", "task+subtasks")
 RESERVED = ("index", "episode_index", "frame_index", "timestamp", "task_index")
 
 
@@ -166,6 +175,67 @@ def spans(keep: np.ndarray, min_len: int = 1) -> list[tuple[int, int]]:
         else:
             i += 1
     return out
+
+
+def _subtask_prompts(prompts: str, given) -> list[tuple[str, str]] | None:
+    """The caller's subtask prompt texts as an ordered list of (subtask_id, text), checked; None for task prompts only.
+    Takes a list of {"subtask_id", "text"} or of [subtask_id, text] pairs, or a mapping in its own order."""
+    from .review_format import SLUG, UNRESOLVED
+    if prompts not in PROMPTS:
+        raise ExportError(f"prompts must be one of {PROMPTS}")
+    if prompts == "task":
+        if given is not None:
+            raise ExportError('subtask prompt texts are used only with prompts="task+subtasks"')
+        return None
+    if given is None:
+        raise ExportError('prompts="task+subtasks" needs the subtask prompt texts by subtask id (subtask_prompts)')
+    items = list(given.items()) if isinstance(given, dict) else given
+    if not isinstance(items, (list, tuple)) or not items:
+        raise ExportError("subtask_prompts lists at least one subtask id and its prompt text")
+    out, seen = [], set()
+    for x in items:
+        if isinstance(x, dict) and set(x) == {"subtask_id", "text"}:
+            sid, text = x["subtask_id"], x["text"]
+        elif isinstance(x, (list, tuple)) and len(x) == 2:
+            sid, text = x
+        else:
+            raise ExportError("each subtask prompt is {subtask_id, text} or a [subtask_id, text] pair")
+        if not isinstance(sid, str) or not SLUG.fullmatch(sid) or sid == UNRESOLVED:
+            raise ExportError(f"{sid!r} is not a subtask id")
+        if sid in seen:
+            raise ExportError(f"subtask {sid} is given twice")
+        if not isinstance(text, str) or not text.strip() or text != text.strip() or "\n" in text or "\r" in text:
+            raise ExportError(f"the prompt text for subtask {sid} must be one non-empty line without outer spaces")
+        seen.add(sid)
+        out.append((sid, text))
+    return out
+
+
+def subtask_stretches(keep: np.ndarray, segments: list[tuple[str | None, int, int]]) -> list[tuple[str, int, int]]:
+    """(subtask_id, start, end) for every maximal stretch of kept frames that lies in one subtask segment with an id,
+    in frame order. Stretches never cross a gap in the kept frames or a segment edge."""
+    n = len(keep)
+    sub = np.full(n, None, dtype=object)
+    for sid, a, b in reversed(segments):               # the first segment that holds a frame wins, as elsewhere
+        if sid is not None:
+            sub[max(0, a):min(b, n)] = sid
+    out, i = [], 0
+    while i < n:
+        if keep[i] and sub[i] is not None:
+            j = i
+            while j < n and keep[j] and sub[j] == sub[i]:
+                j += 1
+            out.append((sub[i], i, j))
+            i = j
+        else:
+            i += 1
+    return out
+
+
+def subtask_digest(manifest: dict, review: dict) -> str:
+    """sha256 of the run's subtask segments in effect (ids and ranges). A task+subtasks export records it per run, since
+    the review digest does not cover the subtask ids that the legacy_subtask_map gives recorded steps."""
+    return store.json_sha256([list(x) for x in rv.subtask_segments(manifest, review)])
 
 
 def _load_hook(spec: str | None):
@@ -303,12 +373,14 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
            allow_unlocked: bool = False, dry_run: bool = False, repo_id: str | None = None, by: str = "human",
            drop_features: list[str] | None = None, runs: list[str] | None = None,
            runs_by_root: dict[str, list[str]] | None = None, hook_timeout_s: float = 60.0,
-           hook_memory_mb: int = 1024) -> dict:
+           hook_memory_mb: int = 1024, prompts: str = "task", subtask_prompts=None) -> dict:
     """runs limits every source to those run ids; runs_by_root limits each dataset (by resolved path) to its own
     chosen ids, so copies of a dataset that share run ids stay apart. A hook runs once per run in a sandboxed child
-    (hook_sandbox.py) with hook_timeout_s and hook_memory_mb as its limits; any hook failure fails the export."""
+    (hook_sandbox.py) with hook_timeout_s and hook_memory_mb as its limits; any hook failure fails the export.
+    prompts and subtask_prompts: see Prompts in the module docstring."""
     if recipe not in RECIPES:
         raise ExportError(f"recipe must be one of {RECIPES}")
+    texts = _subtask_prompts(prompts, subtask_prompts)
     if not 0.0 <= val < 1.0:
         raise ExportError("val must be in [0, 1)")
     if base and recipe == "residual":
@@ -398,6 +470,27 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
         if dropped_short:
             why["span shorter than min_span"] = dropped_short
         split = _split(m["run_id"], val) if val > 0 else "train"
+        extra = {}
+        if texts is not None:
+            kept = np.zeros(len(keep), bool)
+            for a, b_ in sp:
+                kept[a:b_] = True
+            stretches = subtask_stretches(kept, rv.subtask_segments(m, s["review"]))
+            by_id = dict(texts)
+            missing = sorted({sid for sid, _, _ in stretches} - set(by_id))
+            if missing:
+                raise ExportError(f"run {m['run_id']} has kept frames in subtasks {missing}, which have no prompt "
+                                  "text in subtask_prompts")
+            n_task = int(kept.sum())
+            per = [{"prompt": m["task"], "subtask_id": None, "frames": n_task, "episodes": len(sp)}] if n_task else []
+            for sid, text in texts:
+                mine = [(a, b_) for x, a, b_ in stretches if x == sid]
+                if mine:
+                    per.append({"prompt": text, "subtask_id": sid, "frames": sum(b_ - a for a, b_ in mine),
+                                "episodes": len(mine)})
+            extra = {"subtask_spans": [list(x) for x in stretches], "prompts": per,
+                     "subtask_digest": subtask_digest(m, s["review"]),
+                     "written": sum(x["frames"] for x in per), "_stretches": stretches, "_texts": by_id}
         runs_out.append({"root": str(root), "batch": b["name"], "batch_id": b["batch_id"], "run_id": m["run_id"], "episode": m["episode_index"],
                          "as": ("dagger" if np.isin(s["mode"], ("base", "blend")).any() else "teleop") if recipe == "lora" else recipe,
                          "outcome": "rejected" if s["effective"]["rejected"] else s["effective"]["termination_reason"],
@@ -405,16 +498,22 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
                          "dropped": why, "review_rev": s["review"]["rev"],
                          "review_digest": B.review_digest(m, s["review"]),
                          "ticks_sha256": m["integrity"]["ticks_sha256"], "manifest_sha256": store.json_sha256(m),
-                         "_action": action, "_src": src, "_task": m["task"]})
-    report = {"recipe": recipe, "options": {**opts, "base": base, "val": val, "hook": hook, "drop_features": list(drop),
-                                            "runs": sorted(runs) if runs is not None else None,
-                                            "runs_by_root": pick and {k: sorted(v) for k, v in sorted(pick.items())}},
+                         "_action": action, "_src": src, "_task": m["task"], **extra})
+    options = {**opts, "base": base, "val": val, "hook": hook, "drop_features": list(drop),
+               "runs": sorted(runs) if runs is not None else None,
+               "runs_by_root": pick and {k: sorted(v) for k, v in sorted(pick.items())}}
+    if texts is not None:           # only then, so the default export's record is exactly what it was
+        options.update(prompts=prompts, prompt_texts=[{"subtask_id": sid, "text": t} for sid, t in texts])
+    sub_eps = sum(len(r.get("_stretches", ())) for r in runs_out)
+    sub_frames = sum(b_ - a for r in runs_out for _, a, b_ in r.get("_stretches", ()))
+    report = {"recipe": recipe, "options": options,
               "sources": src_records, "dry_run": dry_run,
               **({"hook": {"spec": hook, "file_sha256": hook_obj.file_sha256, "sandbox": hook_obj.mode,
                            "limits": hook_limits.as_dict(), "results_sha256": store.json_sha256(hook_results)}}
                  if hook_obj is not None else {}),
-              "episodes": sum(len(r["spans"]) for r in runs_out) + (len(base_src.eps) if base_src is not None else 0),
-              "frames": sum(r["kept"] for r in runs_out) +
+              "episodes": sum(len(r["spans"]) for r in runs_out) + sub_eps +
+                          (len(base_src.eps) if base_src is not None else 0),
+              "frames": sum(r["kept"] for r in runs_out) + sub_frames +
                         (int(base_src.eps["length"].sum()) if base_src is not None else 0),
               "runs": [{k: v for k, v in r.items() if not k.startswith("_")} for r in runs_out]}
     if dry_run:
@@ -450,13 +549,18 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
                     continue
                 ep = r["_src"].episode(r["episode"])
                 snap = next(x for x in plan_runs if x[5]["run_id"] == r["run_id"] and str(x[0]) == r["root"])[6]
+                # each kept span with the task prompt, then its subtask stretches, each with its subtask's prompt
+                pieces = []
                 for a, b_ in r["spans"]:
+                    pieces.append((a, b_, r["_task"]))
+                    pieces += [(c, d, r["_texts"][sid]) for sid, c, d in r.get("_stretches", ()) if a <= c and d <= b_]
+                for a, b_, prompt in pieces:
                     for i in range(a, b_):
                         fr = r["_src"].frame(ep, i, keys)
                         fr["action"] = r["_action"][i].reshape(feats["action"]["shape"]).astype(np.float32)
                         if recipe == "residual":
                             fr["observation.base_action"] = snap["base"][i].astype(np.float32)
-                        ds.add_frame({**fr, "task": r["_task"]})
+                        ds.add_frame({**fr, "task": prompt})
                     ds.save_episode(parallel_encoding=False)
                     n_ep += 1
             ds.finalize()
@@ -495,20 +599,35 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
 def training_sets(root: Path) -> list[dict]:
     """Training sets made from this dataset, newest first. Each says whether it is out of date: a source batch was
     unlocked after it was made, or any run it was made from, in any of its datasets, has been reviewed differently
-    since (its review digest no longer matches the one recorded in the set's dataop_export.json)."""
+    since (its review digest no longer matches the one recorded in the set's dataop_export.json, or, for a set with
+    subtask prompts, its subtask segments in effect no longer match the recorded subtask digest)."""
     root = Path(root).expanduser().resolve()
     d = B.load(root)
     digests: dict[str, dict] = {}
+    sub_digests: dict[str, dict] = {}
 
     def current(r: str) -> dict:
         if r not in digests:
-            digests[r] = {}
+            digests[r], sub_digests[r] = {}, {}
             for p, m in store.iter_manifests(Path(r), "committed"):
                 try:
-                    digests[r][m["run_id"]] = B.review_digest(m, rv.load(p))
+                    review = rv.load(p)
+                    digests[r][m["run_id"]] = B.review_digest(m, review)
+                    sub_digests[r][m["run_id"]] = (m, review)       # the subtask digest only when a set asks for it
                 except rv.ReviewError:
                     digests[r][m["run_id"]] = None
         return digests[r]
+
+    def changed(r: str, run: dict) -> bool:
+        if current(r).get(run["run_id"]) != run["review_digest"]:
+            return True
+        if "subtask_digest" not in run:
+            return False
+        got = sub_digests[r].get(run["run_id"])
+        try:
+            return got is None or subtask_digest(*got) != run["subtask_digest"]
+        except rv.ReviewError:
+            return True
     regs: dict[str, dict] = {str(root): d}
 
     def reg(r: str) -> dict:
@@ -528,8 +647,7 @@ def training_sets(root: Path) -> list[dict]:
     for x in out.values():
         try:
             rec = json.loads((Path(x["path"]) / "dataop_export.json").read_text())
-            x["changed_runs"] = sum(current(str(Path(r["root"]).expanduser().resolve())).get(r["run_id"])
-                                    != r["review_digest"] for r in rec["runs"])
+            x["changed_runs"] = sum(changed(str(Path(r["root"]).expanduser().resolve()), r) for r in rec["runs"])
             x["runs"] = sum(1 for r in rec["runs"] if r["kept"])
             # a run moved to another batch since, in any of the set's datasets (older records name the batch only)
             ids = {(str(Path(s_["root"]).expanduser().resolve()), s_["batch"]): s_["batch_id"] for s_ in rec["sources"]}
