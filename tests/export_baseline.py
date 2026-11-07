@@ -92,13 +92,14 @@ def build_fixture(root: Path) -> None:
         uuid.uuid4 = real
 
 
-def _mask(v):
-    """v as JSON, with the value of every VARY key masked (None stays None, so a value that disappears shows)."""
+def _mask(v, hide: bool = False):
+    """v as JSON with every key kept. Under a VARY key each leaf value is masked, inside nested dicts and lists too
+    (None stays None, so a value that disappears shows); everything else is compared as it is."""
     if isinstance(v, dict):
-        return {k: (x if x is None else "<varies>") if k in VARY else _mask(x) for k, x in v.items()}
+        return {k: _mask(x, hide or k in VARY) for k, x in v.items()}
     if isinstance(v, (list, tuple)):
-        return [_mask(x) for x in v]
-    return v
+        return [_mask(x, hide) for x in v]
+    return "<varies>" if hide and v is not None else v
 
 
 def _episodes(out: Path) -> list[dict]:

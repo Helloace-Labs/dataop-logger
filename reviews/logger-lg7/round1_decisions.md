@@ -8,3 +8,7 @@
 Fix 1 was approved. Fix 2 got a new High: the baseline dropped volatile keys instead of masking them, so a key that disappeared from a run record would pass, and the sources were compared by key names only.
 
 - **High, the baseline still misses record regressions.** Changed. `tests/export_baseline.py` now keeps every key and masks only the values of keys that differ between two builds of the fixture (`root`, `review_digest`, `ticks_sha256`, `manifest_sha256`, `at`, `lerobot`); a null stays null, so a value that goes missing shows. The report and the record compare their sources with all other values (batch, batch id, status, lock `by` and `forced`, `lists_sha256`) and the record's version keys. The baseline was written again from the logger on main, twice, with identical bytes, and the current logger's default export gives the same file. Files: `tests/export_baseline.py`, `tests/data/export_default_baseline.json`. Checked by a second confirmation round (`round1_confirm2_codex.md`).
+
+## Second confirmation round (round1_confirm2_codex.md)
+
+- **High, nested source digest keys are still hidden.** Changed. `_mask` now keeps every nested key under a volatile key and masks only the leaf values that are not null, so `sources[].lerobot` is compared as `{data, meta, videos}` with `videos` null. The baseline was written again from the logger on main, twice with identical bytes, and the current logger's default export gives the same file. Files: `tests/export_baseline.py`, `tests/data/export_default_baseline.json`. Checked by `round1_confirm3_codex.md`.

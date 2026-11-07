@@ -224,7 +224,11 @@
     {
      "batch": "b1",
      "batch_id": "d23f0824128b",
-     "lerobot": "<varies>",
+     "lerobot": {
+      "data": "<varies>",
+      "meta": "<varies>",
+      "videos": null
+     },
      "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
      "locked": {
       "at": "<varies>",
@@ -349,7 +353,11 @@
     {
      "batch": "b1",
      "batch_id": "d23f0824128b",
-     "lerobot": "<varies>",
+     "lerobot": {
+      "data": "<varies>",
+      "meta": "<varies>",
+      "videos": null
+     },
      "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
      "locked": {
       "at": "<varies>",
@@ -874,7 +882,11 @@
     {
      "batch": "b1",
      "batch_id": "d23f0824128b",
-     "lerobot": "<varies>",
+     "lerobot": {
+      "data": "<varies>",
+      "meta": "<varies>",
+      "videos": null
+     },
      "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
      "locked": {
       "at": "<varies>",
@@ -1001,7 +1013,11 @@
     {
      "batch": "b1",
      "batch_id": "d23f0824128b",
-     "lerobot": "<varies>",
+     "lerobot": {
+      "data": "<varies>",
+      "meta": "<varies>",
+      "videos": null
+     },
      "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
      "locked": {
       "at": "<varies>",
@@ -1630,7 +1646,11 @@
     {
      "batch": "b1",
      "batch_id": "d23f0824128b",
-     "lerobot": "<varies>",
+     "lerobot": {
+      "data": "<varies>",
+      "meta": "<varies>",
+      "videos": null
+     },
      "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
      "locked": {
       "at": "<varies>",
@@ -1767,7 +1787,11 @@
     {
      "batch": "b1",
      "batch_id": "d23f0824128b",
-     "lerobot": "<varies>",
+     "lerobot": {
+      "data": "<varies>",
+      "meta": "<varies>",
+      "videos": null
+     },
      "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
      "locked": {
       "at": "<varies>",
@@ -2079,7 +2103,11 @@
     {
      "batch": "b1",
      "batch_id": "d23f0824128b",
-     "lerobot": "<varies>",
+     "lerobot": {
+      "data": "<varies>",
+      "meta": "<varies>",
+      "videos": null
+     },
      "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
      "locked": {
       "at": "<varies>",
@@ -2205,7 +2233,11 @@
     {
      "batch": "b1",
      "batch_id": "d23f0824128b",
-     "lerobot": "<varies>",
+     "lerobot": {
+      "data": "<varies>",
+      "meta": "<varies>",
+      "videos": null
+     },
      "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
      "locked": {
       "at": "<varies>",
@@ -2730,7 +2762,11 @@
     {
      "batch": "b1",
      "batch_id": "d23f0824128b",
-     "lerobot": "<varies>",
+     "lerobot": {
+      "data": "<varies>",
+      "meta": "<varies>",
+      "videos": null
+     },
      "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
      "locked": {
       "at": "<varies>",
@@ -2857,7 +2893,11 @@
     {
      "batch": "b1",
      "batch_id": "d23f0824128b",
-     "lerobot": "<varies>",
+     "lerobot": {
+      "data": "<varies>",
+      "meta": "<varies>",
+      "videos": null
+     },
      "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
      "locked": {
       "at": "<varies>",
