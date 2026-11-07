@@ -148,7 +148,8 @@ unmapped is recorded as unknown, never invented.
 | `reward`, `terminated` | `next.reward`, `next.done` |
 | times | from LeRobot `timestamp`; `clock.obs_timestamp_kind = "from_dataset_timestamp"` so latency stats say they are not measured |
 
-Presets bundle common mappings: `lerobot-hil` (HIL-SERL recordings), `watcher`, `plain` (actions only). Every run
+Presets bundle common mappings: `lerobot-rollout` (DAgger rollouts), `lerobot-hil` and `lerobot-hil-record`
+(HIL-SERL recordings with and without an intervention flag), `watcher`, `plain` (actions only). Every run
 records `origin: {kind: "import", source, preset, mapping digest, fields: {field: where it came from | "unknown"}}`,
 and the viewer's run card shows unknown fields as data warnings ("Base action not recorded: residual targets
 unavailable for this run").

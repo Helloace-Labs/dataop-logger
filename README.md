@@ -336,8 +336,16 @@ A mapping says where each field comes from; anything without a source is stored 
 | --- | --- | --- | --- |
 | `demos` | a person, every frame | none | success |
 | `plain` | unknown | unknown | unknown |
-| `lerobot-hil` | `complementary_info.is_intervention` | the sent action on policy frames | `next.success` on any frame |
+| `lerobot-rollout` | the `intervention` column | the sent action on policy frames | unknown |
+| `lerobot-hil` | `complementary_info.is_intervention` | the sent action on policy frames | `next.reward` above 0 on any frame |
+| `lerobot-hil-record` | unknown | unknown | `next.reward` above 0 on any frame |
 | `watcher` | the `intervention` column | `<session>_raw/epNNN.npy`, one row per policy frame | `<session>_results_*.json` |
+
+`lerobot-rollout` is for `lerobot-rollout --strategy.type=dagger` datasets (LeRobot 0.6 and later). `lerobot-hil` is
+for the HIL-SERL replay buffers the learner saves with an intervention flag (LeRobot 0.3.x, and 0.6 and later), and
+`lerobot-hil-record` for HIL-SERL recordings without one (`gym_manipulator` record mode, and the 0.4 and 0.5 buffers).
+No LeRobot release writes a `next.success` column, so both HIL presets read success from the reward of 1 the
+environment gives on the step that reached it. The importer's docstring lists which release writes which column.
 
 The default `--preset auto` picks one from the dataset's columns and side files. The Watcher preset also takes each
 episode's time from its raw file, marked as estimated. Pass `--map map.json` to map your own columns and side files (format in `src/aftershock_logger/importer.py`). Import is

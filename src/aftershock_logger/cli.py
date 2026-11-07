@@ -141,7 +141,8 @@ def _main(argv=None) -> int:
     ip = sub.add_parser("import", help="bind runs to an existing LeRobot v3.0 dataset (local folder or Hub repo id)")
     ip.add_argument("source", help="dataset folder, or a Hugging Face Hub repo id (needs --into)")
     ip.add_argument("--into", help="copy the dataset here first and import into the copy")
-    ip.add_argument("--preset", default="auto", help="field mapping preset: auto (detect), demos, plain, lerobot-hil or watcher")
+    ip.add_argument("--preset", default="auto", help="field mapping preset: auto (detect), demos, plain, lerobot-rollout, lerobot-hil, "
+                    "lerobot-hil-record or watcher")
     ip.add_argument("--map", help="JSON file with a field mapping (overrides the preset's entries)")
     ip.add_argument("--batch", help="batch the imported runs join (default: 'import <folder name>')")
     ip.add_argument("--episodes", help="only these episodes, e.g. 0-9,12")
