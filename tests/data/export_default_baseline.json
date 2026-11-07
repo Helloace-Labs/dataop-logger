@@ -159,11 +159,15 @@
      "episode": 0,
      "frames": 30,
      "kept": 0,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 3,
+     "root": "<varies>",
      "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
      "spans": [],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "dagger",
@@ -175,11 +179,15 @@
      "episode": 1,
      "frames": 10,
      "kept": 0,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 1,
+     "root": "<varies>",
      "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
      "spans": [],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "dagger",
@@ -192,8 +200,11 @@
      "episode": 2,
      "frames": 16,
      "kept": 8,
+     "manifest_sha256": "<varies>",
      "outcome": "failure",
+     "review_digest": "<varies>",
      "review_rev": 2,
+     "root": "<varies>",
      "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
      "spans": [
       [
@@ -205,23 +216,32 @@
        16
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     }
    ],
    "sources": [
-    [
-     "batch",
-     "batch_id",
-     "lerobot",
-     "lists_sha256",
-     "locked",
-     "root",
-     "status"
-    ]
+    {
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "lerobot": "<varies>",
+     "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
+     "locked": {
+      "at": "<varies>",
+      "by": "human",
+      "forced": false
+     },
+     "root": "<varies>",
+     "status": "locked"
+    }
    ],
    "split": false,
    "stale": false,
-   "this_split": "train"
+   "this_split": "train",
+   "versions": [
+    "dataop_logger",
+    "lerobot"
+   ]
   },
   "report": {
    "dry_run": false,
@@ -264,11 +284,15 @@
      "episode": 0,
      "frames": 30,
      "kept": 0,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 3,
+     "root": "<varies>",
      "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
      "spans": [],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "dagger",
@@ -280,11 +304,15 @@
      "episode": 1,
      "frames": 10,
      "kept": 0,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 1,
+     "root": "<varies>",
      "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
      "spans": [],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "dagger",
@@ -297,8 +325,11 @@
      "episode": 2,
      "frames": 16,
      "kept": 8,
+     "manifest_sha256": "<varies>",
      "outcome": "failure",
+     "review_digest": "<varies>",
      "review_rev": 2,
+     "root": "<varies>",
      "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
      "spans": [
       [
@@ -310,7 +341,23 @@
        16
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
+    }
+   ],
+   "sources": [
+    {
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "lerobot": "<varies>",
+     "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
+     "locked": {
+      "at": "<varies>",
+      "by": "human",
+      "forced": false
+     },
+     "root": "<varies>",
+     "status": "locked"
     }
    ],
    "stale": false
@@ -760,8 +807,11 @@
      "episode": 0,
      "frames": 30,
      "kept": 28,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 3,
+     "root": "<varies>",
      "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
      "spans": [
       [
@@ -773,7 +823,8 @@
        30
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "filtered",
@@ -783,8 +834,11 @@
      "episode": 1,
      "frames": 10,
      "kept": 10,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 1,
+     "root": "<varies>",
      "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
      "spans": [
       [
@@ -792,7 +846,8 @@
        10
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "filtered",
@@ -804,27 +859,39 @@
      "episode": 2,
      "frames": 16,
      "kept": 0,
+     "manifest_sha256": "<varies>",
      "outcome": "failure",
+     "review_digest": "<varies>",
      "review_rev": 2,
+     "root": "<varies>",
      "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
      "spans": [],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     }
    ],
    "sources": [
-    [
-     "batch",
-     "batch_id",
-     "lerobot",
-     "lists_sha256",
-     "locked",
-     "root",
-     "status"
-    ]
+    {
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "lerobot": "<varies>",
+     "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
+     "locked": {
+      "at": "<varies>",
+      "by": "human",
+      "forced": false
+     },
+     "root": "<varies>",
+     "status": "locked"
+    }
    ],
    "split": false,
    "stale": false,
-   "this_split": "train"
+   "this_split": "train",
+   "versions": [
+    "dataop_logger",
+    "lerobot"
+   ]
   },
   "report": {
    "dry_run": false,
@@ -867,8 +934,11 @@
      "episode": 0,
      "frames": 30,
      "kept": 28,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 3,
+     "root": "<varies>",
      "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
      "spans": [
       [
@@ -880,7 +950,8 @@
        30
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "filtered",
@@ -890,8 +961,11 @@
      "episode": 1,
      "frames": 10,
      "kept": 10,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 1,
+     "root": "<varies>",
      "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
      "spans": [
       [
@@ -899,7 +973,8 @@
        10
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "filtered",
@@ -911,11 +986,30 @@
      "episode": 2,
      "frames": 16,
      "kept": 0,
+     "manifest_sha256": "<varies>",
      "outcome": "failure",
+     "review_digest": "<varies>",
      "review_rev": 2,
+     "root": "<varies>",
      "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
      "spans": [],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
+    }
+   ],
+   "sources": [
+    {
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "lerobot": "<varies>",
+     "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
+     "locked": {
+      "at": "<varies>",
+      "by": "human",
+      "forced": false
+     },
+     "root": "<varies>",
+     "status": "locked"
     }
    ],
    "stale": false
@@ -1459,8 +1553,11 @@
      "episode": 0,
      "frames": 30,
      "kept": 28,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 3,
+     "root": "<varies>",
      "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
      "spans": [
       [
@@ -1472,7 +1569,8 @@
        30
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "teleop",
@@ -1482,8 +1580,11 @@
      "episode": 1,
      "frames": 10,
      "kept": 10,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 1,
+     "root": "<varies>",
      "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
      "spans": [
       [
@@ -1491,7 +1592,8 @@
        10
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "dagger",
@@ -1504,8 +1606,11 @@
      "episode": 2,
      "frames": 16,
      "kept": 8,
+     "manifest_sha256": "<varies>",
      "outcome": "failure",
+     "review_digest": "<varies>",
      "review_rev": 2,
+     "root": "<varies>",
      "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
      "spans": [
       [
@@ -1517,23 +1622,32 @@
        16
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     }
    ],
    "sources": [
-    [
-     "batch",
-     "batch_id",
-     "lerobot",
-     "lists_sha256",
-     "locked",
-     "root",
-     "status"
-    ]
+    {
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "lerobot": "<varies>",
+     "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
+     "locked": {
+      "at": "<varies>",
+      "by": "human",
+      "forced": false
+     },
+     "root": "<varies>",
+     "status": "locked"
+    }
    ],
    "split": false,
    "stale": false,
-   "this_split": "train"
+   "this_split": "train",
+   "versions": [
+    "dataop_logger",
+    "lerobot"
+   ]
   },
   "report": {
    "dry_run": false,
@@ -1576,8 +1690,11 @@
      "episode": 0,
      "frames": 30,
      "kept": 28,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 3,
+     "root": "<varies>",
      "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
      "spans": [
       [
@@ -1589,7 +1706,8 @@
        30
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "teleop",
@@ -1599,8 +1717,11 @@
      "episode": 1,
      "frames": 10,
      "kept": 10,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 1,
+     "root": "<varies>",
      "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
      "spans": [
       [
@@ -1608,7 +1729,8 @@
        10
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "dagger",
@@ -1621,8 +1743,11 @@
      "episode": 2,
      "frames": 16,
      "kept": 8,
+     "manifest_sha256": "<varies>",
      "outcome": "failure",
+     "review_digest": "<varies>",
      "review_rev": 2,
+     "root": "<varies>",
      "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
      "spans": [
       [
@@ -1634,7 +1759,23 @@
        16
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
+    }
+   ],
+   "sources": [
+    {
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "lerobot": "<varies>",
+     "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
+     "locked": {
+      "at": "<varies>",
+      "by": "human",
+      "forced": false
+     },
+     "root": "<varies>",
+     "status": "locked"
     }
    ],
    "stale": false
@@ -1873,11 +2014,15 @@
      "episode": 0,
      "frames": 30,
      "kept": 0,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 3,
+     "root": "<varies>",
      "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
      "spans": [],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "residual",
@@ -1889,11 +2034,15 @@
      "episode": 1,
      "frames": 10,
      "kept": 0,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 1,
+     "root": "<varies>",
      "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
      "spans": [],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "residual",
@@ -1906,8 +2055,11 @@
      "episode": 2,
      "frames": 16,
      "kept": 8,
+     "manifest_sha256": "<varies>",
      "outcome": "failure",
+     "review_digest": "<varies>",
      "review_rev": 2,
+     "root": "<varies>",
      "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
      "spans": [
       [
@@ -1919,23 +2071,32 @@
        16
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     }
    ],
    "sources": [
-    [
-     "batch",
-     "batch_id",
-     "lerobot",
-     "lists_sha256",
-     "locked",
-     "root",
-     "status"
-    ]
+    {
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "lerobot": "<varies>",
+     "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
+     "locked": {
+      "at": "<varies>",
+      "by": "human",
+      "forced": false
+     },
+     "root": "<varies>",
+     "status": "locked"
+    }
    ],
    "split": false,
    "stale": false,
-   "this_split": "train"
+   "this_split": "train",
+   "versions": [
+    "dataop_logger",
+    "lerobot"
+   ]
   },
   "report": {
    "dry_run": false,
@@ -1979,11 +2140,15 @@
      "episode": 0,
      "frames": 30,
      "kept": 0,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 3,
+     "root": "<varies>",
      "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
      "spans": [],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "residual",
@@ -1995,11 +2160,15 @@
      "episode": 1,
      "frames": 10,
      "kept": 0,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 1,
+     "root": "<varies>",
      "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
      "spans": [],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "residual",
@@ -2012,8 +2181,11 @@
      "episode": 2,
      "frames": 16,
      "kept": 8,
+     "manifest_sha256": "<varies>",
      "outcome": "failure",
+     "review_digest": "<varies>",
      "review_rev": 2,
+     "root": "<varies>",
      "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
      "spans": [
       [
@@ -2025,7 +2197,23 @@
        16
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
+    }
+   ],
+   "sources": [
+    {
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "lerobot": "<varies>",
+     "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
+     "locked": {
+      "at": "<varies>",
+      "by": "human",
+      "forced": false
+     },
+     "root": "<varies>",
+     "status": "locked"
     }
    ],
    "stale": false
@@ -2475,8 +2663,11 @@
      "episode": 0,
      "frames": 30,
      "kept": 28,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 3,
+     "root": "<varies>",
      "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
      "spans": [
       [
@@ -2488,7 +2679,8 @@
        30
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "teleop",
@@ -2498,8 +2690,11 @@
      "episode": 1,
      "frames": 10,
      "kept": 10,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 1,
+     "root": "<varies>",
      "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
      "spans": [
       [
@@ -2507,7 +2702,8 @@
        10
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "teleop",
@@ -2519,27 +2715,39 @@
      "episode": 2,
      "frames": 16,
      "kept": 0,
+     "manifest_sha256": "<varies>",
      "outcome": "failure",
+     "review_digest": "<varies>",
      "review_rev": 2,
+     "root": "<varies>",
      "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
      "spans": [],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     }
    ],
    "sources": [
-    [
-     "batch",
-     "batch_id",
-     "lerobot",
-     "lists_sha256",
-     "locked",
-     "root",
-     "status"
-    ]
+    {
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "lerobot": "<varies>",
+     "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
+     "locked": {
+      "at": "<varies>",
+      "by": "human",
+      "forced": false
+     },
+     "root": "<varies>",
+     "status": "locked"
+    }
    ],
    "split": false,
    "stale": false,
-   "this_split": "train"
+   "this_split": "train",
+   "versions": [
+    "dataop_logger",
+    "lerobot"
+   ]
   },
   "report": {
    "dry_run": false,
@@ -2582,8 +2790,11 @@
      "episode": 0,
      "frames": 30,
      "kept": 28,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 3,
+     "root": "<varies>",
      "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
      "spans": [
       [
@@ -2595,7 +2806,8 @@
        30
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "teleop",
@@ -2605,8 +2817,11 @@
      "episode": 1,
      "frames": 10,
      "kept": 10,
+     "manifest_sha256": "<varies>",
      "outcome": "success",
+     "review_digest": "<varies>",
      "review_rev": 1,
+     "root": "<varies>",
      "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
      "spans": [
       [
@@ -2614,7 +2829,8 @@
        10
       ]
      ],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
     },
     {
      "as": "teleop",
@@ -2626,11 +2842,30 @@
      "episode": 2,
      "frames": 16,
      "kept": 0,
+     "manifest_sha256": "<varies>",
      "outcome": "failure",
+     "review_digest": "<varies>",
      "review_rev": 2,
+     "root": "<varies>",
      "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
      "spans": [],
-     "split": "train"
+     "split": "train",
+     "ticks_sha256": "<varies>"
+    }
+   ],
+   "sources": [
+    {
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "lerobot": "<varies>",
+     "lists_sha256": "20cfb5c3016d0454f22f980c484392423615d93e3feab3ee82c7dc9d194c941c",
+     "locked": {
+      "at": "<varies>",
+      "by": "human",
+      "forced": false
+     },
+     "root": "<varies>",
+     "status": "locked"
     }
    ],
    "stale": false

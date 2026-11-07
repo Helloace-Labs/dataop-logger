@@ -8,7 +8,7 @@ prompts existed, and tests/test_export_prompts.py compares the current logger's 
 
 The summary holds what the export decides and writes, not what differs between two builds of the same fixture: per
 recipe the report (without digests of files that carry times, the export id or paths), the record's keys and the
-same fields, and every written episode's prompt, source frames (the state holds the source frame index), actions and
+same fields, with the sources' values, and every written episode's prompt, source frames (the state holds the source frame index), actions and
 extra features, in episode order. Run ids and batch ids come from a seeded generator, so runs keep their order.
 """
 from __future__ import annotations
@@ -26,7 +26,9 @@ import numpy as np
 RECIPES = ("teleop", "lora", "filtered", "dagger", "residual")
 TASK = "put the cube in the bin"
 NAMES = ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper")
-VARY = ("root", "review_digest", "ticks_sha256", "manifest_sha256")      # differ between two builds of the fixture
+# values that differ between two builds of the fixture (paths, times, digests of files with times, LeRobot's
+# stats.json key order); the key stays, with its value masked, so a key that goes missing still shows
+VARY = ("root", "review_digest", "ticks_sha256", "manifest_sha256", "at", "lerobot")
 
 
 def _seeded_uuids(seed: int = 7):
@@ -90,9 +92,13 @@ def build_fixture(root: Path) -> None:
         uuid.uuid4 = real
 
 
-def _runs(runs: list[dict]) -> list[dict]:
-    return [{k: (json.loads(json.dumps(v)) if k == "spans" else v) for k, v in r.items() if k not in VARY}
-            for r in runs]
+def _mask(v):
+    """v as JSON, with the value of every VARY key masked (None stays None, so a value that disappears shows)."""
+    if isinstance(v, dict):
+        return {k: (x if x is None else "<varies>") if k in VARY else _mask(x) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_mask(x) for x in v]
+    return v
 
 
 def _episodes(out: Path) -> list[dict]:
@@ -121,11 +127,12 @@ def _episodes(out: Path) -> list[dict]:
 def summary(rep: dict, out: Path) -> dict:
     rec = json.loads((out / "dataop_export.json").read_text()) if (out / "dataop_export.json").exists() else None
     keep = ("recipe", "options", "dry_run", "episodes", "frames", "hook", "split", "this_split", "registered", "stale")
-    return {"report": {"keys": sorted(rep), "runs": _runs(rep["runs"]),
-                       **{k: rep.get(k) for k in keep if k in rep}},
-            "record": rec and {"keys": sorted(rec), "runs": _runs(rec["runs"]),
-                               "sources": [sorted(s_) for s_ in rec["sources"]],
-                               **{k: rec.get(k) for k in keep if k in rec}},
+    rep = json.loads(json.dumps(rep))
+    return {"report": {"keys": sorted(rep), "runs": _mask(rep["runs"]), "sources": _mask(rep["sources"]),
+                       **{k: _mask(rep.get(k)) for k in keep if k in rep}},
+            "record": rec and {"keys": sorted(rec), "runs": _mask(rec["runs"]), "sources": _mask(rec["sources"]),
+                               "versions": sorted(rec["versions"]),
+                               **{k: _mask(rec.get(k)) for k in keep if k in rec}},
             "written": rep.get("written") and {k: v["episodes"] for k, v in rep["written"].items()},
             "dataset": _episodes(out) if (out / "meta").exists() else None}
 
