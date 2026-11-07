@@ -17,7 +17,8 @@ as unknown, never invented. Per-run `origin.fields` says where each field came f
                      with "covers": "policy_frames": one row per policy-driven frame, in order (count must match)
                    | "sent_on_policy_frames",                         the command sent while the policy drove
    "expert_action": {"column": ...} | {"file": ...} | "sent_on_expert_frames" (default when control is mapped),
-   "outcome":      {"column": "next.success"}                        true on the last frame = success
+   "outcome":      {"column": "next.success"}                        true on any frame = success
+                   | {"column": "next.reward", "above": 0}           a value above the threshold on any frame = success
                    | {"constant": "success"}                         every episode (demos kept only if they worked)
                    | {"file": "{root}_results_*.json", "key": "episode", "field": "result",
                       "values": {"vla_success": "success", "watcher_rescue": "failure"}},
@@ -41,6 +42,29 @@ with `use_degrees` on: degrees for the five body joints, percent (0 to 100) for 
 `use_degrees` off reads its body joints in LeRobot's -100 to 100 range; give it a per dimension list instead.
 
 Path patterns: {root} is the dataset folder path, {name} its folder name, {episode} the episode index.
+
+Auto-detection picks lerobot-hil-record only with HIL-SERL's `complementary_info.discrete_penalty` column next to
+`next.reward` and `next.done`. Other datasets with transition columns get `plain`: a reward is not known to mean
+success there. A threshold outcome is decided by finite values only; a missing, NaN or infinite value leaves it unknown
+unless another frame is above the threshold.
+
+LeRobot's own recordings, by the release that wrote them (checked against the published releases 0.3.2 to 0.7.0):
+
+  lerobot-rollout   `lerobot-rollout --strategy.type=dagger` (0.6.0 and later) writes a bool `intervention` column:
+                    true on the frames a person drove through the teleoperator, false on the policy's frames. The
+                    `action` column holds what was sent to the robot either way. With the default corrections-only
+                    recording every frame is an intervention; with `record_autonomous` the policy's frames are there
+                    too. Nothing in the dataset says whether the task succeeded, so the outcome stays unknown.
+  lerobot-hil       HIL-SERL replay buffers that the learner saves at each checkpoint (`dataset/`, `dataset_offline/`)
+                    as LeRobot datasets. `complementary_info.is_intervention` is there in 0.3.x (the actor passed the
+                    environment's whole info) and again from 0.6.0 (the actor adds it back); 0.4.x and 0.5.x saved only
+                    `complementary_info.discrete_penalty`. The `action` column is the command that was executed, the
+                    person's on intervention frames. No release writes a `next.success` column: success is the reward
+                    of 1 the environment gives on the step that reached it, so the outcome is read from `next.reward`.
+  lerobot-hil-record  `gym_manipulator` in record mode (every release), and the 0.4.x and 0.5.x replay buffers:
+                    `next.reward`, `next.done` and usually `complementary_info.discrete_penalty`, with no column that
+                    says who drove a frame, so who drove stays unknown. A recording known to be teleop only can add
+                    {"control": {"constant": "expert"}} to the mapping.
 """
 from __future__ import annotations
 
@@ -66,10 +90,16 @@ PRESETS = {
     # it does not declare that no policy or planner ran: auto-detection picks it when nothing says a policy drove,
     # which is not evidence of absence. Add {"policy": null, "planner": null} to the mapping to declare that.
     "demos": {"control": {"constant": "expert"}, "expert_source": "human", "outcome": {"constant": "success"}},
-    # LeRobot's human-in-the-loop recordings (gym_manipulator / HIL-SERL)
+    # LeRobot DAgger rollouts (lerobot-rollout --strategy.type=dagger, 0.6.0 and later): a person corrects the policy
+    "lerobot-rollout": {"control": {"column": "intervention"}, "expert_source": "human",
+                        "base_action": "sent_on_policy_frames"},
+    # LeRobot HIL-SERL replay buffers saved with an intervention flag (0.3.x, and 0.6.0 and later); see the docstring
     "lerobot-hil": {"control": {"column": "complementary_info.is_intervention"}, "expert_source": "human",
-                    "base_action": "sent_on_policy_frames", "outcome": {"column": "next.success"},
+                    "base_action": "sent_on_policy_frames", "outcome": {"column": "next.reward", "above": 0},
                     "reward": {"column": "next.reward"}},
+    # LeRobot HIL-SERL recordings without an intervention flag: gym_manipulator record mode, 0.4.x and 0.5.x buffers
+    "lerobot-hil-record": {"expert_source": "human", "outcome": {"column": "next.reward", "above": 0},
+                           "reward": {"column": "next.reward"}},
     # sessions recorded by Watcher: an intervention column, the base model's raw output and a results file
     "watcher": {"control": {"column": "intervention"}, "expert_source": "skill:rescue",
                 "base_action": {"file": "{root}_raw/ep{episode:03d}.npy", "covers": "policy_frames"},
@@ -122,7 +152,9 @@ def resolve_source(source: str, into: str | None) -> tuple[Path, bool]:
 
 
 PRESET_LABELS = {"watcher": "Watcher session: policy runs with rescues",
+                 "lerobot-rollout": "LeRobot DAgger rollout: policy runs with corrections",
                  "lerobot-hil": "LeRobot human-in-the-loop: policy runs with interventions",
+                 "lerobot-hil-record": "LeRobot HIL-SERL recording: who drove is not recorded",
                  "demos": "Teleop demos: a person drove every episode",
                  "plain": "Other: who drove is not recorded"}
 
@@ -138,6 +170,12 @@ def detect(root: Path) -> str:
     if "complementary_info.is_intervention" in names:
         return "lerobot-hil"
     if "intervention" in names:
+        return "lerobot-rollout"
+    if {"next.reward", "next.done", "complementary_info.discrete_penalty"} <= names:
+        return "lerobot-hil-record"
+    if {"next.reward", "next.done"} & names:
+        # transition columns without LeRobot's HIL-SERL marker: a reward is not known to mean success, and a recording
+        # with rewards is not known to be demos, so nothing is mapped; pick a preset or a mapping by hand
         return "plain"
     return "demos"
 
@@ -154,6 +192,10 @@ def _mapping(preset: str | None, mapping: dict | None) -> dict:
         raise ImportError_("a constant control mode is base (the policy) or expert (a person or script)")
     if isinstance(o, dict) and "constant" in o and o["constant"] not in TERMINATION_REASONS:
         raise ImportError_(f"a constant outcome is one of {sorted(TERMINATION_REASONS)}")
+    if isinstance(o, dict) and "above" in o and ("column" not in o or isinstance(o["above"], bool) or
+                                                 not isinstance(o["above"], (int, float)) or
+                                                 not np.isfinite(o["above"])):
+        raise ImportError_("an outcome threshold (above) is a finite number and goes with a column")
     if "policy" in m and m["policy"] is not None and not isinstance(m["policy"], dict):
         raise ImportError_("policy is a policy record, or null when no policy ran; leave it out when not known")
     if "planner" in m:
@@ -278,9 +320,10 @@ def plan(root: Path, preset: str | None = "plain", mapping: dict | None = None, 
         raise ImportError_(f"the {action_key!r} feature names {len(names)} actions but has {dim} dimensions")
     schema = ActionSchema(names=tuple(names), units=action_units(mp.get("action_units"), names),
                           space=space, rate_hz=float(info["fps"]))
-    cols_wanted = [s["column"] for s in (mp.get(k) for k in ("control", "base_action", "expert_action", "outcome",
-                                                             "reward", "segments"))
-                   if isinstance(s, dict) and "column" in s and "constant" not in s]
+    # one column may feed two fields (next.reward gives the reward and the outcome): read it once
+    cols_wanted = list(dict.fromkeys(s["column"] for s in (mp.get(k) for k in ("control", "base_action", "expert_action",
+                                                                             "outcome", "reward", "segments"))
+                                     if isinstance(s, dict) and "column" in s and "constant" not in s))
     cols = _columns(root, cols_wanted)
     missing_cols = [c for c in cols_wanted if c not in cols["names"]]
     eps = load_lerobot_episodes(root, action_key)
@@ -292,7 +335,8 @@ def plan(root: Path, preset: str | None = "plain", mapping: dict | None = None, 
         fields[k] = ("unknown" if s is None else s if isinstance(s, str) else
                      f"always {s['constant']}" if "constant" in s else
                      f"file time of {s['file_mtime']}" if "file_mtime" in s else
-                     f"column {s['column']}" + (" (missing)" if s["column"] in missing_cols else "")
+                     f"column {s['column']}" + (f" above {s['above']}" if "above" in s else "") +
+                     (" (missing)" if s["column"] in missing_cols else "")
                      if "column" in s else f"file {s['file']}")
     if mp.get("expert_action") is None and mp.get("control"):
         fields["expert_action"] = "sent_on_expert_frames"
@@ -388,8 +432,23 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
     if isinstance(oc, dict) and "constant" in oc:
         reason = oc["constant"]
     elif isinstance(oc, dict) and "column" in oc and oc["column"] in rows:
-        # LeRobot marks success on the step that reached it (next.success); any such step makes the run a success
-        reason = "success" if any(bool(_scalar(v)) for v in rows[oc["column"]]) else "failure"
+        # LeRobot marks success on the step that reached it (next.success, or a reward on that step); any such step
+        # makes the run a success
+        if "above" in oc:
+            # only a finite value decides: success when one is above the threshold, failure only when every value
+            # is finite; a missing, NaN or infinite value leaves the outcome unknown
+            vals = [_scalar(v) for v in rows[oc["column"]]]
+            vals = [np.nan if v is None else float(v) for v in vals]
+            finite = np.isfinite(vals)
+            if any(f and v > oc["above"] for f, v in zip(finite, vals)):
+                reason = "success"
+            elif finite.all():
+                reason = "failure"
+            else:
+                notes.append(f"outcome: {int((~finite).sum())} frames of {oc['column']} are missing or not finite, "
+                             "so the outcome is not known")
+        else:
+            reason = "success" if any(bool(_scalar(v)) for v in rows[oc["column"]]) else "failure"
     elif isinstance(oc, dict) and "file" in oc:
         rec = results["outcome"].get(e)
         if rec is not None:

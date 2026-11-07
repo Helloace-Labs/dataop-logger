@@ -143,12 +143,13 @@ unmapped is recorded as unknown, never invented.
 | `expert_source` | constant string or column |
 | `base_action` | a per-frame feature (for example `complementary_info.policy_action`) or a per-episode file (`.npy` T x n, or `.parquet`/`.csv` with `frame_index`) via a path pattern with `{episode_index}` |
 | `expert_action` | a feature or file as above; with an intervention flag, `action` on intervention frames |
-| outcome | `next.success` on the last frame (LeRobot constant), a per-episode results file field, or `unknown` |
+| outcome | a column true on any frame (a custom `next.success`), a numeric column above a threshold on any frame (the HIL presets read `next.reward` above 0, since no LeRobot release writes `next.success`), a per-episode results file field, or `unknown` |
 | `failure_mode`, task segments | per-episode results file fields, or a per-frame string column for segments |
 | `reward`, `terminated` | `next.reward`, `next.done` |
 | times | from LeRobot `timestamp`; `clock.obs_timestamp_kind = "from_dataset_timestamp"` so latency stats say they are not measured |
 
-Presets bundle common mappings: `lerobot-hil` (HIL-SERL recordings), `watcher`, `plain` (actions only). Every run
+Presets bundle common mappings: `lerobot-rollout` (DAgger rollouts), `lerobot-hil` and `lerobot-hil-record`
+(HIL-SERL recordings with and without an intervention flag), `watcher`, `plain` (actions only). Every run
 records `origin: {kind: "import", source, preset, mapping digest, fields: {field: where it came from | "unknown"}}`,
 and the viewer's run card shows unknown fields as data warnings ("Base action not recorded: residual targets
 unavailable for this run").
