@@ -347,7 +347,9 @@ for the HIL-SERL replay buffers the learner saves with an intervention flag (LeR
 No LeRobot release writes a `next.success` column, so both HIL presets read success from the reward of 1 the
 environment gives on the step that reached it. The importer's docstring lists which release writes which column.
 
-The default `--preset auto` picks one from the dataset's columns and side files. The Watcher preset also takes each
+The default `--preset auto` picks one from the dataset's columns and side files. It picks `lerobot-hil-record` only
+when HIL-SERL's `complementary_info.discrete_penalty` is there too; other datasets with `next.reward` or `next.done`
+get `plain`, since a reward is not known to mean success there. The Watcher preset also takes each
 episode's time from its raw file, marked as estimated. Pass `--map map.json` to map your own columns and side files (format in `src/aftershock_logger/importer.py`). Import is
 idempotent: episodes that already have a run are skipped.
 

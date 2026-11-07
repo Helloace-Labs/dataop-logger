@@ -43,6 +43,11 @@ with `use_degrees` on: degrees for the five body joints, percent (0 to 100) for 
 
 Path patterns: {root} is the dataset folder path, {name} its folder name, {episode} the episode index.
 
+Auto-detection picks lerobot-hil-record only with HIL-SERL's `complementary_info.discrete_penalty` column next to
+`next.reward` and `next.done`. Other datasets with transition columns get `plain`: a reward is not known to mean
+success there. A threshold outcome is decided by finite values only; a missing, NaN or infinite value leaves it unknown
+unless another frame is above the threshold.
+
 LeRobot's own recordings, by the release that wrote them (checked against the published releases 0.3.2 to 0.7.0):
 
   lerobot-rollout   `lerobot-rollout --strategy.type=dagger` (0.6.0 and later) writes a bool `intervention` column:
@@ -166,8 +171,12 @@ def detect(root: Path) -> str:
         return "lerobot-hil"
     if "intervention" in names:
         return "lerobot-rollout"
-    if {"next.reward", "next.done"} <= names:
+    if {"next.reward", "next.done", "complementary_info.discrete_penalty"} <= names:
         return "lerobot-hil-record"
+    if {"next.reward", "next.done"} & names:
+        # transition columns without LeRobot's HIL-SERL marker: a reward is not known to mean success, and a recording
+        # with rewards is not known to be demos, so nothing is mapped; pick a preset or a mapping by hand
+        return "plain"
     return "demos"
 
 
@@ -426,8 +435,18 @@ def _build_run(p: dict, e: int, results: dict) -> tuple[dict, pa.Table, list[str
         # LeRobot marks success on the step that reached it (next.success, or a reward on that step); any such step
         # makes the run a success
         if "above" in oc:
+            # only a finite value decides: success when one is above the threshold, failure only when every value
+            # is finite; a missing, NaN or infinite value leaves the outcome unknown
             vals = [_scalar(v) for v in rows[oc["column"]]]
-            reason = "success" if any(v is not None and float(v) > oc["above"] for v in vals) else "failure"
+            vals = [np.nan if v is None else float(v) for v in vals]
+            finite = np.isfinite(vals)
+            if any(f and v > oc["above"] for f, v in zip(finite, vals)):
+                reason = "success"
+            elif finite.all():
+                reason = "failure"
+            else:
+                notes.append(f"outcome: {int((~finite).sum())} frames of {oc['column']} are missing or not finite, "
+                             "so the outcome is not known")
         else:
             reason = "success" if any(bool(_scalar(v)) for v in rows[oc["column"]]) else "failure"
     elif isinstance(oc, dict) and "file" in oc:

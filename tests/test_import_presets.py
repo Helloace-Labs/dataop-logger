@@ -144,8 +144,9 @@ def test_hil_buffer_with_the_intervention_flag(tmp_path):
 def test_hil_recording_without_the_flag_keeps_who_drove_unknown(tmp_path, penalty):
     """gym_manipulator record mode, and the 0.4 and 0.5 buffers: no column says who drove a frame."""
     ds = hil(tmp_path, "record", flag=False, penalty=penalty)
-    assert importer.detect(ds.root) == "lerobot-hil-record"
-    rep = importer.import_dataset(str(ds.root), preset="auto")
+    # without HIL-SERL's discrete_penalty column the transition columns are not evidence enough: pick it by hand
+    assert importer.detect(ds.root) == ("lerobot-hil-record" if penalty else "plain")
+    rep = importer.import_dataset(str(ds.root), preset="lerobot-hil-record")
     assert rep["preset"] == "lerobot-hil-record" and rep["fields"]["control"] == "unknown"
     got = runs(ds.root)
     assert got[0][0]["termination_reason"] == "success" and got[1][0]["termination_reason"] == "failure"
@@ -169,7 +170,7 @@ def test_a_success_column_still_maps_and_the_threshold_is_checked(tmp_path):
                                           "next.reward": np.array([-1.0], np.float32)}))
     ds.save_episode()
     ds.finalize()
-    assert importer.detect(ds.root) == "demos"                    # no next.done: not a HIL-SERL recording
+    assert importer.detect(ds.root) == "plain"                    # rewards: neither HIL-SERL nor demos
     rep = importer.import_dataset(str(ds.root), preset="plain", mapping={"outcome": {"column": "next.success"}},
                                   dry_run=True)
     assert rep["runs"][0]["outcome"] == "success"
@@ -190,3 +191,36 @@ def test_every_preset_has_a_label_and_the_cli_lists_it():
     for name in importer.PRESETS:
         assert name in src
     json.dumps(importer.PRESETS)                                  # presets stay plain JSON (the mapping digest)
+
+
+def test_dense_rewards_without_the_hil_marker_are_not_read_as_success(tmp_path):
+    """A failed episode with positive shaping rewards: auto-detect maps nothing, so nothing claims a success."""
+    ds = _create(tmp_path, "dense", {"next.reward": {"dtype": "float32", "shape": (1,), "names": None},
+                                    "next.done": {"dtype": "bool", "shape": (1,), "names": None}})
+    for i in range(5):
+        ds.add_frame(_frame(i, "push", **{"next.reward": np.array([0.2], np.float32),
+                                          "next.done": np.array([i == 4], bool)}))
+    ds.save_episode()
+    ds.finalize()
+    assert importer.detect(ds.root) == "plain"
+    rep = importer.import_dataset(str(ds.root), preset="auto", dry_run=True)
+    assert rep["preset"] == "plain" and rep["runs"][0]["outcome"] == "unknown"
+
+
+@pytest.mark.parametrize("values,want", [
+    ([0.0, np.nan, 0.0], "unknown"),          # a failure cannot be shown while a value is missing
+    ([np.nan, np.nan, np.nan], "unknown"),
+    ([0.0, np.inf, 0.0], "unknown"),          # infinity is not a reward above the threshold
+    ([np.nan, 1.0, 0.0], "success"),          # a finite value above the threshold still decides
+    ([0.0, 0.0, 0.0], "failure")])
+def test_a_threshold_outcome_is_decided_by_finite_values_only(tmp_path, values, want):
+    ds = _create(tmp_path, "r", {"next.reward": {"dtype": "float32", "shape": (1,), "names": None}})
+    for i, v in enumerate(values):
+        ds.add_frame(_frame(i, "pick", **{"next.reward": np.array([v], np.float32)}))
+    ds.save_episode()
+    ds.finalize()
+    rep = importer.import_dataset(str(ds.root), preset="plain", dry_run=True,
+                                  mapping={"outcome": {"column": "next.reward", "above": 0}})
+    assert rep["runs"][0]["outcome"] == want
+    if want == "unknown":
+        assert any("not finite" in n for n in rep["runs"][0]["notes"])
