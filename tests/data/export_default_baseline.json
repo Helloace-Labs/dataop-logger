@@ -1,0 +1,2642 @@
+{
+ "dagger": {
+  "dataset": [
+   {
+    "features": [
+     "action",
+     "episode_index",
+     "frame_index",
+     "index",
+     "observation.state",
+     "task_index",
+     "timestamp"
+    ],
+    "total_episodes": 2,
+    "total_frames": 8
+   },
+   {
+    "frames": [
+     6,
+     7,
+     8
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0
+      ],
+      [
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0
+      ],
+      [
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0
+      ]
+     ]
+    }
+   },
+   {
+    "frames": [
+     11,
+     12,
+     13,
+     14,
+     15
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       12.0,
+       12.0,
+       12.0,
+       12.0,
+       12.0,
+       12.0
+      ],
+      [
+       13.0,
+       13.0,
+       13.0,
+       13.0,
+       13.0,
+       13.0
+      ],
+      [
+       14.0,
+       14.0,
+       14.0,
+       14.0,
+       14.0,
+       14.0
+      ],
+      [
+       15.0,
+       15.0,
+       15.0,
+       15.0,
+       15.0,
+       15.0
+      ],
+      [
+       16.0,
+       16.0,
+       16.0,
+       16.0,
+       16.0,
+       16.0
+      ]
+     ]
+    }
+   }
+  ],
+  "record": {
+   "dry_run": false,
+   "episodes": 2,
+   "frames": 8,
+   "hook": null,
+   "keys": [
+    "at",
+    "by",
+    "dry_run",
+    "episodes",
+    "export_id",
+    "frames",
+    "hook",
+    "options",
+    "recipe",
+    "registered",
+    "runs",
+    "sources",
+    "split",
+    "stale",
+    "this_split",
+    "versions",
+    "written"
+   ],
+   "options": {
+    "base": null,
+    "drop_features": [],
+    "hook": null,
+    "min_span": 1,
+    "outcomes": null,
+    "runs": null,
+    "runs_by_root": null,
+    "segments": null,
+    "val": 0.0,
+    "with_success": false,
+    "zero_on_success": false
+   },
+   "recipe": "dagger",
+   "registered": true,
+   "runs": [
+    {
+     "as": "dagger",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "teleop run (no policy frames)": 30
+     },
+     "episode": 0,
+     "frames": 30,
+     "kept": 0,
+     "outcome": "success",
+     "review_rev": 3,
+     "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
+     "spans": [],
+     "split": "train"
+    },
+    {
+     "as": "dagger",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "teleop run (no policy frames)": 10
+     },
+     "episode": 1,
+     "frames": 10,
+     "kept": 0,
+     "outcome": "success",
+     "review_rev": 1,
+     "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
+     "spans": [],
+     "split": "train"
+    },
+    {
+     "as": "dagger",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "no expert label": 6,
+      "review": 2
+     },
+     "episode": 2,
+     "frames": 16,
+     "kept": 8,
+     "outcome": "failure",
+     "review_rev": 2,
+     "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
+     "spans": [
+      [
+       6,
+       9
+      ],
+      [
+       11,
+       16
+      ]
+     ],
+     "split": "train"
+    }
+   ],
+   "sources": [
+    [
+     "batch",
+     "batch_id",
+     "lerobot",
+     "lists_sha256",
+     "locked",
+     "root",
+     "status"
+    ]
+   ],
+   "split": false,
+   "stale": false,
+   "this_split": "train"
+  },
+  "report": {
+   "dry_run": false,
+   "episodes": 2,
+   "frames": 8,
+   "keys": [
+    "dry_run",
+    "episodes",
+    "export_id",
+    "frames",
+    "options",
+    "recipe",
+    "runs",
+    "sources",
+    "stale",
+    "written"
+   ],
+   "options": {
+    "base": null,
+    "drop_features": [],
+    "hook": null,
+    "min_span": 1,
+    "outcomes": null,
+    "runs": null,
+    "runs_by_root": null,
+    "segments": null,
+    "val": 0.0,
+    "with_success": false,
+    "zero_on_success": false
+   },
+   "recipe": "dagger",
+   "runs": [
+    {
+     "as": "dagger",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "teleop run (no policy frames)": 30
+     },
+     "episode": 0,
+     "frames": 30,
+     "kept": 0,
+     "outcome": "success",
+     "review_rev": 3,
+     "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
+     "spans": [],
+     "split": "train"
+    },
+    {
+     "as": "dagger",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "teleop run (no policy frames)": 10
+     },
+     "episode": 1,
+     "frames": 10,
+     "kept": 0,
+     "outcome": "success",
+     "review_rev": 1,
+     "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
+     "spans": [],
+     "split": "train"
+    },
+    {
+     "as": "dagger",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "no expert label": 6,
+      "review": 2
+     },
+     "episode": 2,
+     "frames": 16,
+     "kept": 8,
+     "outcome": "failure",
+     "review_rev": 2,
+     "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
+     "spans": [
+      [
+       6,
+       9
+      ],
+      [
+       11,
+       16
+      ]
+     ],
+     "split": "train"
+    }
+   ],
+   "stale": false
+  },
+  "written": {
+   "train": 2
+  }
+ },
+ "filtered": {
+  "dataset": [
+   {
+    "features": [
+     "action",
+     "episode_index",
+     "frame_index",
+     "index",
+     "observation.state",
+     "task_index",
+     "timestamp"
+    ],
+    "total_episodes": 3,
+    "total_frames": 38
+   },
+   {
+    "frames": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      [
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0
+      ],
+      [
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0
+      ],
+      [
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0
+      ],
+      [
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0
+      ],
+      [
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0
+      ],
+      [
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0
+      ],
+      [
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0
+      ],
+      [
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0
+      ],
+      [
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0
+      ],
+      [
+       11.0,
+       11.0,
+       11.0,
+       11.0,
+       11.0,
+       11.0
+      ]
+     ]
+    }
+   },
+   {
+    "frames": [
+     14,
+     15,
+     16,
+     17,
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25,
+     26,
+     27,
+     28,
+     29
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       14.0,
+       14.0,
+       14.0,
+       14.0,
+       14.0,
+       14.0
+      ],
+      [
+       15.0,
+       15.0,
+       15.0,
+       15.0,
+       15.0,
+       15.0
+      ],
+      [
+       16.0,
+       16.0,
+       16.0,
+       16.0,
+       16.0,
+       16.0
+      ],
+      [
+       17.0,
+       17.0,
+       17.0,
+       17.0,
+       17.0,
+       17.0
+      ],
+      [
+       18.0,
+       18.0,
+       18.0,
+       18.0,
+       18.0,
+       18.0
+      ],
+      [
+       19.0,
+       19.0,
+       19.0,
+       19.0,
+       19.0,
+       19.0
+      ],
+      [
+       20.0,
+       20.0,
+       20.0,
+       20.0,
+       20.0,
+       20.0
+      ],
+      [
+       21.0,
+       21.0,
+       21.0,
+       21.0,
+       21.0,
+       21.0
+      ],
+      [
+       22.0,
+       22.0,
+       22.0,
+       22.0,
+       22.0,
+       22.0
+      ],
+      [
+       23.0,
+       23.0,
+       23.0,
+       23.0,
+       23.0,
+       23.0
+      ],
+      [
+       24.0,
+       24.0,
+       24.0,
+       24.0,
+       24.0,
+       24.0
+      ],
+      [
+       25.0,
+       25.0,
+       25.0,
+       25.0,
+       25.0,
+       25.0
+      ],
+      [
+       26.0,
+       26.0,
+       26.0,
+       26.0,
+       26.0,
+       26.0
+      ],
+      [
+       27.0,
+       27.0,
+       27.0,
+       27.0,
+       27.0,
+       27.0
+      ],
+      [
+       28.0,
+       28.0,
+       28.0,
+       28.0,
+       28.0,
+       28.0
+      ],
+      [
+       29.0,
+       29.0,
+       29.0,
+       29.0,
+       29.0,
+       29.0
+      ]
+     ]
+    }
+   },
+   {
+    "frames": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      [
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0
+      ],
+      [
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0
+      ],
+      [
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0
+      ],
+      [
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0
+      ],
+      [
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0
+      ],
+      [
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0
+      ],
+      [
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0
+      ],
+      [
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0
+      ]
+     ]
+    }
+   }
+  ],
+  "record": {
+   "dry_run": false,
+   "episodes": 3,
+   "frames": 38,
+   "hook": null,
+   "keys": [
+    "at",
+    "by",
+    "dry_run",
+    "episodes",
+    "export_id",
+    "frames",
+    "hook",
+    "options",
+    "recipe",
+    "registered",
+    "runs",
+    "sources",
+    "split",
+    "stale",
+    "this_split",
+    "versions",
+    "written"
+   ],
+   "options": {
+    "base": null,
+    "drop_features": [],
+    "hook": null,
+    "min_span": 1,
+    "outcomes": null,
+    "runs": null,
+    "runs_by_root": null,
+    "segments": null,
+    "val": 0.0,
+    "with_success": false,
+    "zero_on_success": false
+   },
+   "recipe": "filtered",
+   "registered": true,
+   "runs": [
+    {
+     "as": "filtered",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "review": 2
+     },
+     "episode": 0,
+     "frames": 30,
+     "kept": 28,
+     "outcome": "success",
+     "review_rev": 3,
+     "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
+     "spans": [
+      [
+       0,
+       12
+      ],
+      [
+       14,
+       30
+      ]
+     ],
+     "split": "train"
+    },
+    {
+     "as": "filtered",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {},
+     "episode": 1,
+     "frames": 10,
+     "kept": 10,
+     "outcome": "success",
+     "review_rev": 1,
+     "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
+     "spans": [
+      [
+       0,
+       10
+      ]
+     ],
+     "split": "train"
+    },
+    {
+     "as": "filtered",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "run failure": 16
+     },
+     "episode": 2,
+     "frames": 16,
+     "kept": 0,
+     "outcome": "failure",
+     "review_rev": 2,
+     "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
+     "spans": [],
+     "split": "train"
+    }
+   ],
+   "sources": [
+    [
+     "batch",
+     "batch_id",
+     "lerobot",
+     "lists_sha256",
+     "locked",
+     "root",
+     "status"
+    ]
+   ],
+   "split": false,
+   "stale": false,
+   "this_split": "train"
+  },
+  "report": {
+   "dry_run": false,
+   "episodes": 3,
+   "frames": 38,
+   "keys": [
+    "dry_run",
+    "episodes",
+    "export_id",
+    "frames",
+    "options",
+    "recipe",
+    "runs",
+    "sources",
+    "stale",
+    "written"
+   ],
+   "options": {
+    "base": null,
+    "drop_features": [],
+    "hook": null,
+    "min_span": 1,
+    "outcomes": null,
+    "runs": null,
+    "runs_by_root": null,
+    "segments": null,
+    "val": 0.0,
+    "with_success": false,
+    "zero_on_success": false
+   },
+   "recipe": "filtered",
+   "runs": [
+    {
+     "as": "filtered",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "review": 2
+     },
+     "episode": 0,
+     "frames": 30,
+     "kept": 28,
+     "outcome": "success",
+     "review_rev": 3,
+     "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
+     "spans": [
+      [
+       0,
+       12
+      ],
+      [
+       14,
+       30
+      ]
+     ],
+     "split": "train"
+    },
+    {
+     "as": "filtered",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {},
+     "episode": 1,
+     "frames": 10,
+     "kept": 10,
+     "outcome": "success",
+     "review_rev": 1,
+     "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
+     "spans": [
+      [
+       0,
+       10
+      ]
+     ],
+     "split": "train"
+    },
+    {
+     "as": "filtered",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "run failure": 16
+     },
+     "episode": 2,
+     "frames": 16,
+     "kept": 0,
+     "outcome": "failure",
+     "review_rev": 2,
+     "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
+     "spans": [],
+     "split": "train"
+    }
+   ],
+   "stale": false
+  },
+  "written": {
+   "train": 3
+  }
+ },
+ "lora": {
+  "dataset": [
+   {
+    "features": [
+     "action",
+     "episode_index",
+     "frame_index",
+     "index",
+     "observation.state",
+     "task_index",
+     "timestamp"
+    ],
+    "total_episodes": 5,
+    "total_frames": 46
+   },
+   {
+    "frames": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      [
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0
+      ],
+      [
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0
+      ],
+      [
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0
+      ],
+      [
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0
+      ],
+      [
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0
+      ],
+      [
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0
+      ],
+      [
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0
+      ],
+      [
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0
+      ],
+      [
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0
+      ],
+      [
+       11.0,
+       11.0,
+       11.0,
+       11.0,
+       11.0,
+       11.0
+      ]
+     ]
+    }
+   },
+   {
+    "frames": [
+     14,
+     15,
+     16,
+     17,
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25,
+     26,
+     27,
+     28,
+     29
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       14.0,
+       14.0,
+       14.0,
+       14.0,
+       14.0,
+       14.0
+      ],
+      [
+       15.0,
+       15.0,
+       15.0,
+       15.0,
+       15.0,
+       15.0
+      ],
+      [
+       16.0,
+       16.0,
+       16.0,
+       16.0,
+       16.0,
+       16.0
+      ],
+      [
+       17.0,
+       17.0,
+       17.0,
+       17.0,
+       17.0,
+       17.0
+      ],
+      [
+       18.0,
+       18.0,
+       18.0,
+       18.0,
+       18.0,
+       18.0
+      ],
+      [
+       19.0,
+       19.0,
+       19.0,
+       19.0,
+       19.0,
+       19.0
+      ],
+      [
+       20.0,
+       20.0,
+       20.0,
+       20.0,
+       20.0,
+       20.0
+      ],
+      [
+       21.0,
+       21.0,
+       21.0,
+       21.0,
+       21.0,
+       21.0
+      ],
+      [
+       22.0,
+       22.0,
+       22.0,
+       22.0,
+       22.0,
+       22.0
+      ],
+      [
+       23.0,
+       23.0,
+       23.0,
+       23.0,
+       23.0,
+       23.0
+      ],
+      [
+       24.0,
+       24.0,
+       24.0,
+       24.0,
+       24.0,
+       24.0
+      ],
+      [
+       25.0,
+       25.0,
+       25.0,
+       25.0,
+       25.0,
+       25.0
+      ],
+      [
+       26.0,
+       26.0,
+       26.0,
+       26.0,
+       26.0,
+       26.0
+      ],
+      [
+       27.0,
+       27.0,
+       27.0,
+       27.0,
+       27.0,
+       27.0
+      ],
+      [
+       28.0,
+       28.0,
+       28.0,
+       28.0,
+       28.0,
+       28.0
+      ],
+      [
+       29.0,
+       29.0,
+       29.0,
+       29.0,
+       29.0,
+       29.0
+      ]
+     ]
+    }
+   },
+   {
+    "frames": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      [
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0
+      ],
+      [
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0
+      ],
+      [
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0
+      ],
+      [
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0
+      ],
+      [
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0
+      ],
+      [
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0
+      ],
+      [
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0
+      ],
+      [
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0
+      ]
+     ]
+    }
+   },
+   {
+    "frames": [
+     6,
+     7,
+     8
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0
+      ],
+      [
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0
+      ],
+      [
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0
+      ]
+     ]
+    }
+   },
+   {
+    "frames": [
+     11,
+     12,
+     13,
+     14,
+     15
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       12.0,
+       12.0,
+       12.0,
+       12.0,
+       12.0,
+       12.0
+      ],
+      [
+       13.0,
+       13.0,
+       13.0,
+       13.0,
+       13.0,
+       13.0
+      ],
+      [
+       14.0,
+       14.0,
+       14.0,
+       14.0,
+       14.0,
+       14.0
+      ],
+      [
+       15.0,
+       15.0,
+       15.0,
+       15.0,
+       15.0,
+       15.0
+      ],
+      [
+       16.0,
+       16.0,
+       16.0,
+       16.0,
+       16.0,
+       16.0
+      ]
+     ]
+    }
+   }
+  ],
+  "record": {
+   "dry_run": false,
+   "episodes": 5,
+   "frames": 46,
+   "hook": null,
+   "keys": [
+    "at",
+    "by",
+    "dry_run",
+    "episodes",
+    "export_id",
+    "frames",
+    "hook",
+    "options",
+    "recipe",
+    "registered",
+    "runs",
+    "sources",
+    "split",
+    "stale",
+    "this_split",
+    "versions",
+    "written"
+   ],
+   "options": {
+    "base": null,
+    "drop_features": [],
+    "hook": null,
+    "min_span": 1,
+    "outcomes": null,
+    "runs": null,
+    "runs_by_root": null,
+    "segments": null,
+    "val": 0.0,
+    "with_success": false,
+    "zero_on_success": false
+   },
+   "recipe": "lora",
+   "registered": true,
+   "runs": [
+    {
+     "as": "teleop",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "review": 2
+     },
+     "episode": 0,
+     "frames": 30,
+     "kept": 28,
+     "outcome": "success",
+     "review_rev": 3,
+     "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
+     "spans": [
+      [
+       0,
+       12
+      ],
+      [
+       14,
+       30
+      ]
+     ],
+     "split": "train"
+    },
+    {
+     "as": "teleop",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {},
+     "episode": 1,
+     "frames": 10,
+     "kept": 10,
+     "outcome": "success",
+     "review_rev": 1,
+     "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
+     "spans": [
+      [
+       0,
+       10
+      ]
+     ],
+     "split": "train"
+    },
+    {
+     "as": "dagger",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "no expert label": 6,
+      "review": 2
+     },
+     "episode": 2,
+     "frames": 16,
+     "kept": 8,
+     "outcome": "failure",
+     "review_rev": 2,
+     "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
+     "spans": [
+      [
+       6,
+       9
+      ],
+      [
+       11,
+       16
+      ]
+     ],
+     "split": "train"
+    }
+   ],
+   "sources": [
+    [
+     "batch",
+     "batch_id",
+     "lerobot",
+     "lists_sha256",
+     "locked",
+     "root",
+     "status"
+    ]
+   ],
+   "split": false,
+   "stale": false,
+   "this_split": "train"
+  },
+  "report": {
+   "dry_run": false,
+   "episodes": 5,
+   "frames": 46,
+   "keys": [
+    "dry_run",
+    "episodes",
+    "export_id",
+    "frames",
+    "options",
+    "recipe",
+    "runs",
+    "sources",
+    "stale",
+    "written"
+   ],
+   "options": {
+    "base": null,
+    "drop_features": [],
+    "hook": null,
+    "min_span": 1,
+    "outcomes": null,
+    "runs": null,
+    "runs_by_root": null,
+    "segments": null,
+    "val": 0.0,
+    "with_success": false,
+    "zero_on_success": false
+   },
+   "recipe": "lora",
+   "runs": [
+    {
+     "as": "teleop",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "review": 2
+     },
+     "episode": 0,
+     "frames": 30,
+     "kept": 28,
+     "outcome": "success",
+     "review_rev": 3,
+     "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
+     "spans": [
+      [
+       0,
+       12
+      ],
+      [
+       14,
+       30
+      ]
+     ],
+     "split": "train"
+    },
+    {
+     "as": "teleop",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {},
+     "episode": 1,
+     "frames": 10,
+     "kept": 10,
+     "outcome": "success",
+     "review_rev": 1,
+     "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
+     "spans": [
+      [
+       0,
+       10
+      ]
+     ],
+     "split": "train"
+    },
+    {
+     "as": "dagger",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "no expert label": 6,
+      "review": 2
+     },
+     "episode": 2,
+     "frames": 16,
+     "kept": 8,
+     "outcome": "failure",
+     "review_rev": 2,
+     "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
+     "spans": [
+      [
+       6,
+       9
+      ],
+      [
+       11,
+       16
+      ]
+     ],
+     "split": "train"
+    }
+   ],
+   "stale": false
+  },
+  "written": {
+   "train": 5
+  }
+ },
+ "residual": {
+  "dataset": [
+   {
+    "features": [
+     "action",
+     "episode_index",
+     "frame_index",
+     "index",
+     "observation.base_action",
+     "observation.state",
+     "task_index",
+     "timestamp"
+    ],
+    "total_episodes": 2,
+    "total_frames": 8
+   },
+   {
+    "frames": [
+     6,
+     7,
+     8
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ]
+     ],
+     "observation.base_action": [
+      [
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0
+      ],
+      [
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0
+      ],
+      [
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0
+      ]
+     ]
+    }
+   },
+   {
+    "frames": [
+     11,
+     12,
+     13,
+     14,
+     15
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ]
+     ],
+     "observation.base_action": [
+      [
+       11.0,
+       11.0,
+       11.0,
+       11.0,
+       11.0,
+       11.0
+      ],
+      [
+       12.0,
+       12.0,
+       12.0,
+       12.0,
+       12.0,
+       12.0
+      ],
+      [
+       13.0,
+       13.0,
+       13.0,
+       13.0,
+       13.0,
+       13.0
+      ],
+      [
+       14.0,
+       14.0,
+       14.0,
+       14.0,
+       14.0,
+       14.0
+      ],
+      [
+       15.0,
+       15.0,
+       15.0,
+       15.0,
+       15.0,
+       15.0
+      ]
+     ]
+    }
+   }
+  ],
+  "record": {
+   "dry_run": false,
+   "episodes": 2,
+   "frames": 8,
+   "hook": null,
+   "keys": [
+    "at",
+    "by",
+    "dry_run",
+    "episodes",
+    "export_id",
+    "frames",
+    "hook",
+    "options",
+    "recipe",
+    "registered",
+    "runs",
+    "sources",
+    "split",
+    "stale",
+    "this_split",
+    "versions",
+    "written"
+   ],
+   "options": {
+    "base": null,
+    "drop_features": [],
+    "hook": null,
+    "min_span": 1,
+    "outcomes": null,
+    "runs": null,
+    "runs_by_root": null,
+    "segments": null,
+    "val": 0.0,
+    "with_success": false,
+    "zero_on_success": false
+   },
+   "recipe": "residual",
+   "registered": true,
+   "runs": [
+    {
+     "as": "residual",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "no base and expert action": 28,
+      "review": 2
+     },
+     "episode": 0,
+     "frames": 30,
+     "kept": 0,
+     "outcome": "success",
+     "review_rev": 3,
+     "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
+     "spans": [],
+     "split": "train"
+    },
+    {
+     "as": "residual",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "no base and expert action": 10
+     },
+     "episode": 1,
+     "frames": 10,
+     "kept": 0,
+     "outcome": "success",
+     "review_rev": 1,
+     "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
+     "spans": [],
+     "split": "train"
+    },
+    {
+     "as": "residual",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "no base and expert action": 6,
+      "review": 2
+     },
+     "episode": 2,
+     "frames": 16,
+     "kept": 8,
+     "outcome": "failure",
+     "review_rev": 2,
+     "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
+     "spans": [
+      [
+       6,
+       9
+      ],
+      [
+       11,
+       16
+      ]
+     ],
+     "split": "train"
+    }
+   ],
+   "sources": [
+    [
+     "batch",
+     "batch_id",
+     "lerobot",
+     "lists_sha256",
+     "locked",
+     "root",
+     "status"
+    ]
+   ],
+   "split": false,
+   "stale": false,
+   "this_split": "train"
+  },
+  "report": {
+   "dry_run": false,
+   "episodes": 2,
+   "frames": 8,
+   "keys": [
+    "dry_run",
+    "episodes",
+    "export_id",
+    "frames",
+    "options",
+    "recipe",
+    "runs",
+    "sources",
+    "stale",
+    "written"
+   ],
+   "options": {
+    "base": null,
+    "drop_features": [],
+    "hook": null,
+    "min_span": 1,
+    "outcomes": null,
+    "runs": null,
+    "runs_by_root": null,
+    "segments": null,
+    "val": 0.0,
+    "with_success": false,
+    "zero_on_success": false
+   },
+   "recipe": "residual",
+   "runs": [
+    {
+     "as": "residual",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "no base and expert action": 28,
+      "review": 2
+     },
+     "episode": 0,
+     "frames": 30,
+     "kept": 0,
+     "outcome": "success",
+     "review_rev": 3,
+     "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
+     "spans": [],
+     "split": "train"
+    },
+    {
+     "as": "residual",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "no base and expert action": 10
+     },
+     "episode": 1,
+     "frames": 10,
+     "kept": 0,
+     "outcome": "success",
+     "review_rev": 1,
+     "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
+     "spans": [],
+     "split": "train"
+    },
+    {
+     "as": "residual",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "no base and expert action": 6,
+      "review": 2
+     },
+     "episode": 2,
+     "frames": 16,
+     "kept": 8,
+     "outcome": "failure",
+     "review_rev": 2,
+     "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
+     "spans": [
+      [
+       6,
+       9
+      ],
+      [
+       11,
+       16
+      ]
+     ],
+     "split": "train"
+    }
+   ],
+   "stale": false
+  },
+  "written": {
+   "train": 2
+  }
+ },
+ "teleop": {
+  "dataset": [
+   {
+    "features": [
+     "action",
+     "episode_index",
+     "frame_index",
+     "index",
+     "observation.state",
+     "task_index",
+     "timestamp"
+    ],
+    "total_episodes": 3,
+    "total_frames": 38
+   },
+   {
+    "frames": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9,
+     10,
+     11
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      [
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0
+      ],
+      [
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0
+      ],
+      [
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0
+      ],
+      [
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0
+      ],
+      [
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0
+      ],
+      [
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0
+      ],
+      [
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0
+      ],
+      [
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0
+      ],
+      [
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0,
+       10.0
+      ],
+      [
+       11.0,
+       11.0,
+       11.0,
+       11.0,
+       11.0,
+       11.0
+      ]
+     ]
+    }
+   },
+   {
+    "frames": [
+     14,
+     15,
+     16,
+     17,
+     18,
+     19,
+     20,
+     21,
+     22,
+     23,
+     24,
+     25,
+     26,
+     27,
+     28,
+     29
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       14.0,
+       14.0,
+       14.0,
+       14.0,
+       14.0,
+       14.0
+      ],
+      [
+       15.0,
+       15.0,
+       15.0,
+       15.0,
+       15.0,
+       15.0
+      ],
+      [
+       16.0,
+       16.0,
+       16.0,
+       16.0,
+       16.0,
+       16.0
+      ],
+      [
+       17.0,
+       17.0,
+       17.0,
+       17.0,
+       17.0,
+       17.0
+      ],
+      [
+       18.0,
+       18.0,
+       18.0,
+       18.0,
+       18.0,
+       18.0
+      ],
+      [
+       19.0,
+       19.0,
+       19.0,
+       19.0,
+       19.0,
+       19.0
+      ],
+      [
+       20.0,
+       20.0,
+       20.0,
+       20.0,
+       20.0,
+       20.0
+      ],
+      [
+       21.0,
+       21.0,
+       21.0,
+       21.0,
+       21.0,
+       21.0
+      ],
+      [
+       22.0,
+       22.0,
+       22.0,
+       22.0,
+       22.0,
+       22.0
+      ],
+      [
+       23.0,
+       23.0,
+       23.0,
+       23.0,
+       23.0,
+       23.0
+      ],
+      [
+       24.0,
+       24.0,
+       24.0,
+       24.0,
+       24.0,
+       24.0
+      ],
+      [
+       25.0,
+       25.0,
+       25.0,
+       25.0,
+       25.0,
+       25.0
+      ],
+      [
+       26.0,
+       26.0,
+       26.0,
+       26.0,
+       26.0,
+       26.0
+      ],
+      [
+       27.0,
+       27.0,
+       27.0,
+       27.0,
+       27.0,
+       27.0
+      ],
+      [
+       28.0,
+       28.0,
+       28.0,
+       28.0,
+       28.0,
+       28.0
+      ],
+      [
+       29.0,
+       29.0,
+       29.0,
+       29.0,
+       29.0,
+       29.0
+      ]
+     ]
+    }
+   },
+   {
+    "frames": [
+     0,
+     1,
+     2,
+     3,
+     4,
+     5,
+     6,
+     7,
+     8,
+     9
+    ],
+    "prompts": [
+     "put the cube in the bin"
+    ],
+    "values": {
+     "action": [
+      [
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0,
+       0.0
+      ],
+      [
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0,
+       1.0
+      ],
+      [
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0,
+       2.0
+      ],
+      [
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0,
+       3.0
+      ],
+      [
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0,
+       4.0
+      ],
+      [
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0,
+       5.0
+      ],
+      [
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0,
+       6.0
+      ],
+      [
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0,
+       7.0
+      ],
+      [
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0,
+       8.0
+      ],
+      [
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0,
+       9.0
+      ]
+     ]
+    }
+   }
+  ],
+  "record": {
+   "dry_run": false,
+   "episodes": 3,
+   "frames": 38,
+   "hook": null,
+   "keys": [
+    "at",
+    "by",
+    "dry_run",
+    "episodes",
+    "export_id",
+    "frames",
+    "hook",
+    "options",
+    "recipe",
+    "registered",
+    "runs",
+    "sources",
+    "split",
+    "stale",
+    "this_split",
+    "versions",
+    "written"
+   ],
+   "options": {
+    "base": null,
+    "drop_features": [],
+    "hook": null,
+    "min_span": 1,
+    "outcomes": null,
+    "runs": null,
+    "runs_by_root": null,
+    "segments": null,
+    "val": 0.0,
+    "with_success": false,
+    "zero_on_success": false
+   },
+   "recipe": "teleop",
+   "registered": true,
+   "runs": [
+    {
+     "as": "teleop",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "review": 2
+     },
+     "episode": 0,
+     "frames": 30,
+     "kept": 28,
+     "outcome": "success",
+     "review_rev": 3,
+     "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
+     "spans": [
+      [
+       0,
+       12
+      ],
+      [
+       14,
+       30
+      ]
+     ],
+     "split": "train"
+    },
+    {
+     "as": "teleop",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {},
+     "episode": 1,
+     "frames": 10,
+     "kept": 10,
+     "outcome": "success",
+     "review_rev": 1,
+     "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
+     "spans": [
+      [
+       0,
+       10
+      ]
+     ],
+     "split": "train"
+    },
+    {
+     "as": "teleop",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "run failure": 16
+     },
+     "episode": 2,
+     "frames": 16,
+     "kept": 0,
+     "outcome": "failure",
+     "review_rev": 2,
+     "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
+     "spans": [],
+     "split": "train"
+    }
+   ],
+   "sources": [
+    [
+     "batch",
+     "batch_id",
+     "lerobot",
+     "lists_sha256",
+     "locked",
+     "root",
+     "status"
+    ]
+   ],
+   "split": false,
+   "stale": false,
+   "this_split": "train"
+  },
+  "report": {
+   "dry_run": false,
+   "episodes": 3,
+   "frames": 38,
+   "keys": [
+    "dry_run",
+    "episodes",
+    "export_id",
+    "frames",
+    "options",
+    "recipe",
+    "runs",
+    "sources",
+    "stale",
+    "written"
+   ],
+   "options": {
+    "base": null,
+    "drop_features": [],
+    "hook": null,
+    "min_span": 1,
+    "outcomes": null,
+    "runs": null,
+    "runs_by_root": null,
+    "segments": null,
+    "val": 0.0,
+    "with_success": false,
+    "zero_on_success": false
+   },
+   "recipe": "teleop",
+   "runs": [
+    {
+     "as": "teleop",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "review": 2
+     },
+     "episode": 0,
+     "frames": 30,
+     "kept": 28,
+     "outcome": "success",
+     "review_rev": 3,
+     "run_id": "6513270e-269e-4d37-b2a7-4de452e6b438",
+     "spans": [
+      [
+       0,
+       12
+      ],
+      [
+       14,
+       30
+      ]
+     ],
+     "split": "train"
+    },
+    {
+     "as": "teleop",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {},
+     "episode": 1,
+     "frames": 10,
+     "kept": 10,
+     "outcome": "success",
+     "review_rev": 1,
+     "run_id": "90c192cf-d3ac-44af-8f21-ddb66cad4a26",
+     "spans": [
+      [
+       0,
+       10
+      ]
+     ],
+     "split": "train"
+    },
+    {
+     "as": "teleop",
+     "batch": "b1",
+     "batch_id": "d23f0824128b",
+     "dropped": {
+      "run failure": 16
+     },
+     "episode": 2,
+     "frames": 16,
+     "kept": 0,
+     "outcome": "failure",
+     "review_rev": 2,
+     "run_id": "a170b338-3926-4059-b28c-105d1fb17c23",
+     "spans": [],
+     "split": "train"
+    }
+   ],
+   "stale": false
+  },
+  "written": {
+   "train": 3
+  }
+ }
+}

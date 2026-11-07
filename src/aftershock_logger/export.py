@@ -232,6 +232,12 @@ def subtask_stretches(keep: np.ndarray, segments: list[tuple[str | None, int, in
     return out
 
 
+def subtask_digest(manifest: dict, review: dict) -> str:
+    """sha256 of the run's subtask segments in effect (ids and ranges). A task+subtasks export records it per run, since
+    the review digest does not cover the subtask ids that the legacy_subtask_map gives recorded steps."""
+    return store.json_sha256([list(x) for x in rv.subtask_segments(manifest, review)])
+
+
 def _load_hook(spec: str | None):
     """Find and read the hook file and prove this machine can sandbox it. No hook code runs in this process."""
     if not spec:
@@ -483,6 +489,7 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
                     per.append({"prompt": text, "subtask_id": sid, "frames": sum(b_ - a for a, b_ in mine),
                                 "episodes": len(mine)})
             extra = {"subtask_spans": [list(x) for x in stretches], "prompts": per,
+                     "subtask_digest": subtask_digest(m, s["review"]),
                      "written": sum(x["frames"] for x in per), "_stretches": stretches, "_texts": by_id}
         runs_out.append({"root": str(root), "batch": b["name"], "batch_id": b["batch_id"], "run_id": m["run_id"], "episode": m["episode_index"],
                          "as": ("dagger" if np.isin(s["mode"], ("base", "blend")).any() else "teleop") if recipe == "lora" else recipe,
@@ -592,20 +599,35 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
 def training_sets(root: Path) -> list[dict]:
     """Training sets made from this dataset, newest first. Each says whether it is out of date: a source batch was
     unlocked after it was made, or any run it was made from, in any of its datasets, has been reviewed differently
-    since (its review digest no longer matches the one recorded in the set's dataop_export.json)."""
+    since (its review digest no longer matches the one recorded in the set's dataop_export.json, or, for a set with
+    subtask prompts, its subtask segments in effect no longer match the recorded subtask digest)."""
     root = Path(root).expanduser().resolve()
     d = B.load(root)
     digests: dict[str, dict] = {}
+    sub_digests: dict[str, dict] = {}
 
     def current(r: str) -> dict:
         if r not in digests:
-            digests[r] = {}
+            digests[r], sub_digests[r] = {}, {}
             for p, m in store.iter_manifests(Path(r), "committed"):
                 try:
-                    digests[r][m["run_id"]] = B.review_digest(m, rv.load(p))
+                    review = rv.load(p)
+                    digests[r][m["run_id"]] = B.review_digest(m, review)
+                    sub_digests[r][m["run_id"]] = (m, review)       # the subtask digest only when a set asks for it
                 except rv.ReviewError:
                     digests[r][m["run_id"]] = None
         return digests[r]
+
+    def changed(r: str, run: dict) -> bool:
+        if current(r).get(run["run_id"]) != run["review_digest"]:
+            return True
+        if "subtask_digest" not in run:
+            return False
+        got = sub_digests[r].get(run["run_id"])
+        try:
+            return got is None or subtask_digest(*got) != run["subtask_digest"]
+        except rv.ReviewError:
+            return True
     regs: dict[str, dict] = {str(root): d}
 
     def reg(r: str) -> dict:
@@ -625,8 +647,7 @@ def training_sets(root: Path) -> list[dict]:
     for x in out.values():
         try:
             rec = json.loads((Path(x["path"]) / "dataop_export.json").read_text())
-            x["changed_runs"] = sum(current(str(Path(r["root"]).expanduser().resolve())).get(r["run_id"])
-                                    != r["review_digest"] for r in rec["runs"])
+            x["changed_runs"] = sum(changed(str(Path(r["root"]).expanduser().resolve()), r) for r in rec["runs"])
             x["runs"] = sum(1 for r in rec["runs"] if r["kept"])
             # a run moved to another batch since, in any of the set's datasets (older records name the batch only)
             ids = {(str(Path(s_["root"]).expanduser().resolve()), s_["batch"]): s_["batch_id"] for s_ in rec["sources"]}

@@ -197,7 +197,8 @@ def test_a_step_the_map_leaves_unresolved_gets_only_the_task_prompt(tmp_path):
 
 
 def test_the_default_export_is_unchanged(labeled, tmp_path):
-    """No new keys in the report or the record, and the same bytes as an explicit prompts="task"."""
+    """No new keys in the report or the record, and the same bytes as an explicit prompts="task". The comparison with
+    the logger from before this change is test_the_default_export_matches_the_baseline_from_before_subtask_prompts."""
     ds, seg, plain, unres = labeled
     a = X.export([(ds.root, "b1")], "teleop", str(tmp_path / "a"), repo_id="test/x")
     b = X.export([(ds.root, "b1")], "teleop", str(tmp_path / "b"), repo_id="test/x", prompts="task")
@@ -247,3 +248,42 @@ def test_cli_passes_the_prompt_texts(labeled, tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)["frames"] == 68
     assert cli.main(["export", "--batch", f"{ds.root}:b1", "--recipe", "teleop", "--into", str(tmp_path / "c"),
                      "--dry-run", "--prompts", "task+subtasks"]) == 2
+
+
+def test_the_default_export_matches_the_baseline_from_before_subtask_prompts(tmp_path):
+    """Every recipe's default export on a fixed fixture: the report, the record and every written episode (prompt,
+    frames, actions) equal what the logger wrote before subtask prompts existed (tests/export_baseline.py)."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import export_baseline
+    want = json.loads((Path(__file__).resolve().parent / "data" / "export_default_baseline.json").read_text())
+    got = json.loads(json.dumps(export_baseline.baseline(tmp_path)))
+    assert sorted(got) == sorted(want)
+    for recipe in want:
+        assert got[recipe] == want[recipe], recipe
+
+
+def test_a_subtask_mapping_change_puts_a_subtask_prompt_set_out_of_date(tmp_path):
+    """The review digest does not cover the subtask ids a legacy_subtask_map gives recorded steps (a format 1 review
+    migrated against a task changes only those), so a task+subtasks set records a subtask digest per run and is out
+    of date when it changes. A default set records none and is judged as before."""
+    ds = _ds(tmp_path / "ds")
+    with RunLogger(ds, SCHEMA, batch="b1") as log:
+        run = _teleop_run(log, 12, steps=(("grasp", 0), ("lift", 6)))
+    ds.finalize()
+    entries = [{"step_index": 0, "recorded_name": "grasp", "subtask_id": "unresolved"},
+               {"step_index": 1, "recorded_name": "lift", "subtask_id": "lift"}]
+    m = _with_map(run, entries)
+    sub = X.export([(ds.root, "b1")], "teleop", str(tmp_path / "sub"), allow_unlocked=True, prompts="task+subtasks",
+                   subtask_prompts=TEXTS)
+    plain = X.export([(ds.root, "b1")], "teleop", str(tmp_path / "plain"), allow_unlocked=True)
+    assert "subtask_digest" in sub["runs"][0] and "subtask_digest" not in plain["runs"][0]
+    sets = {s["export_id"]: s for s in X.training_sets(ds.root)}
+    assert not sets[sub["export_id"]]["out_of_date"] and not sets[plain["export_id"]]["out_of_date"]
+    before = B.review_digest(m, rv.load(run.run_path))
+    r = rv.load(run.run_path)
+    r["legacy_subtask_map"]["entries"][0]["subtask_id"] = "grasp"             # the step now names a subtask
+    rv._path(run.run_path).write_text(fmt.dump_review(r))
+    assert B.review_digest(m, rv.load(run.run_path)) == before
+    sets = {s["export_id"]: s for s in X.training_sets(ds.root)}
+    assert sets[sub["export_id"]]["out_of_date"] and sets[sub["export_id"]]["changed_runs"] == 1
+    assert not sets[plain["export_id"]]["out_of_date"]
