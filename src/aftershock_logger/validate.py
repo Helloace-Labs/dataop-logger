@@ -337,8 +337,13 @@ def validate(root: Path, action_key: str = "action") -> dict:
     unbound = sorted(set(episodes) - set(bound))
     if unbound:
         warnings.append(f"{len(unbound)} LeRobot episodes have no dataop run: {unbound[:20]}")
+    from .session import session_problems
+    s_errors, s_warnings, sessions = session_problems(root)
+    errors += s_errors
+    warnings += s_warnings
     return {"ok": not errors, "errors": errors, "warnings": warnings, "runs": sum(map(len, bound.values())),
-            "episodes_on_disk": len(episodes), "unbound_episodes": unbound, "quarantined": quarantined}
+            "episodes_on_disk": len(episodes), "unbound_episodes": unbound, "quarantined": quarantined,
+            "sessions": sessions}
 
 
 def integrity_problems(run_path: Path, m: dict) -> list[str]:

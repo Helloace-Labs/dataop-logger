@@ -2,5 +2,6 @@
 from .logger import Run, RunError, RunLogger
 from .frame_queue import ControlledStop, FrameQueue
 from .schema import UNKNOWN, ActionSchema, EnvInfo, PlannerInfo, PolicyInfo
+from .session import SessionError, SessionLogger
 
-__all__ = ["UNKNOWN", "ActionSchema", "ControlledStop", "EnvInfo", "FrameQueue", "PlannerInfo", "PolicyInfo", "Run", "RunError", "RunLogger"]
+__all__ = ["UNKNOWN", "ActionSchema", "ControlledStop", "EnvInfo", "FrameQueue", "PlannerInfo", "PolicyInfo", "Run", "RunError", "RunLogger", "SessionError", "SessionLogger"]

@@ -287,6 +287,7 @@ class Run:
         self._unsaved_quarantine = None                    # a partial record that could not be written yet
         self._blocks_logger = False                        # True while that record stops the logger
         self._stop = None                                  # the ControlledStop that ended this run
+        self._session: dict | None = None                  # manifest fields set by a SessionLogger (logger L9)
 
     def _live(self, hook: str, *args) -> None:
         """Tell the live tap, if any (its hooks never raise)."""
@@ -533,6 +534,12 @@ class Run:
         self._require("active")
         if termination_reason not in TERMINATION_REASONS:
             raise ValueError(f"termination_reason must be one of {TERMINATION_REASONS}")
+        self._seal(termination_reason, task_success, labels, failure_mode)
+
+    def _seal(self, termination_reason: str, task_success: bool | None = None, labels: list[str] | None = None,
+              failure_mode: str | None = None) -> None:
+        """end() after its reason check. A session's gap (logger L9, session.py) is sealed with "unknown": it is not
+        an episode and has no outcome, so its last tick gets neither terminated nor truncated."""
         if self._queue is not None:
             self._queue.drain()                                # every queued frame written, or ControlledStop
             self._queue = None
@@ -540,11 +547,15 @@ class Run:
             self.discard()
             raise RunError("a run with no frames is discarded, never saved")
         last = self._rows[-1]
-        want = TERMINAL_FLAG[termination_reason]
-        other = "truncated" if want == "terminated" else "terminated"
-        if last[other]:
-            raise RunError(f"the last tick is {other}, which contradicts termination_reason={termination_reason!r}")
-        last[want] = True
+        want = TERMINAL_FLAG.get(termination_reason)
+        if want is None:
+            if last["terminated"] or last["truncated"]:
+                raise RunError("a gap's last tick is neither terminated nor truncated")
+        else:
+            other = "truncated" if want == "terminated" else "terminated"
+            if last[other]:
+                raise RunError(f"the last tick is {other}, which contradicts termination_reason={termination_reason!r}")
+            last[want] = True
         self._check_rows()
         self._check_buffer()
         self.ended_at = _now_iso()
@@ -740,6 +751,7 @@ class Run:
             "predictions_count": None if self._predictions is None else len(self._predictions),
             "integrity": self._integrity,
             "batch": {"name": self.logger.batch} if self.logger.batch else None,
+            **(self._session or {}),
             **extra,
         }
 

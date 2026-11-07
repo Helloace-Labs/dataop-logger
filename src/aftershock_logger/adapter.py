@@ -129,3 +129,21 @@ def episode_metadata(root) -> dict[int, dict]:
                        "to": int(t["dataset_to_index"][i]), "tasks": list(t["tasks"][i] or []), "videos": videos,
                        "video_keys": vkeys}
     return out
+
+
+_LEROBOT_DEFAULT_FEATURES = ("timestamp", "frame_index", "episode_index", "index", "task_index")
+
+
+def dataset_fps(dataset) -> float:
+    return float(dataset.meta.fps)
+
+
+def create_like(dataset, root, repo_id: str):
+    """A new, empty LeRobot dataset at `root` with the same features (every camera, observation.state, action), fps,
+    robot type and video setting as `dataset`. A Drive session's gap dataset (logger L9) is made this way, so a gap
+    can later become a trainable episode with the same features as the runs."""
+    from lerobot.datasets.lerobot_dataset import LeRobotDataset
+    meta = dataset.meta
+    features = {k: dict(v) for k, v in meta.features.items() if k not in _LEROBOT_DEFAULT_FEATURES}
+    return LeRobotDataset.create(repo_id, fps=int(meta.fps), features=features, root=root,
+                                 robot_type=getattr(meta, "robot_type", None), use_videos=bool(meta.video_keys))

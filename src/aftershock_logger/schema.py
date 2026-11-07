@@ -203,6 +203,54 @@ def manifest_problems(m: dict) -> list[str]:
     p = m.get("policy")
     if not (p is None or p == UNKNOWN or isinstance(p, dict)):
         out.append("policy must be a policy record, null (no policy ran) or 'unknown'")
+    return out + session_manifest_problems(m)
+
+
+SESSION_MANIFEST_KEYS = ("session_id", "episode_in_session", "session_frame_start", "session_frame_end", "go_ref")
+RESCUE_OUTCOMES = ("success", "failure", "unknown")
+
+
+def session_manifest_problems(m: dict) -> list[str]:
+    """The Drive session fields (logger L9). A run outside a session has none of them (they read as null), and a
+    gap of a session's gap dataset has only `session_gap`. In a session run the five fields come together, its
+    session range has its length, and `rescue_outcome` is null exactly when no expert drove."""
+    out = []
+    present = [k for k in SESSION_MANIFEST_KEYS if m.get(k) is not None]
+    if "rescue_outcome" in m and m["rescue_outcome"] not in RESCUE_OUTCOMES + (None,):
+        out.append(f"rescue_outcome must be one of {RESCUE_OUTCOMES} or null")
+    if present and len(present) != len(SESSION_MANIFEST_KEYS):
+        return out + ["session fields come together: session_id, episode_in_session, session_frame_start, "
+                      "session_frame_end and go_ref are all set or all absent"]
+    if present:
+        ints = [m[k] for k in ("episode_in_session", "session_frame_start", "session_frame_end")]
+        if any(not _is_int(v) or v < 0 for v in ints) or m["episode_in_session"] < 1:
+            out.append("episode_in_session counts from 1 and session frames are ints >= 0")
+        elif m["session_frame_end"] - m["session_frame_start"] != m.get("length"):
+            out.append("session_frame_end - session_frame_start must equal length")
+        go = m["go_ref"]
+        if not isinstance(go, dict) or set(go) != {"by", "at", "scope"}:
+            out.append("go_ref must be {by, at, scope}")
+        if "rescue_outcome" not in m:
+            out.append("a session run records rescue_outcome (null when there was no takeover)")
+        else:
+            took_over = bool(m.get("takeovers"))
+            if took_over and m["rescue_outcome"] is None:
+                out.append("a session run with a takeover has a rescue_outcome")
+            if not took_over and m["rescue_outcome"] is not None:
+                out.append("a session run with no takeover has rescue_outcome null")
+        if m.get("session_gap") is not None:
+            out.append("a run is a session episode or a gap, not both")
+    sg = m.get("session_gap")
+    if sg is not None:
+        keys = {"session_id", "gap_id", "session_frame_start", "session_frame_end", "short_stop", "moved_by",
+                "reset_checks"}
+        if not isinstance(sg, dict) or set(sg) != keys:
+            out.append(f"session_gap must have exactly {sorted(keys)}")
+        elif not (_is_int(sg["session_frame_start"]) and _is_int(sg["session_frame_end"])) or \
+                sg["session_frame_end"] - sg["session_frame_start"] != m.get("length"):
+            out.append("session_gap's frame range must have the gap's length")
+        if m.get("termination_reason") != "unknown":
+            out.append("a gap is not an episode: its termination_reason is unknown")
     return out
 
 

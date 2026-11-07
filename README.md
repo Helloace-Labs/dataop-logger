@@ -214,6 +214,25 @@ with log.run(task=TASK, policy=policy) as run:
 - If the tap cannot write (a read only folder, a missing encoder), it warns once, writes `dataop/live/error.json` and stays off until the next run. Your recording is the same byte for byte with the tap on, off or failed.
 - `dataop/live/` is not part of the dataset or the sidecar: `validate`, `import`, `export` and uploads ignore it. Details are in [SPEC.md](SPEC.md), Live tap.
 
+## Drive sessions (Aftershock's station app)
+
+Aftershock's station app records a Drive session with `SessionLogger`: one continuous recording from Start to Stop, which it splits into episodes. Each episode is a normal run; the ticks between episodes are gaps, saved as episodes of a second LeRobot dataset in the session folder so every frame is kept:
+
+```python
+log = RunLogger(dataset, action_schema=schema, planner=None)
+with SessionLogger(log, session_id=sid, station_id="st_1", go=go, model_id="m_1", task=TASK,
+                   task_id="tube-pick", task_rev=3, policy=policy) as sess:
+    sess.add_frame(frame, sent_action=hold, control_mode="none", obs_ns=t_obs, sent_ns=t_sent)   # a gap tick
+    sess.start_episode(moved_by="person", reset_checks={"home": True, "zone": True})
+    sess.add_frame(frame, sent_action=a, base_action=a, control_mode="base", inference_id=k, chunk_offset=j,
+                   obs_ns=t_obs, sent_ns=t_sent)                                                 # an episode tick
+    sess.seal_episode("success")      # the write is pending; the next ticks go to a new gap
+    sess.write_pending()              # "committed", or "failed" (the run is quarantined)
+    sess.finalize("user_stop")
+```
+
+A Stop that ends an episode of 1 s or less keeps its frames in the gap instead of saving a run. The session record, the evidence log and the session review are in `dataop/sessions/<session_id>/`. Details are in [SPEC.md](SPEC.md), Drive sessions.
+
 ## Command line
 
 ```bash
@@ -450,6 +469,7 @@ Every per-tick field is also available as `item["dataop.<field>"]`. `missing="ex
   index.jsonl                       # summary of committed runs
   quarantine/                       # runs repair could not match, and runs stopped through the queue, kept for inspection
   live/                             # only with RunLogger(live=True): live status for a local reader, not part of the dataset
+  sessions/<session_id>/            # only for Drive sessions: session.json, evidence.parquet, review.json, gaps/ (a LeRobot dataset)
 ```
 
 The full field list and design are in [SPEC.md](SPEC.md).
@@ -470,6 +490,7 @@ The design and code went through five rounds of review between Claude (Anthropic
 
 The logger is before 1.0, so a minor change may change behavior. Changes since 0.1.0:
 
+- `SessionLogger` records a Drive session (runs, gaps, the evidence log, write status), and run manifests of a session carry the session fields and `rescue_outcome`. `validate` checks every session folder and returns a `sessions` count. See Drive sessions.
 - `RunLogger(..., live=True)` turns on the live tap (off by default), and `run.add_frame` and `queue.put` take an optional `camera_ns` used only by it. See Live status for a station (Watch).
 
 - `RunLogger.close()` raises a `RunError` when a frame writer that timed out is still inside LeRobot's `add_frame`. The dataset's writer lock is then kept until that thread returns (a background thread releases it, or the lock goes when the process ends), so no second writer can open the dataset meanwhile.
