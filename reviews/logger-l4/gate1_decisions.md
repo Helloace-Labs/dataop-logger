@@ -1,0 +1,4 @@
+# Merge gate review on 572275e: decisions
+
+1. **High, sync can erase recorded history.** Changed. `write_synced` takes the cloud's record only when it extends the file on disk: the same rev with other content, or a higher rev whose history does not start with the history on disk, raises `ConflictError` and leaves the file unchanged until the two are reconciled. A lower rev stays a `StaleRevError`. SPEC.md (Run metadata, Writes) says so. Test: `test_a_sync_that_would_erase_recorded_history_is_refused` (both conflicts, the old bytes unchanged, then an extending record is taken). File: `src/aftershock_logger/metadata.py`.
+2. **Medium, an initial human proposal with a reason.** Changed. The detection carries a reason only from an agent; a person's (or the rule's) reason stays in the history step. Test: `test_a_persons_reason_stays_in_the_history_step` (the API and `planner propose --reason`). File: `src/aftershock_logger/metadata.py`.

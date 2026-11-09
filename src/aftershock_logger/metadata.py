@@ -563,8 +563,10 @@ def propose(root: Path, run_id: str, base_rev: int, *, by: str, source: str = "h
             found = detect(run_path)
             if found is None:
                 raise NoPlannerError(f"run {run_id}: the known prompt never changes, so no planner shows")
+            # the detection carries an agent's trace only; a person's reason stays in the history step
             det = {"found": found, "source": source, "by": by, "job_id": job_id, "agent_version": agent_version,
-                   "reason": reason, "proposed_at": at, "suggestions": [sug] if sug else [], "status": "open"}
+                   "reason": reason if source == "agent" else None, "proposed_at": at,
+                   "suggestions": [sug] if sug else [], "status": "open"}
             return _step(cur, "propose", by, source, job_id, agent_version, reason, at, {"planner_detected": det})
         if sug is None or any(s["name"] == name and s["by"] == by for s in d["suggestions"]):
             return None
@@ -633,7 +635,9 @@ def remove(root: Path, run_id: str, base_rev: int, *, by: str, reason: str | Non
 def write_synced(root: Path, rec: dict) -> dict:
     """The sync from Aftershock writes the cloud's record into a synced dataset (one with a well formed sync.json).
     The record must be valid and belong to a committed run; one older than the file on disk (a lower rev) is
-    refused with StaleRevError, so a late answer never rolls a newer record back. Under the dataset lock, through a
+    refused with StaleRevError, so a late answer never rolls a newer record back. It must also extend the file on
+    disk: the same rev with other content, or a higher rev whose history does not start with the history on disk,
+    is refused with ConflictError and the file is left as it is, so no recorded step disappears. Under the dataset lock, through a
     temp file and a rename, like every write. A run in a locked batch keeps its record and stays in its batch until
     the batch is unlocked."""
     from . import batches as B
@@ -652,6 +656,12 @@ def write_synced(root: Path, rec: dict) -> dict:
         cur = load_or_none(root, run_id)
         if cur is not None and rec["rev"] < cur["rev"]:
             raise StaleRevError(cur["rev"], rec["rev"])
+        if cur is not None and rec["rev"] == cur["rev"] and rec != cur:
+            raise ConflictError(f"run {run_id}: the cloud's record at rev {rec['rev']} differs from the one on disk; "
+                                "nothing was written until the two are reconciled")
+        if cur is not None and rec["history"][:cur["rev"]] != cur["history"]:
+            raise ConflictError(f"run {run_id}: the cloud's record does not keep the history on disk (rev "
+                                f"{cur['rev']}); nothing was written until the two are reconciled")
         if cur != rec:
             _save(root, rec)
         _touch(d, run_id)

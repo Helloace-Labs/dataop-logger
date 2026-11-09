@@ -497,3 +497,68 @@ def test_a_proposal_without_a_name_on_a_decided_detection_changes_nothing(ds):
     assert md.propose(ds.root, a, 2, by="x", source="rule") == rec        # removed: unchanged, no new step
     named = md.propose(ds.root, a, 2, by="bob", name="maybe rules")       # a name is still a suggestion
     assert named["rev"] == 3 and named["planner_detected"]["status"] == "removed"
+
+
+def _mark_synced(root):
+    store.atomic_write_json(S.marker_path(root), {"sync_format": 1, "source": "aftershock", "workspace_id": "w",
+                                                  "station_id": "st", "since": "2026-11-09T10:00:00Z"})
+
+
+def test_a_sync_that_would_erase_recorded_history_is_refused(ds):
+    a = ds.ids[0]
+    md.propose(ds.root, a, 0, by="ana")
+    local = md.confirm(ds.root, a, 1, name="local rules", by="ana")         # made before the dataset was synced
+    old = md.path(ds.root, a).read_bytes()
+    _mark_synced(ds.root)
+    # the same rev, other content: the cloud confirmed another name
+    other = json.loads(json.dumps(local))
+    for v in [other["planner_confirmed"]] + [c["after"] for c in other["history"][1]["changes"]
+                                             if c["field"] == "planner_confirmed"]:
+        v["name"], v["planner_id"] = "cloud rules", "ext-cloud-rules"
+    assert md.problems(other, a) == []
+    with pytest.raises(md.ConflictError, match="differs"):
+        md.write_synced(ds.root, other)
+    assert md.path(ds.root, a).read_bytes() == old
+    # a higher rev whose history rewrites the local steps: the cloud's own propose, then a removal
+    det = other["history"][0]["changes"][0]["after"]
+    removed = {**det, "status": "removed"}
+    step = lambda rev, op, changes: {"rev": rev, "op": op, "by": "person:owner", "source": "human", "job_id": None,
+                                     "agent_version": None, "reason": None, "at": "2026-11-09T12:00:00Z",
+                                     "changes": changes}
+    rewritten = {"metadata_format": 1, "run_id": a, "rev": 3, "planner_detected": removed, "planner_confirmed": None,
+                 "history": [other["history"][0],
+                             step(2, "sync", [{"field": "planner_detected", "before": det, "after": removed}]),
+                             step(3, "sync", [{"field": "planner_detected", "before": removed, "after": removed}])]}
+    rewritten["history"][2]["changes"][0]["after"] = {**removed, "suggestions": []}
+    rewritten["planner_detected"] = rewritten["history"][2]["changes"][0]["after"]
+    assert md.problems(rewritten, a) == []
+    with pytest.raises(md.ConflictError, match="does not keep the history"):
+        md.write_synced(ds.root, rewritten)
+    assert md.path(ds.root, a).read_bytes() == old
+    assert V.validate(ds.root)["ok"]
+    # a record that extends the history on disk is taken
+    ext = json.loads(json.dumps(local))
+    d2 = {**ext["planner_detected"], "status": "removed"}
+    ext["history"].append(step(3, "remove", [{"field": "planner_detected", "before": ext["planner_detected"],
+                                              "after": d2},
+                                             {"field": "planner_confirmed", "before": ext["planner_confirmed"],
+                                              "after": None}]))
+    ext.update(rev=3, planner_detected=d2, planner_confirmed=None)
+    assert md.write_synced(ds.root, ext) == ext and md.load(ds.root, a) == ext
+    assert md.write_synced(ds.root, ext) == ext                              # the same record again: fine
+
+
+def test_a_persons_reason_stays_in_the_history_step(ds, capsys):
+    a, b = ds.ids[0], ds.ids[1]
+    rec = md.propose(ds.root, a, 0, by="ana", reason="the prompt changes three times")
+    assert rec["planner_detected"]["reason"] is None and rec["planner_detected"]["job_id"] is None
+    assert rec["history"][-1]["reason"] == "the prompt changes three times"
+    assert md.problems(md.load(ds.root, a), a) == [] and V.validate(ds.root)["ok"]
+    assert cli.main(["planner", "propose", str(ds.root), b, "--rev", "0", "--by", "ben", "--reason", "it changes"]) == 0
+    capsys.readouterr()
+    got = md.load(ds.root, b)
+    assert got["planner_detected"]["reason"] is None and got["history"][-1]["reason"] == "it changes"
+    agent = md.propose(ds.root, ds.ids[0], 1, by="bot", source="agent", name="x", job_id="j", agent_version="v",
+                       reason="named it")
+    assert agent["history"][-1]["reason"] == "named it"
+    assert V.validate(ds.root)["ok"]
