@@ -340,6 +340,13 @@ def validate(root: Path, action_key: str = "action") -> dict:
     unbound = sorted(set(episodes) - set(bound))
     if unbound:
         warnings.append(f"{len(unbound)} LeRobot episodes have no dataop run: {unbound[:20]}")
+    vmeta = adapter.episode_metadata(root) if episodes else {}
+    for e, ids in sorted(bound.items()):                       # a video shorter or longer than its rows (#479)
+        for p in video_frame_problems(vmeta.get(e)):
+            errors.append(f"{ids[0]}: episode {e} {p}")
+    for e in unbound:
+        for p in video_frame_problems(vmeta.get(e)):
+            warnings.append(f"episode {e} (no dataop run) {p}")
     from .session import session_problems
     s_errors, s_warnings, sessions = session_problems(root)
     errors += s_errors
@@ -347,6 +354,15 @@ def validate(root: Path, action_key: str = "action") -> dict:
     return {"ok": not errors, "errors": errors, "warnings": warnings, "runs": sum(map(len, bound.values())),
             "episodes_on_disk": len(episodes), "unbound_episodes": unbound, "quarantined": quarantined,
             "sessions": sessions}
+
+
+def video_frame_problems(em: dict | None) -> list[str]:
+    """Each camera whose video, by LeRobot's own episode record (its from and to timestamps), holds a different number
+    of frames than the episode has rows: the video and the data are misaligned (issue #479)."""
+    if not em:
+        return []
+    return [f"camera {cam}: its video holds {n} frames, the episode has {em['length']} rows; video and data are "
+            f"misaligned" for cam, n in sorted(em.get("video_frames", {}).items()) if n != em["length"]]
 
 
 def integrity_problems(run_path: Path, m: dict) -> list[str]:

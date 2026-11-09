@@ -5,6 +5,7 @@ State machine per run: active -> staged -> committed, with terminal discarded, s
 from __future__ import annotations
 
 import datetime as _dt
+import math
 from pathlib import Path
 import shutil
 import threading
@@ -41,6 +42,7 @@ def _own_version() -> str:
 _DATAOP_VERSION = _own_version()
 
 _FROM_LOGGER = object()            # run(planner=...) not given: use the RunLogger's planner
+ENCODER_WAIT_S = 2.0         # how long a frame waits for room in LeRobot's video encoder (the frame budget, #479)
 _AUTO = object()                   # add_frame(subtask_cmd=...) not given: None without a planner, else unknown
 
 PRED_SCHEMA = pa.schema([("inference_id", pa.int64()), ("obs_frame_index", pa.int64()),
@@ -77,7 +79,7 @@ class RunLogger:
     def __init__(self, dataset, action_schema: ActionSchema, obs_timestamp_kind: str = "bundle_completion",
                  action_key: str = "action", batch: str | None = None,
                  planner: PlannerInfo | dict | None | str = UNKNOWN, spill_dir: str | None = None,
-                 live: bool = False):
+                 live: bool = False, encoder_wait_s: float = ENCODER_WAIT_S):
         """batch: the batch new runs join (opened if it does not exist). Without it, runs join the batch that is
         collecting, or a new batch named after the policy.
 
@@ -90,7 +92,15 @@ class RunLogger:
 
         live: turn on the live tap (logger task L10): a background thread writes the run's live status to
         dataop/live/ for a local reader such as a station, and camera previews only while that reader asks for them.
-        Off by default; it never changes what is recorded and its errors never reach the caller. See live.py."""
+        Off by default; it never changes what is recorded and its errors never reach the caller. See live.py.
+
+        encoder_wait_s: the frame budget for LeRobot's streaming video encoder (issue #479). When a camera's encoder
+        queue is full, the logger waits up to this long for room before it hands a frame over, instead of letting
+        LeRobot drop the frame from the video. Past it, the run makes a controlled stop (reason "encoder_backlog")."""
+        if not (isinstance(encoder_wait_s, (int, float)) and not isinstance(encoder_wait_s, bool)
+                and math.isfinite(encoder_wait_s) and encoder_wait_s >= 0):
+            raise ValueError("encoder_wait_s must be a number of seconds >= 0")
+        self.encoder_wait_s = float(encoder_wait_s)
         if obs_timestamp_kind not in ("capture", "bundle_completion"):
             raise ValueError("obs_timestamp_kind must be 'capture' or 'bundle_completion'")
         self.dataset = dataset
@@ -236,6 +246,9 @@ class RunLogger:
         try:
             yield r
         except BaseException as exc:
+            if r.state == "active" and r._encoder_stop is not None:
+                r._save_after_encoder_stop()                   # every frame before the stop is aligned: keep them
+                raise
             if r.state == "active" and r._queue is not None and r._queue.stopped is not None:
                 stop = r._quarantine_stopped()                 # keep every accepted frame, never discard them
                 if exc is not stop:
@@ -250,6 +263,9 @@ class RunLogger:
             return
         if r.state == "active" and r._queue is not None and r._queue.stopped is not None:
             raise r._quarantine_stopped()                      # the caller caught ControlledStop and left the block
+        if r.state == "active" and r._encoder_stop is not None:
+            r._save_after_encoder_stop()                       # the caller caught it and left the block
+            raise r._encoder_stop
         if r.state != "staged":
             r.discard()
             raise RunError("the run block ended without run.end(); the episode was discarded, not saved")
@@ -288,6 +304,7 @@ class Run:
         self._blocks_logger = False                        # True while that record stops the logger
         self._stop = None                                  # the ControlledStop that ended this run
         self._session: dict | None = None                  # manifest fields set by a SessionLogger (logger L9)
+        self._encoder_stop = None                          # an EncoderBacklog from add_frame (direct mode, #479)
 
     def _live(self, hook: str, *args) -> None:
         """Tell the live tap, if any (its hooks never raise)."""
@@ -320,6 +337,16 @@ class Run:
         self._require("active")
         if self._queue is not None:
             raise RunError("this run records through run.queue(); add frames with queue.put()")
+        if self._encoder_stop is not None:
+            raise self._encoder_stop
+        try:
+            self._wait_encoder()                               # before anything is counted: the run stays whole
+        except BaseException as e:
+            from .frame_queue import ControlledStop
+            if isinstance(e, ControlledStop):
+                self._encoder_stop = e
+                self._live("stop_seen", e)
+            raise
         frame, row = self._prepare(frame, sent_action=sent_action, control_mode=control_mode, obs_ns=obs_ns,
                                    sent_ns=sent_ns, base_action=base_action, expert_action=expert_action,
                                    expert_source=expert_source, blend_weight=blend_weight,
@@ -434,6 +461,33 @@ class Run:
             self.logger.live_tap.frame(self, frame, row, camera_ns)
         return frame, row
 
+    def _wait_encoder(self, abort=None, waiting=None, frame: int | None = None) -> None:
+        """Backpressure for LeRobot's streaming video encoder (issue #479): wait, up to the logger's encoder_wait_s,
+        until every camera's encoder queue has room for one more frame, so LeRobot never drops a frame from a video.
+        Raises EncoderBacklog past the budget. Returns at once without a streaming encoder, or when abort() says the
+        caller no longer needs the frame written. waiting(text or None) is told while it waits."""
+        full = adapter.encoder_full(self.dataset)
+        if not full:
+            return
+        deadline = time.monotonic() + self.logger.encoder_wait_s
+        what = lambda f: ", ".join(f"{k} {n} of {m} frames" for k, n, m in f)  # noqa: E731
+        try:
+            while full:
+                if waiting is not None:
+                    waiting(what(full))
+                if abort is not None and abort():
+                    return
+                if time.monotonic() >= deadline:
+                    from .frame_queue import EncoderBacklog
+                    raise EncoderBacklog(f"LeRobot's video encoder had no room for frame "
+                                         f"{self._count if frame is None else frame} within "
+                                         f"{self.logger.encoder_wait_s:g} s ({what(full)} waiting)", self.run_id)
+                time.sleep(0.002)
+                full = adapter.encoder_full(self.dataset)
+        finally:
+            if waiting is not None:
+                waiting(None)
+
     def _write_frame(self, frame: dict, row: dict) -> None:
         """Hand one prepared frame to LeRobot. The caller appends the row once this returns."""
         expected = row["frame_index"]
@@ -444,6 +498,10 @@ class Run:
             raise RunError(f"episode buffer has {before} frames but this run added {expected}; "
                            "add frames only through run.add_frame()")
         self.dataset.add_frame(frame)
+        dropped = adapter.encoder_dropped(self.dataset)
+        if dropped:
+            raise RunError(f"LeRobot's video encoder dropped frames ({_counts(dropped)}); the video no longer matches "
+                           "the dataset rows")
 
     def queue(self, max_seconds: float = 2.0, max_frames: int | None = None, stall_timeout: float | None = None,
               stop_timeout: float | None = None):
@@ -534,6 +592,10 @@ class Run:
         self._require("active")
         if termination_reason not in TERMINATION_REASONS:
             raise ValueError(f"termination_reason must be one of {TERMINATION_REASONS}")
+        if self._encoder_stop is not None and termination_reason != "system_error":
+            raise RunError(f"the run made a controlled stop ({self._encoder_stop.reason}); it ends as system_error")
+        if self._encoder_stop is not None:
+            labels = sorted(set(labels or []) | {self._encoder_stop.reason})
         self._seal(termination_reason, task_success, labels, failure_mode)
 
     def _seal(self, termination_reason: str, task_success: bool | None = None, labels: list[str] | None = None,
@@ -669,6 +731,35 @@ class Run:
             self._blocks_logger = False
         return self.quarantine_path
 
+    def _saved_video_frames(self) -> dict[str, int]:
+        """Per camera, the frames LeRobot's record of the episode just saved says its video holds (empty when the
+        videos are encoded later, as with batch encoding, or the record is not available)."""
+        e = getattr(self.dataset.meta, "latest_episode", None)
+        try:
+            if not e or int(adapter._one(e["episode_index"])) != self.episode_index:
+                return {}
+            return adapter.episode_video_frames(e, adapter.dataset_fps(self.dataset))
+        except Exception:
+            return {}
+
+    def _save_after_encoder_stop(self) -> None:
+        """After an EncoderBacklog in add_frame (direct mode): every frame before the stop reached LeRobot and its
+        video, so the run is sealed as system_error (label encoder_backlog) and saved instead of discarded."""
+        stop = self._encoder_stop
+        head = f"controlled stop of run {self.run_id}: {stop.reason} ({stop.detail})"
+        stop.frames = len(self._rows)
+        if not self._rows:
+            self.discard()
+            stop.args = (f"{head}; no frame had been recorded",)
+            return
+        try:
+            self._seal("system_error", None, [stop.reason], None)
+            self._save_and_commit()
+        except BaseException as e:
+            stop.args = (f"{head}; saving its {len(self._rows)} frames failed ({type(e).__name__}: {e})",)
+            raise
+        stop.args = (f"{head}; its {len(self._rows)} frames were saved as system_error (label {stop.reason})",)
+
     def _abandon_staged(self, reason: str) -> None:
         adapter.reset_episode_buffer(self.dataset)
         store.quarantine(self.logger.root, self.run_path, reason)
@@ -772,6 +863,12 @@ class Run:
         except Exception as e:
             self._abandon_staged(f"the LeRobot buffer changed after run.end(): {e}")
             raise RunError(f"the LeRobot buffer changed after run.end(); nothing was saved ({e})") from e
+        dropped = adapter.encoder_dropped(self.dataset)
+        if dropped:                                            # never seal a video shorter than its rows (#479)
+            msg = (f"LeRobot's video encoder dropped frames ({_counts(dropped)}) of the run's {len(self._rows)}; "
+                   "the episode was not saved")
+            self._abandon_staged(msg)
+            raise RunError(msg)
         before = adapter.total_episodes(self.dataset)
         try:
             self.dataset.save_episode()
@@ -807,6 +904,15 @@ class Run:
             self.logger.broken = msg
             self._live("run_state", "save_failed")
             raise RunError(msg)
+        short = {cam: n for cam, n in self._saved_video_frames().items() if n != len(self._rows)}
+        if short:                                              # the saved video and the rows differ (#479)
+            msg = (f"LeRobot saved episode {self.episode_index} with video frames that differ from its "
+                   f"{len(self._rows)} rows ({_counts(short)}); the run was not committed")
+            store.atomic_write_json(self.run_path / "manifest.json", self._manifest("staged", save_error=msg))
+            self.state = "save_failed"
+            self.logger.broken = msg
+            self._live("run_state", "save_failed")
+            raise RunError(msg)
         store.atomic_write_json(self.run_path / "manifest.json", self._manifest("committed"))
         self.state = "committed"
         self._live("run_state", "committed")
@@ -816,6 +922,10 @@ class Run:
                          asdict(self.policy) if isinstance(self.policy, PolicyInfo) else None)
         except Exception as e:                           # the run is saved; batches place it on the next read
             warnings.warn(f"run {self.run_id} was saved but not added to a batch yet ({e})")
+
+
+def _counts(d: dict) -> str:
+    return ", ".join(f"{k}: {v}" for k, v in sorted(d.items()))
 
 
 def derive_takeovers(rows) -> list[dict]:
