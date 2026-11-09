@@ -598,3 +598,42 @@ def test_at_save_a_camera_the_record_leaves_out_stops_the_commit(tmp_path, monke
                     run.add_frame(frame(i, (CAM, WRIST)), **kw(i))
                 run.end("success")
     assert run.state == "save_failed"
+
+
+
+def test_a_staged_folder_that_cannot_be_removed_does_not_lose_the_frames(tmp_path, slow_encoder, monkeypatch):
+    """The staged write fails after writing part of the run's folder, and the disk then refuses to remove it: the
+    frames still reach quarantine (or memory and the spill), and validate reports the folder left in runs/."""
+    from aftershock_logger import logger as L
+    from aftershock_logger.logger import Run
+    ds = make_ds(tmp_path)
+    real_write, real_rmtree = Run._write_files, L.shutil.rmtree
+
+    def half_written(self, status, *a, **k):
+        if status == "staged":
+            self.run_path.mkdir(parents=True, exist_ok=True)
+            (self.run_path / "ticks.parquet").write_bytes(b"partial")
+            raise OSError(30, "Read-only file system")
+        return real_write(self, status, *a, **k)
+
+    def read_only(path, *a, **k):
+        if Path(path).parent.name == "runs":
+            raise OSError(30, "Read-only file system")
+        return real_rmtree(path, *a, **k)
+    with RunLogger(ds, SCHEMA, planner=None, encoder_wait_s=0.2) as log, pytest.raises(EncoderBacklog):
+        with log.run(TASK, policy=None) as run:
+            slow_encoder[0] = 0.5
+            with pytest.raises(EncoderBacklog):
+                for i in range(30):
+                    run.add_frame(frame(i), **kw(i))
+            monkeypatch.setattr(Run, "_write_files", half_written)
+            monkeypatch.setattr(L.shutil, "rmtree", read_only)
+            with pytest.raises(OSError):
+                run.end("system_error")
+            monkeypatch.setattr(Run, "_write_files", real_write)
+            monkeypatch.setattr(L.shutil, "rmtree", real_rmtree)
+    assert run.state == "quarantined" and run.quarantine_path is not None
+    assert "could not be removed" in run._stop.detail
+    ds.finalize()
+    res = V.validate(ds.root)
+    assert any(run.run_id in e for e in res["errors"]), res        # the leftover folder is reported, loudly

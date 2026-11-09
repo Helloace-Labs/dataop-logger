@@ -263,6 +263,8 @@ class RunLogger:
             raise
         if r.state == "discarded":
             return
+        if r.state == "quarantined" and r._encoder_stop is not None:
+            raise r._encoder_stop                              # its frames went to quarantine when it was ended
         if r.state == "active" and r._queue is not None and r._queue.stopped is not None:
             raise r._quarantine_stopped()                      # the caller caught ControlledStop and left the block
         if r.state == "active" and r._encoder_stop is not None:
@@ -805,8 +807,12 @@ class Run:
         self._unsaved_quarantine = (rows, observations, info)
         self.state = "quarantined"
         self._stop = stop
-        if self.run_path.exists():
-            shutil.rmtree(self.run_path)
+        try:
+            if self.run_path.exists():                         # a half written staged record, if any
+                shutil.rmtree(self.run_path)
+        except Exception as e:                                 # never in the way of keeping the frames
+            info["detail"] = stop.detail = (f"{stop.detail}; the staged folder runs/{self.run_id} could not be "
+                                            f"removed ({type(e).__name__}: {e})")
         try:
             self.quarantine_path = write_partial(self, rows, observations, info)
         except BaseException as e:            # as a queued stop: kept in memory for retry_quarantine() or the spill

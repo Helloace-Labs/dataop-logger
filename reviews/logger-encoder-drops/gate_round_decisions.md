@@ -9,3 +9,12 @@ The lead's gate Codex review of pull request #19 at 0a1b741 found three High fin
 | 3 High: after EncoderBacklog, seal_episode("operator_abort") on a short episode takes the short stop branch and discards the run | Accepted. `seal_episode` checks the run's stored stop before the short stop rule and refuses any termination but `system_error`. | `src/aftershock_logger/session.py` (`seal_episode`); test `test_a_short_drive_episode_that_hits_the_budget_is_no_short_stop` |
 
 Tests: `python -m pytest -q`: 626 passed, 82 skipped.
+
+## Confirmation round (gate_confirm_codex.md)
+
+| Finding | Decision | Change |
+| --- | --- | --- |
+| 1 High: a cleanup failure of the staged folder skips the protected quarantine write | Accepted. Removing a half written staged folder can no longer stop the quarantine: a failure is added to the stop's detail, the frames are written to quarantine (or kept in memory for the retry and the spill), and validate reports the folder left in runs/. A run block that exits normally after such a quarantine raises the stop instead of reporting a run with no end. | `src/aftershock_logger/logger.py` (`_quarantine_direct`, `RunLogger.run`); test `test_a_staged_folder_that_cannot_be_removed_does_not_lose_the_frames` |
+| 2, 3: resolved | No change. | |
+
+Tests: `python -m pytest -q`: 627 passed, 82 skipped.
