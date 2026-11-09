@@ -807,10 +807,13 @@ class Run:
         self._unsaved_quarantine = (rows, observations, info)
         self.state = "quarantined"
         self._stop = stop
+        self.logger._unsaved_runs.append(self)                # secured first: close() retries and spills it
+        interrupt = None
         try:
             if self.run_path.exists():                         # a half written staged record, if any
                 shutil.rmtree(self.run_path)
-        except Exception as e:                                 # never in the way of keeping the frames
+        except BaseException as e:                             # never in the way of keeping the frames
+            interrupt = None if isinstance(e, Exception) else e
             info["detail"] = stop.detail = (f"{stop.detail}; the staged folder runs/{self.run_id} could not be "
                                             f"removed ({type(e).__name__}: {e})")
         try:
@@ -818,7 +821,6 @@ class Run:
         except BaseException as e:            # as a queued stop: kept in memory for retry_quarantine() or the spill
             stop.quarantine_error = f"{type(e).__name__}: {e}"
             self._blocks_logger = reset_error is None
-            self.logger._unsaved_runs.append(self)
             unsaved = (f"run {self.run_id} stopped and its {len(rows)} frames were NOT written to quarantine "
                        f"({stop.quarantine_error}); they are only in memory: free space and call "
                        "run.retry_quarantine(), or close the RunLogger, which retries and then spills them")
@@ -826,14 +828,19 @@ class Run:
             stop._settle()
             self._live("controlled_stop", stop)
             self._live("run_state", "quarantined")
+            if interrupt is not None:
+                raise interrupt
             if not isinstance(e, Exception):
                 raise
             return
         self._unsaved_quarantine = None
+        self.logger._unsaved_runs.remove(self)
         stop.quarantine_path = self.quarantine_path
         stop._settle()
         self._live("controlled_stop", stop)
         self._live("run_state", "quarantined")
+        if interrupt is not None:
+            raise interrupt                                    # after the frames are safe
 
     def _abandon_staged(self, reason: str) -> None:
         adapter.reset_episode_buffer(self.dataset)

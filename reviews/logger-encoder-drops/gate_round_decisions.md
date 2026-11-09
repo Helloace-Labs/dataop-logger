@@ -18,3 +18,11 @@ Tests: `python -m pytest -q`: 626 passed, 82 skipped.
 | 2, 3: resolved | No change. | |
 
 Tests: `python -m pytest -q`: 627 passed, 82 skipped.
+
+## Second confirmation round (gate_confirm2_codex.md)
+
+| Finding | Decision | Change |
+| --- | --- | --- |
+| 1 High: an interrupt during the cleanup still skips the protected write | Accepted. The run is registered for the retry and the spill before anything else, and leaves that list only once its quarantine is written. A failure of any kind while removing the staged folder (an interrupt included) is recorded in the detail; the frames are written; an interrupt is raised again after that. | `src/aftershock_logger/logger.py` (`_quarantine_direct`); `test_a_staged_folder_that_cannot_be_removed_does_not_lose_the_frames` now runs with an OSError and with a KeyboardInterrupt |
+
+Tests: `python -m pytest -q`: 628 passed, 82 skipped.

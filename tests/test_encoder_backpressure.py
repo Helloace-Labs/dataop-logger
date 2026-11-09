@@ -601,7 +601,9 @@ def test_at_save_a_camera_the_record_leaves_out_stops_the_commit(tmp_path, monke
 
 
 
-def test_a_staged_folder_that_cannot_be_removed_does_not_lose_the_frames(tmp_path, slow_encoder, monkeypatch):
+@pytest.mark.parametrize("cleanup_error", [OSError(30, "Read-only file system"), KeyboardInterrupt()])
+def test_a_staged_folder_that_cannot_be_removed_does_not_lose_the_frames(tmp_path, slow_encoder, monkeypatch,
+                                                                        cleanup_error):
     """The staged write fails after writing part of the run's folder, and the disk then refuses to remove it: the
     frames still reach quarantine (or memory and the spill), and validate reports the folder left in runs/."""
     from aftershock_logger import logger as L
@@ -618,7 +620,7 @@ def test_a_staged_folder_that_cannot_be_removed_does_not_lose_the_frames(tmp_pat
 
     def read_only(path, *a, **k):
         if Path(path).parent.name == "runs":
-            raise OSError(30, "Read-only file system")
+            raise cleanup_error
         return real_rmtree(path, *a, **k)
     with RunLogger(ds, SCHEMA, planner=None, encoder_wait_s=0.2) as log, pytest.raises(EncoderBacklog):
         with log.run(TASK, policy=None) as run:
@@ -628,11 +630,11 @@ def test_a_staged_folder_that_cannot_be_removed_does_not_lose_the_frames(tmp_pat
                     run.add_frame(frame(i), **kw(i))
             monkeypatch.setattr(Run, "_write_files", half_written)
             monkeypatch.setattr(L.shutil, "rmtree", read_only)
-            with pytest.raises(OSError):
+            with pytest.raises(type(cleanup_error)):      # an interrupt still reaches the caller, after the save
                 run.end("system_error")
             monkeypatch.setattr(Run, "_write_files", real_write)
             monkeypatch.setattr(L.shutil, "rmtree", real_rmtree)
-    assert run.state == "quarantined" and run.quarantine_path is not None
+    assert run.state == "quarantined" and run not in log._unsaved_runs and run.quarantine_path is not None
     assert "could not be removed" in run._stop.detail
     ds.finalize()
     res = V.validate(ds.root)
