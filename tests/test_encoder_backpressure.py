@@ -356,6 +356,8 @@ def test_a_drive_episode_that_hits_the_budget_faults_the_session_and_keeps_its_f
             assert sess.seal_episode("system_error") == "pending"
             assert sess.write_pending() == "committed"
             with pytest.raises(EncoderBacklog):
+                sess.add_frame(frame(100), **kw(100))    # not into a gap either
+            with pytest.raises(EncoderBacklog):
                 sess.start_episode(moved_by="person")    # the station holds: no new episode
             rec = sess.finalize("user_stop")
     ds.finalize()
@@ -366,3 +368,82 @@ def test_a_drive_episode_that_hits_the_budget_faults_the_session_and_keeps_its_f
     assert decoded_frames(ds.root) == {CAM: n}
     res = V.validate(ds.root)
     assert res["ok"], res["errors"]
+
+
+@pytest.fixture
+def held_encoder(monkeypatch):
+    """The encoder threads read nothing while `gate` is clear: a camera's queue fills and stays full."""
+    import threading
+    gate = threading.Event()
+
+    class HeldQueue(queue.Queue):
+        def get(self, *a, **k):
+            if self.maxsize == QSIZE:
+                gate.wait()
+            return super().get(*a, **k)
+    monkeypatch.setattr(video_utils.queue, "Queue", HeldQueue)
+    yield gate
+    gate.set()
+
+
+@pytest.mark.parametrize("queued", [False, True])
+def test_a_frame_waits_while_the_encoder_queue_is_full_and_goes_in_when_it_has_room(tmp_path, held_encoder,
+                                                                                   queued):
+    """The write blocks while the queue is full, longer than LeRobot's own 0.1 s put timeout, drops nothing, and
+    finishes once the encoder reads again: every frame is in the video."""
+    import threading
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, planner=None, encoder_wait_s=30) as log:
+        with log.run(TASK, policy=None) as run:
+            q = run.queue() if queued else None
+            put = q.put if q else run.add_frame
+            for i in range(QSIZE):                     # these fill the queue the encoder does not read
+                put(frame(i), **kw(i))
+            done = threading.Event()
+            t = threading.Thread(target=lambda: (put(frame(QSIZE), **kw(QSIZE)), done.set()), daemon=True)
+            t.start()
+            if queued:                                 # put returns at once; the writer waits for room
+                assert done.wait(5)
+                deadline = time.monotonic() + 5
+                while adapter.encoder_full(ds) == [] and time.monotonic() < deadline:
+                    time.sleep(0.01)
+            assert adapter.encoder_full(ds) == [(CAM, QSIZE, QSIZE)]
+            time.sleep(0.5)                            # well past LeRobot's 0.1 s put timeout
+            assert adapter.encoder_dropped(ds) == {}
+            assert len(run._rows) == QSIZE              # the waiting frame did not reach LeRobot
+            if not queued:
+                assert not done.is_set()
+            held_encoder.set()                         # the encoder reads again
+            t.join(10)
+            assert done.is_set()
+            run.end("success")
+    ds.finalize()
+    assert run.state == "committed" and decoded_frames(ds.root) == {CAM: QSIZE + 1}
+
+
+def test_a_direct_quarantine_that_cannot_be_written_keeps_the_frames_for_the_spill(tmp_path, slow_encoder,
+                                                                                  monkeypatch):
+    from aftershock_logger import frame_queue as FQ
+    from aftershock_logger.logger import Run
+    slow_encoder[0] = 0.5
+    ds = make_ds(tmp_path)
+    real = FQ.write_partial
+    calls = []
+
+    def full_disk(run, rows, observations, info, qdir=None):
+        calls.append(qdir)
+        if qdir is None:
+            raise OSError(28, "No space left on device")
+        return real(run, rows, observations, info, qdir=qdir)
+    monkeypatch.setattr(FQ, "write_partial", full_disk)
+    monkeypatch.setattr(Run, "_check_rows", lambda self: (_ for _ in ()).throw(RunError("a tick check failed")))
+    spill = tmp_path / "spill"
+    with pytest.raises(EncoderBacklog) as ei:
+        with RunLogger(ds, SCHEMA, planner=None, encoder_wait_s=0.2, spill_dir=str(spill)) as log:
+            with log.run(TASK, policy=None) as run:
+                for i in range(20):
+                    run.add_frame(frame(i), **kw(i))
+    stop = ei.value
+    assert run.state == "quarantined" and "No space left" in (stop.quarantine_error or "")
+    assert stop.spilled and (spill / run.run_id / "manifest.json").exists()
+    assert calls[0] is None and calls[-1] is not None

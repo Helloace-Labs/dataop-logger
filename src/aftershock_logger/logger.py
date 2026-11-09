@@ -791,11 +791,29 @@ class Run:
                 "frames_written_to_lerobot": len(rows), "frames_queued": 0, "queue_capacity": None,
                 "dropped_features": sorted(_image_keys(self.dataset)), "lerobot_buffer_reset": reset_error is None,
                 "lerobot_buffer_error": reset_error, "stopped_at": self.ended_at}
+        self._unsaved_quarantine = (rows, observations, info)
         self.state = "quarantined"
         self._stop = stop
         if self.run_path.exists():
             shutil.rmtree(self.run_path)
-        self.quarantine_path = stop.quarantine_path = write_partial(self, rows, observations, info)
+        try:
+            self.quarantine_path = write_partial(self, rows, observations, info)
+        except BaseException as e:            # as a queued stop: kept in memory for retry_quarantine() or the spill
+            stop.quarantine_error = f"{type(e).__name__}: {e}"
+            self._blocks_logger = reset_error is None
+            self.logger._unsaved_runs.append(self)
+            unsaved = (f"run {self.run_id} stopped and its {len(rows)} frames were NOT written to quarantine "
+                       f"({stop.quarantine_error}); they are only in memory: free space and call "
+                       "run.retry_quarantine(), or close the RunLogger, which retries and then spills them")
+            self.logger.broken = f"{self.logger.broken}; {unsaved}" if reset_error else unsaved
+            stop._settle()
+            self._live("controlled_stop", stop)
+            self._live("run_state", "quarantined")
+            if not isinstance(e, Exception):
+                raise
+            return
+        self._unsaved_quarantine = None
+        stop.quarantine_path = self.quarantine_path
         stop._settle()
         self._live("controlled_stop", stop)
         self._live("run_state", "quarantined")

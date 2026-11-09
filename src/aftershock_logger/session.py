@@ -312,6 +312,8 @@ class SessionLogger:
         frame after a seal, and at session frame 0). Takes the same arguments as Run.add_frame. Returns the frame's
         session frame (its address in the session, counted from 0 at Start and never reset)."""
         self._require_open()
+        if self._encoder_stop is not None:                    # after the stop nothing more is recorded (#479)
+            raise self._encoder_stop
         ep = self._episode
         if ep is not None:
             keep = ep["buffer"] is not None and ep["run"]._count + 1 <= SHORT_STOP_S * self.fps
