@@ -133,7 +133,9 @@ class RunLogger:
         files; that case raises nothing."""
         problems = []
         try:
-            if self._active is not None and self._active.state == "active":
+            if self._active is not None and self._active.state == "active" and self._active._encoder_stop is not None:
+                self._active._save_after_encoder_stop()        # its frames are kept, never discarded (#479)
+            elif self._active is not None and self._active.state == "active":
                 self._active.discard()
         finally:
             stuck = [t for t in self._stuck_writers if t.is_alive()]
@@ -604,7 +606,15 @@ class Run:
             raise ValueError(f"termination_reason must be one of {TERMINATION_REASONS}")
         if self._encoder_stop is not None and termination_reason != "system_error":
             raise RunError(f"the run made a controlled stop ({self._encoder_stop.reason}); it ends as system_error")
-        self._seal(termination_reason, task_success, labels, failure_mode)
+        if self._encoder_stop is None:
+            self._seal(termination_reason, task_success, labels, failure_mode)
+            return
+        try:
+            self._seal(termination_reason, task_success, labels, failure_mode)
+        except Exception as e:                                 # keep the recorded frames: quarantine them (#479)
+            if self.state == "active":
+                self._quarantine_direct(f"the run could not be sealed ({type(e).__name__}: {e})")
+            raise
 
     def _seal(self, termination_reason: str, task_success: bool | None = None, labels: list[str] | None = None,
               failure_mode: str | None = None) -> None:
@@ -760,7 +770,8 @@ class Run:
         try:
             self._seal("system_error", None, [stop.reason], None)
         except Exception as e:                                 # keep the frames: quarantine them
-            self._quarantine_direct(f"the run could not be sealed ({type(e).__name__}: {e})")
+            if self.state == "active":
+                self._quarantine_direct(f"the run could not be sealed ({type(e).__name__}: {e})")
             return
         try:
             self._save_and_commit()

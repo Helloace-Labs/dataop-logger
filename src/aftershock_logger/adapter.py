@@ -117,10 +117,11 @@ def episode_metadata(root) -> dict[int, dict]:
     vkeys = sorted({c.split("/")[1] for c in ds.schema.names if c.startswith("videos/") and c.endswith("/chunk_index")})
     cols = ["episode_index", "length", "dataset_from_index", "dataset_to_index", "tasks"]
     cols += [f"videos/{k}/{f}" for k in vkeys for f in ("chunk_index", "file_index")]
-    times = [f"videos/{k}/{f}" for k in vkeys for f in ("from_timestamp", "to_timestamp")
-             if f"videos/{k}/{f}" in ds.schema.names]
-    t = ds.to_table(columns=cols + times).to_pydict()
     info = json.loads((Path(root) / "meta" / "info.json").read_text()) if (Path(root) / "meta" / "info.json").exists() else {}
+    expected = video_keys(info.get("features"))                # every camera the dataset declares
+    times = [f"videos/{k}/{f}" for k in expected for f in ("chunk_index", "from_timestamp", "to_timestamp")
+             if f"videos/{k}/{f}" in ds.schema.names and f"videos/{k}/{f}" not in cols]
+    t = ds.to_table(columns=cols + times).to_pydict()
     vpath = info.get("video_path") or "videos/{video_key}/chunk-{chunk_index:03d}/file-{file_index:03d}.mp4"
     out = {}
     for i, e in enumerate(t["episode_index"]):
@@ -131,8 +132,7 @@ def episode_metadata(root) -> dict[int, dict]:
                        "to": int(t["dataset_to_index"][i]), "tasks": list(t["tasks"][i] or []), "videos": videos,
                        "video_keys": vkeys,
                        "video_frames": episode_video_frames(
-                           {c: t[c][i] for c in times + [f"videos/{k}/chunk_index" for k in vkeys]},
-                           info.get("fps"), vkeys)}
+                           {c: t[c][i] for c in times + cols if c.startswith("videos/")}, info.get("fps"), expected)}
     return out
 
 
@@ -205,17 +205,20 @@ def _one(v):
     return v
 
 
-def episode_video_frames(episode: dict, fps, video_keys) -> dict[str, int | None]:
+def episode_video_frames(episode: dict, fps, video_keys, deferred: bool = False) -> dict[str, int | None]:
     """Per camera, the frames an episode's video holds, from LeRobot's episode record: its videos/<camera>/from_timestamp
     and to_timestamp, which LeRobot takes from the encoded file's duration. `episode` maps meta/episodes columns to
-    values (a list of one value, as LeRobot's latest_episode keeps it, or a plain value). Every camera of `video_keys`
-    whose video is encoded (videos/<camera>/chunk_index set) gets a count, or None when the record does not say (a
-    missing or unreadable timestamp, or no fps); a camera whose video is not encoded yet (batch encoding) is left out."""
+    values (a list of one value, as LeRobot's latest_episode keeps it, or a plain value). `video_keys` are the
+    dataset's video features (every camera that must have a video): each gets a count, or None when the record does
+    not say (no video for it, a missing or unreadable timestamp, or no fps). Only with `deferred` (the caller knows
+    the dataset encodes its videos in batches later) is a camera whose video is not encoded yet left out."""
     out: dict[str, int | None] = {}
     for cam in video_keys:
-        if _one(episode.get(f"videos/{cam}/chunk_index")) is None:
+        if deferred and _one(episode.get(f"videos/{cam}/chunk_index")) is None:
             continue
         try:
+            if _one(episode.get(f"videos/{cam}/chunk_index")) is None:
+                raise ValueError("no video")
             a = float(_one(episode[f"videos/{cam}/from_timestamp"]))
             b = float(_one(episode[f"videos/{cam}/to_timestamp"]))
             f = float(fps)
@@ -224,6 +227,11 @@ def episode_video_frames(episode: dict, fps, video_keys) -> dict[str, int | None
         except Exception:
             out[cam] = None
     return out
+
+
+def video_keys(features: dict) -> list[str]:
+    """The video features of a dataset (meta/info.json features, or LeRobot's meta.features)."""
+    return sorted(k for k, v in (features or {}).items() if isinstance(v, dict) and v.get("dtype") == "video")
 
 
 def saved_video_frames(dataset, episode_index: int) -> dict[str, int | None] | None:
@@ -235,4 +243,7 @@ def saved_video_frames(dataset, episode_index: int) -> dict[str, int | None] | N
             return None
     except Exception:
         return None
-    return episode_video_frames(e, getattr(dataset.meta, "fps", None), list(getattr(dataset.meta, "video_keys", [])))
+    # Videos are encoded later only when LeRobot encodes in batches and does not stream (batch_encoding_size > 1).
+    deferred = getattr(getattr(dataset, "writer", None), "_streaming_encoder", None) is None and \
+        int(getattr(dataset, "_batch_encoding_size", 1) or 1) > 1
+    return episode_video_frames(e, getattr(dataset.meta, "fps", None), video_keys(dataset.meta.features), deferred)

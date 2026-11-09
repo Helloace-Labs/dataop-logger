@@ -340,7 +340,7 @@ def validate(root: Path, action_key: str = "action") -> dict:
     unbound = sorted(set(episodes) - set(bound))
     if unbound:
         warnings.append(f"{len(unbound)} LeRobot episodes have no dataop run: {unbound[:20]}")
-    vmeta = adapter.episode_metadata(root) if episodes else {}
+    vmeta = adapter.episode_metadata(root)
     for e, ids in sorted(bound.items()):                       # a video shorter or longer than its rows (#479)
         for p in video_frame_problems(vmeta.get(e)):
             errors.append(f"{ids[0]}: episode {e} {p}")
@@ -495,7 +495,7 @@ def repair(root: Path, delete_unmatched: bool = False, action_key: str = "action
     """Non-destructive by default: commit exact unique matches, quarantine the rest, never touch unreadable runs."""
     root = Path(root)
     episodes = load_lerobot_episodes(root, action_key)
-    vmeta = adapter.episode_metadata(root) if episodes else {}
+    vmeta = adapter.episode_metadata(root)
     committed = {m["episode_index"] for _, m in store.iter_manifests(root, "committed")}
     report = []
     for run_path, m, problem in list(store.iter_run_dirs(root)):

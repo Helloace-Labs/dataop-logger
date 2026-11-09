@@ -45,18 +45,21 @@ def slow_encoder(monkeypatch):
     return delay
 
 
-def make_ds(tmp_path, name="ds"):
+WRIST = "observation.images.wrist"
+
+
+def make_ds(tmp_path, name="ds", cams=(CAM,)):
     feats = {"observation.state": {"dtype": "float32", "shape": (6,), "names": list(NAMES)},
              "action": {"dtype": "float32", "shape": (6,), "names": list(NAMES)},
-             CAM: {"dtype": "video", "shape": (64, 64, 3), "names": ["height", "width", "channels"]}}
+             **{c: {"dtype": "video", "shape": (64, 64, 3), "names": ["height", "width", "channels"]} for c in cams}}
     return lerobot_dataset.LeRobotDataset.create(f"test/{name}", fps=30, features=feats, root=tmp_path / name,
                                                  use_videos=True, streaming_encoding=True,
                                                  encoder_queue_maxsize=QSIZE)
 
 
-def frame(i):
-    return {"observation.state": np.full(6, i, np.float32), CAM: np.full((64, 64, 3), i * 9 % 255, np.uint8),
-            "task": TASK}
+def frame(i, cams=(CAM,)):
+    return {"observation.state": np.full(6, i, np.float32), "task": TASK,
+            **{c: np.full((64, 64, 3), i * 9 % 255, np.uint8) for c in cams}}
 
 
 def kw(i):
@@ -328,7 +331,9 @@ def test_a_count_the_episode_record_does_not_give_is_a_problem():
                                           "video holds"]
     rec = {"episode_index": [0], f"videos/{CAM}/chunk_index": [0], f"videos/{CAM}/from_timestamp": [None],
            f"videos/{CAM}/to_timestamp": [1.0], "videos/b/chunk_index": [None]}
-    assert adapter.episode_video_frames(rec, 30, [CAM, "b"]) == {CAM: None}     # b is not encoded yet
+    assert adapter.episode_video_frames(rec, 30, [CAM, "b"]) == {CAM: None, "b": None}   # b has no video
+    assert adapter.episode_video_frames(rec, 30, [CAM, "b"], deferred=True) == {CAM: None}   # b encodes later
+    assert adapter.episode_video_frames({"episode_index": [0]}, 30, [CAM]) == {CAM: None}   # no columns at all
     assert adapter.episode_video_frames({**rec, f"videos/{CAM}/from_timestamp": [0.5]}, 30, [CAM]) == {CAM: 15}
     assert adapter.episode_video_frames({**rec, f"videos/{CAM}/from_timestamp": [0.5]}, None, [CAM]) == {CAM: None}
 
@@ -447,3 +452,149 @@ def test_a_direct_quarantine_that_cannot_be_written_keeps_the_frames_for_the_spi
     assert run.state == "quarantined" and "No space left" in (stop.quarantine_error or "")
     assert stop.spilled and (spill / run.run_id / "manifest.json").exists()
     assert calls[0] is None and calls[-1] is not None
+
+
+
+GO = {"by": "owner@example.com", "at": "2026-11-07T09:10:00Z",
+      "scope": {"model_id": "m_1", "planner": None, "task_id": "pick", "task_rev": 1, "station_rev": 0}}
+
+
+def open_session(log):
+    import uuid
+    from aftershock_logger import SessionLogger
+    return SessionLogger(log, session_id=str(uuid.uuid4()), station_id="st_1", go=GO, model_id="m_1", task=TASK,
+                         task_id="pick", task_rev=1, policy=PolicyInfo("pi05", "ckpt/1"))
+
+
+def backlog_episode(sess, slow_encoder, first, upto):
+    """Open an episode and feed it until the encoder budget stops it; returns the frames the episode recorded."""
+    slow_encoder[0] = 0.0
+    sess.start_episode(moved_by="person")
+    slow_encoder[0] = 0.5
+    with pytest.raises(EncoderBacklog):
+        for i in range(first, upto):
+            sess.add_frame(frame(i), **kw(i))
+    return sess._episode["run"]._count
+
+
+def test_a_short_drive_episode_that_hits_the_budget_is_no_short_stop(tmp_path, slow_encoder):
+    """An episode of a second or less that stopped on the encoder is sealed only as system_error and kept as a run,
+    never discarded as a short stop (whose frames would move to a gap without the reason)."""
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, planner=None, encoder_wait_s=0.2) as log:
+        with open_session(log) as sess:
+            for i in range(5):
+                sess.add_frame(frame(i), **kw(i))
+            n = backlog_episode(sess, slow_encoder, 5, 40)
+            assert n <= 30                                 # a second or less at 30 fps
+            from aftershock_logger import SessionError
+            with pytest.raises(SessionError, match="sealed as system_error"):
+                sess.seal_episode("operator_abort")
+            assert sess._episode is not None              # still open, nothing moved
+            assert sess.seal_episode("system_error") == "pending"
+            run = sess._pending["run"]
+            assert sess.write_pending() == "committed"
+            rec = sess.finalize("user_stop")
+    ds.finalize()
+    assert "encoder_backlog" in run._end["labels"] and run._end["termination_reason"] == "system_error"
+    assert rec["runs"][0]["range"] == {"start": 5, "end": 5 + n} and not rec["gaps"][-1].get("short_stop")
+    assert decoded_frames(ds.root) == {CAM: n}
+    assert V.validate(ds.root)["ok"]
+
+
+def test_a_drive_episode_stopped_by_the_encoder_that_cannot_be_staged_is_quarantined(tmp_path, slow_encoder,
+                                                                                     monkeypatch):
+    from aftershock_logger.logger import Run
+    ds = make_ds(tmp_path)
+    real = Run._write_files
+
+    def no_disk(self, status, *a, **k):
+        if status == "staged":
+            raise OSError(28, "No space left on device")
+        return real(self, status, *a, **k)
+    with RunLogger(ds, SCHEMA, planner=None, encoder_wait_s=0.2) as log:
+        with open_session(log) as sess:
+            for i in range(5):
+                sess.add_frame(frame(i), **kw(i))
+            n = backlog_episode(sess, slow_encoder, 5, 80)
+            run = sess._episode["run"]
+            monkeypatch.setattr(Run, "_write_files", no_disk)
+            with pytest.raises(OSError):
+                sess.seal_episode("system_error")
+            monkeypatch.setattr(Run, "_write_files", real)
+            assert run.state == "quarantined" and run.quarantine_path is not None
+            assert sess._episode is None and sess.runs[-1]["write_status"] == "failed"
+            rec = sess.finalize("user_stop")
+    ds.finalize()
+    assert rec["ended_by"] == "fault_stop" and rec["runs"][0]["range"] == {"start": 5, "end": 5 + n}
+    res = V.validate(ds.root)
+    assert res["ok"], res["errors"]
+
+
+def test_closing_the_logger_keeps_a_run_left_open_after_an_encoder_stop(tmp_path, slow_encoder):
+    ds = make_ds(tmp_path)
+    log = RunLogger(ds, SCHEMA, planner=None, encoder_wait_s=0.2)
+    cm = log.run(TASK, policy=None)
+    run = cm.__enter__()
+    slow_encoder[0] = 0.5
+    with pytest.raises(EncoderBacklog):
+        for i in range(30):
+            run.add_frame(frame(i), **kw(i))
+    log.close()                                            # the caller never ended the run nor left its block
+    ds.finalize()
+    assert run.state == "committed" and "encoder_backlog" in run._end["labels"]
+    assert decoded_frames(ds.root) == {CAM: len(run._rows)}
+
+
+def _drop_camera_meta(root: Path, cam: str, null_only: bool) -> None:
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+    for f in (root / "meta" / "episodes").rglob("*.parquet"):
+        t = pq.read_table(f)
+        names = [c for c in t.column_names if c.startswith(f"videos/{cam}/")]
+        if null_only:
+            for c in names:
+                i = t.column_names.index(c)
+                t = t.set_column(i, c, pa.nulls(len(t), t.schema.field(c).type))
+        else:
+            t = t.drop(names)
+        pq.write_table(t, f)
+
+
+@pytest.mark.parametrize("null_only", [False, True])
+def test_a_camera_missing_from_the_episode_record_is_reported_not_skipped(tmp_path, null_only):
+    """Two cameras; the wrist camera's columns are removed from meta/episodes (or set to null). The expected cameras
+    come from the dataset's features, so validate reports the wrist camera instead of checking only the top one."""
+    ds = make_ds(tmp_path, cams=(CAM, WRIST))
+    with RunLogger(ds, SCHEMA, planner=None) as log:
+        with log.run(TASK, policy=None) as run:
+            for i in range(6):
+                run.add_frame(frame(i, (CAM, WRIST)), **kw(i))
+            run.end("success")
+    ds.finalize()
+    assert adapter.episode_metadata(ds.root)[0]["video_frames"] == {CAM: 6, WRIST: 6}
+    _drop_camera_meta(ds.root, WRIST, null_only)
+    assert adapter.episode_metadata(ds.root)[0]["video_frames"] == {CAM: 6, WRIST: None}
+    res = V.validate(ds.root)
+    assert not res["ok"]
+    assert any(f"camera {WRIST}: the episode record does not say how many frames" in e for e in res["errors"]), res
+
+
+def test_at_save_a_camera_the_record_leaves_out_stops_the_commit(tmp_path, monkeypatch):
+    ds = make_ds(tmp_path, cams=(CAM, WRIST))
+    real = adapter.saved_video_frames
+
+    def wrist_gone(d, e):
+        rec = dict(d.meta.latest_episode)
+        for k in [k for k in rec if k.startswith(f"videos/{WRIST}/")]:
+            del rec[k]
+        monkeypatch.setattr(d.meta, "latest_episode", rec)
+        return real(d, e)
+    monkeypatch.setattr(adapter, "saved_video_frames", wrist_gone)
+    with RunLogger(ds, SCHEMA, planner=None) as log:
+        with pytest.raises(RunError, match=r"or cannot be read \(observation\.images\.wrist: unknown\)"):
+            with log.run(TASK, policy=None) as run:
+                for i in range(6):
+                    run.add_frame(frame(i, (CAM, WRIST)), **kw(i))
+                run.end("success")
+    assert run.state == "save_failed"

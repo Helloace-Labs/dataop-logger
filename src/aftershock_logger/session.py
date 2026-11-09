@@ -445,6 +445,9 @@ class SessionLogger:
         if ep is None:
             raise SessionError("no episode is open")
         run: Run = ep["run"]
+        if run._encoder_stop is not None and termination_reason != "system_error":   # before the short stop rule
+            raise SessionError(f"the episode made a controlled stop ({run._encoder_stop.reason}); it is sealed as "
+                               "system_error")
         n, start = run._count, ep["start"]
         if n != ep["n"]:
             raise SessionError("frames were added to the episode's run directly; add every session frame with "
@@ -489,8 +492,18 @@ class SessionLogger:
         run.event("episode_end", source="station", reason=termination_reason)
         try:
             run.end(termination_reason, task_success=task_success, labels=tags, failure_mode=failure_mode)
-        except BaseException:
-            if run.state != "active":
+        except BaseException as e:
+            if run.state == "quarantined":                    # an encoder stop's run kept in quarantine (#479)
+                self._episode = None
+                entry = {"run_id": run.run_id, "episode_in_session": run._session["episode_in_session"],
+                         "range": {"start": start, "end": start + n}, "write_status": "failed",
+                         "termination": termination_reason, "rescue_outcome": rescue_outcome, "stopped": False}
+                self.runs.append(entry)
+                self._add_evidence(start + n - 1, "persistence_error",
+                                   {"run_id": run.run_id, "error": f"{type(e).__name__}: {e}"})
+                self._add_evidence(start + n - 1, "write", {"run_id": run.run_id, "write_status": "failed"})
+                self._flush()
+            elif run.state != "active":
                 self._episode = None
                 self.broken = "the open episode could not be sealed and was discarded"
             raise
