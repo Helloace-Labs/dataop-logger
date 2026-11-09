@@ -98,6 +98,20 @@ def _image_keys(dataset) -> set[str]:
     return {k for k, f in feats.items() if isinstance(f, dict) and f.get("dtype") in ("image", "video")}
 
 
+def observation_values(frame: dict, image_keys: set[str]) -> dict:
+    """A frame's numeric low-dimensional values (frames.parquet of a quarantined run); images are not kept."""
+    out = {}
+    for k, v in frame.items():
+        if k in image_keys or k == "task":
+            continue
+        if hasattr(v, "detach") and hasattr(v, "cpu"):
+            v = v.detach().cpu().numpy()
+        a = np.asarray(v)
+        if a.dtype.kind in "biuf":
+            out[k] = a.reshape(-1).tolist()
+    return out
+
+
 class FrameQueue:
     """Create it with run.queue(); see the module docstring."""
 
@@ -244,16 +258,7 @@ class FrameQueue:
     # ── writer thread ────────────────────────────────────────────────────────
 
     def _observation(self, frame: dict) -> dict:
-        out = {}
-        for k, v in frame.items():
-            if k in self._image_keys or k == "task":
-                continue
-            if hasattr(v, "detach") and hasattr(v, "cpu"):
-                v = v.detach().cpu().numpy()
-            a = np.asarray(v)
-            if a.dtype.kind in "biuf":
-                out[k] = a.reshape(-1).tolist()
-        return out
+        return observation_values(frame, self._image_keys)
 
     def _set_behind(self, what: str | None) -> None:
         with self._cv:

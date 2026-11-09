@@ -16,7 +16,7 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from aftershock_logger import ActionSchema, EncoderBacklog, RunError, RunLogger, adapter  # noqa: E402
+from aftershock_logger import ActionSchema, EncoderBacklog, PolicyInfo, RunError, RunLogger, adapter  # noqa: E402
 from aftershock_logger import validate as V  # noqa: E402
 
 lerobot_dataset = pytest.importorskip("lerobot.datasets.lerobot_dataset")
@@ -82,15 +82,26 @@ def record(log, n, queued=False):
 
 
 @pytest.mark.parametrize("queued", [False, True])
-def test_a_slow_encoder_gets_backpressure_and_loses_no_frame(tmp_path, slow_encoder, queued):
-    slow_encoder[0] = 0.1                              # 10 frames a second for a 30 fps loop
+def test_a_slow_encoder_gets_backpressure_and_loses_no_frame(tmp_path, slow_encoder, queued, monkeypatch):
+    # Each encoder read takes longer than LeRobot's own 0.1 s wait to put a frame, so without the logger's wait
+    # frames would be dropped; it stays well inside the 2 s budget.
+    slow_encoder[0] = 0.3
+    waits = []
+    real = adapter.encoder_full
+
+    def spy(ds):
+        full = real(ds)
+        waits.extend(full)
+        return full
+    monkeypatch.setattr(adapter, "encoder_full", spy)
     ds = make_ds(tmp_path)
     with RunLogger(ds, SCHEMA, planner=None) as log:
-        run = record(log, 20, queued)
+        run = record(log, 12, queued)
     ds.finalize()
     assert run.state == "committed"
-    assert decoded_frames(ds.root) == {CAM: 20}
-    assert adapter.episode_metadata(ds.root)[0]["video_frames"] == {CAM: 20}
+    assert waits and all(k == CAM and n == m == QSIZE for k, n, m in waits)   # the logger did wait for room
+    assert decoded_frames(ds.root) == {CAM: 12}
+    assert adapter.episode_metadata(ds.root)[0]["video_frames"] == {CAM: 12}
     assert V.validate(ds.root)["ok"]
 
 
@@ -213,7 +224,7 @@ def test_a_saved_video_that_differs_from_its_rows_is_not_committed(tmp_path, slo
     slow_encoder[0] = 0.3
     ds = make_ds(tmp_path)
     with RunLogger(ds, SCHEMA, planner=None) as log:
-        with pytest.raises(RunError, match=r"video frames that differ from its 20 rows \(observation.images.top: \d+\)"):
+        with pytest.raises(RunError, match=r"video frames that differ from its 20 rows or cannot be read \(observation.images.top: \d+\)"):
             record(log, 20)
         assert log.broken
     ds.finalize()
@@ -227,8 +238,7 @@ def test_validate_reports_a_video_already_misaligned_on_disk(tmp_path, slow_enco
     no run)."""
     _no_backpressure(monkeypatch)
     monkeypatch.setattr(adapter, "encoder_dropped", lambda ds: {})
-    from aftershock_logger.logger import Run
-    monkeypatch.setattr(Run, "_saved_video_frames", lambda self: {})
+    monkeypatch.setattr(adapter, "saved_video_frames", lambda ds, e: {})
     slow_encoder[0] = 0.3
     ds = make_ds(tmp_path)
     with RunLogger(ds, SCHEMA, planner=None) as log:
@@ -244,3 +254,115 @@ def test_validate_reports_a_video_already_misaligned_on_disk(tmp_path, slow_enco
     assert len(bad) == 1 and "episode 0 camera observation.images.top: its video holds" in bad[0], res["errors"]
     assert "the episode has 20 rows" in bad[0]
     assert any("episode 1 (no dataop run) camera observation.images.top" in w for w in res["warnings"]), res
+
+
+def test_a_direct_stop_keeps_its_frames_when_a_prediction_names_the_frame_not_recorded(tmp_path, slow_encoder):
+    """A policy's prediction is logged before its frame; the frame that hit the budget is not recorded, so that
+    prediction is left out and the run is still saved with every frame it recorded."""
+    slow_encoder[0] = 0.5
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, planner=None, encoder_wait_s=0.2) as log:
+        with pytest.raises(EncoderBacklog) as ei:
+            with log.run(TASK, policy=None, log_predictions=True) as run:
+                for i in range(20):
+                    run.predictions(i, np.zeros((2, 6), np.float32), obs_frame_index=i, infer_start_ns=1,
+                                    infer_end_ns=2)
+                    run.add_frame(frame(i), **kw(i))
+    ds.finalize()
+    n = ei.value.frames
+    assert run.state == "committed" and 0 < n < 20
+    assert "1 predictions for the frame that was not recorded were left out" in str(ei.value)
+    assert len(run._predictions) == n and decoded_frames(ds.root) == {CAM: n}
+    assert V.validate(ds.root)["ok"]
+
+
+def test_a_direct_stop_that_cannot_be_sealed_quarantines_every_frame(tmp_path, slow_encoder, monkeypatch):
+    from aftershock_logger.logger import Run
+    slow_encoder[0] = 0.5
+    ds = make_ds(tmp_path)
+
+    def refuse(self):
+        raise RunError("a tick check failed")
+    with RunLogger(ds, SCHEMA, planner=None, encoder_wait_s=0.2) as log:
+        with pytest.raises(EncoderBacklog) as ei:
+            with log.run(TASK, policy=None) as run:
+                for i in range(20):
+                    if i == 3:
+                        monkeypatch.setattr(Run, "_check_rows", refuse)
+                    run.add_frame(frame(i), **kw(i))
+    stop = ei.value
+    assert run.state == "quarantined" and stop.quarantine_path is not None and stop.frames == len(run._rows)
+    assert "could not be sealed" in str(stop) and "frames quarantined at" in str(stop)
+    ds.finalize()
+    res = V.validate(ds.root)
+    assert res["ok"] and any("stopped by encoder_backlog" in w for w in res["warnings"]), res
+    assert ds.meta.total_episodes == 0
+
+
+def test_repair_never_commits_a_run_whose_saved_video_differs(tmp_path, slow_encoder, monkeypatch):
+    _no_backpressure(monkeypatch)
+    monkeypatch.setattr(adapter, "encoder_dropped", lambda ds: {})
+    slow_encoder[0] = 0.3
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, planner=None) as log:
+        with pytest.raises(RunError, match="the run was not committed"):
+            run = None
+            with log.run(TASK, policy=None) as run:
+                for i in range(20):
+                    run.add_frame(frame(i), **kw(i))
+                run.end("success")
+    ds.finalize()
+    report = V.repair(ds.root)
+    assert any(run.run_id in r and "quarantined" in r and "misaligned" in r for r in report), report
+    assert not list(store_runs(ds.root))
+
+
+def store_runs(root):
+    from aftershock_logger import store
+    return [m for _, m in store.iter_manifests(root, "committed")]
+
+
+def test_a_count_the_episode_record_does_not_give_is_a_problem():
+    em = {"length": 5, "video_frames": {CAM: None, "observation.images.wrist": 5}}
+    assert V.video_frame_problems(em) == [f"camera {CAM}: the episode record does not say how many frames its "
+                                          "video holds"]
+    rec = {"episode_index": [0], f"videos/{CAM}/chunk_index": [0], f"videos/{CAM}/from_timestamp": [None],
+           f"videos/{CAM}/to_timestamp": [1.0], "videos/b/chunk_index": [None]}
+    assert adapter.episode_video_frames(rec, 30, [CAM, "b"]) == {CAM: None}     # b is not encoded yet
+    assert adapter.episode_video_frames({**rec, f"videos/{CAM}/from_timestamp": [0.5]}, 30, [CAM]) == {CAM: 15}
+    assert adapter.episode_video_frames({**rec, f"videos/{CAM}/from_timestamp": [0.5]}, None, [CAM]) == {CAM: None}
+
+
+def test_a_drive_episode_that_hits_the_budget_faults_the_session_and_keeps_its_frames(tmp_path, slow_encoder):
+    import uuid
+    from aftershock_logger import SessionLogger, session as S
+    go = {"by": "owner@example.com", "at": "2026-11-07T09:10:00Z",
+          "scope": {"model_id": "m_1", "planner": None, "task_id": "pick", "task_rev": 1, "station_rev": 0}}
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, planner=None, encoder_wait_s=0.2) as log:
+        with SessionLogger(log, session_id=str(uuid.uuid4()), station_id="st_1", go=go, model_id="m_1", task=TASK,
+                           task_id="pick", task_rev=1, policy=PolicyInfo("pi05", "ckpt/1")) as sess:
+            for i in range(5):
+                sess.add_frame(frame(i), **kw(i))
+            slow_encoder[0] = 0.0
+            sess.start_episode(moved_by="person")
+            slow_encoder[0] = 0.5
+            with pytest.raises(EncoderBacklog):
+                for i in range(5, 40):
+                    sess.add_frame(frame(i), **kw(i))
+            n = sess.frames - 5
+            with pytest.raises(EncoderBacklog):
+                sess.add_frame(frame(99), **kw(99))      # nothing more is recorded
+            assert sess.seal_episode("system_error") == "pending"
+            assert sess.write_pending() == "committed"
+            with pytest.raises(EncoderBacklog):
+                sess.start_episode(moved_by="person")    # the station holds: no new episode
+            rec = sess.finalize("user_stop")
+    ds.finalize()
+    assert rec["ended_by"] == "fault_stop" and rec["fault"] == "logger_failed"
+    assert rec["runs"][0]["range"] == {"start": 5, "end": 5 + n} and rec["runs"][0]["termination"] == "system_error"
+    rows = S.read_evidence(ds.root, rec["session_id"])
+    assert [r["payload"]["fault"] for r in rows if r["kind"] == "fault"] == ["logger_failed"]
+    assert decoded_frames(ds.root) == {CAM: n}
+    res = V.validate(ds.root)
+    assert res["ok"], res["errors"]

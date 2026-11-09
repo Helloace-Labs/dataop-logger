@@ -210,6 +210,7 @@ class SessionLogger:
         self.runs: list[dict] = []                            # session.json runs[], in order
         self.gaps: list[dict] = []                            # session.json gaps[], in order
         self.broken: str | None = None
+        self._encoder_stop = None                             # an EncoderBacklog from a run (#479)
         self._evidence: list[tuple[int, str, str]] = []
         self._episode = None                                  # {run, cm, start, buffer} while an episode is open
         self._pending = None                                  # {run, cm, entry} while a sealed run is not written
@@ -317,7 +318,8 @@ class SessionLogger:
             saved = _copy(frame) if keep else None
             try:
                 ep["run"].add_frame(frame, **tick)
-            except BaseException:
+            except BaseException as e:
+                self._encoder_stopped(e)
                 if ep["run"].state != "active":
                     self.broken = "the open episode was discarded after a failed frame"
                 raise
@@ -331,12 +333,24 @@ class SessionLogger:
                 self._open_gap(self.frames)
             try:
                 self._gap["run"].add_frame(frame, **tick)
-            except BaseException:
+            except BaseException as e:
+                self._encoder_stopped(e)
                 if self._gap["run"].state != "active":
                     self.broken = "the active gap was discarded after a failed frame"
                 raise
         self.frames += 1
         return self.frames - 1
+
+    def _encoder_stopped(self, e: BaseException) -> None:
+        """LeRobot's video encoder fell behind past the frame budget (#479): that frame was not recorded, so the
+        session records no more frames and starts no episode. A `fault` row (`logger_failed`) names the stop, and the
+        session ends as `fault_stop` with that fault. The open episode (or gap) keeps every frame it recorded: the
+        station seals it as system_error, and a gap is saved with the label encoder_backlog."""
+        from .frame_queue import EncoderBacklog
+        if not isinstance(e, EncoderBacklog) or self._encoder_stop is not None:
+            return
+        self._encoder_stop = e
+        self._add_evidence(max(self.frames - 1, 0), "fault", {"fault": "logger_failed", "detail": str(e)})
 
     def _open_gap(self, start: int, short_stop: tuple[int, int] | None = None) -> None:
         cm = self._gap_logger.run(task=self.task, policy=self.policy, env=self.env, task_id=self.task_id,
@@ -386,6 +400,8 @@ class SessionLogger:
         next frame. Returns the Run, for events, predictions, subgoals and complete_transition; add its frames
         with `add_frame`, never with run.add_frame."""
         self._require_open()
+        if self._encoder_stop is not None:
+            raise self._encoder_stop
         if self._episode is not None:
             raise SessionError("an episode is already open")
         if self._pending is not None:
@@ -621,10 +637,11 @@ class SessionLogger:
             raise ValueError("a fault kind is a short name such as camera_lost")
         self._close_gap(moved_by, reset_checks, reset_passed=False)
         failed = any(r["write_status"] == "failed" for r in self.runs)
-        if failed and ended_by == "user_stop":
+        if (failed or self._encoder_stop is not None) and ended_by == "user_stop":
             ended_by = "fault_stop"
         if ended_by == "fault_stop":
-            fault = fault or ("persistence_error" if failed else self._last_fault)
+            fault = fault or ("persistence_error" if failed else
+                              "logger_failed" if self._encoder_stop is not None else self._last_fault)
         elif fault is not None:
             raise ValueError("a session ended by the user's Stop names no fault")
         problems = coverage_problems([(r["range"]["start"], r["range"]["end"]) for r in self.runs],

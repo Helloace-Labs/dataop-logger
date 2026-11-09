@@ -305,6 +305,12 @@ class Run:
         self._stop = None                                  # the ControlledStop that ended this run
         self._session: dict | None = None                  # manifest fields set by a SessionLogger (logger L9)
         self._encoder_stop = None                          # an EncoderBacklog from add_frame (direct mode, #479)
+        # Low-dimensional frame values, kept without a queue only when LeRobot streams video, so a direct stop that
+        # cannot be sealed can still quarantine every recorded frame (#479).
+        self._observations: list[dict] | None = [] if _streams_video(logger.dataset) else None
+        if self._observations is not None:
+            from .frame_queue import _image_keys
+            self._image_keys = _image_keys(logger.dataset)
 
     def _live(self, hook: str, *args) -> None:
         """Tell the live tap, if any (its hooks never raise)."""
@@ -347,6 +353,7 @@ class Run:
                 self._encoder_stop = e
                 self._live("stop_seen", e)
             raise
+        given = frame
         frame, row = self._prepare(frame, sent_action=sent_action, control_mode=control_mode, obs_ns=obs_ns,
                                    sent_ns=sent_ns, base_action=base_action, expert_action=expert_action,
                                    expert_source=expert_source, blend_weight=blend_weight,
@@ -360,6 +367,9 @@ class Run:
             self.discard()                                     # a partial add can leave LeRobot's buffer misaligned
             raise
         self._rows.append(row)
+        if self._observations is not None:
+            from .frame_queue import observation_values
+            self._observations.append(observation_values(given, self._image_keys))
         return row["frame_index"]
 
     def _prepare(self, frame: dict, *, sent_action, control_mode: str, obs_ns: int, sent_ns: int,
@@ -594,8 +604,6 @@ class Run:
             raise ValueError(f"termination_reason must be one of {TERMINATION_REASONS}")
         if self._encoder_stop is not None and termination_reason != "system_error":
             raise RunError(f"the run made a controlled stop ({self._encoder_stop.reason}); it ends as system_error")
-        if self._encoder_stop is not None:
-            labels = sorted(set(labels or []) | {self._encoder_stop.reason})
         self._seal(termination_reason, task_success, labels, failure_mode)
 
     def _seal(self, termination_reason: str, task_success: bool | None = None, labels: list[str] | None = None,
@@ -605,6 +613,12 @@ class Run:
         if self._queue is not None:
             self._queue.drain()                                # every queued frame written, or ControlledStop
             self._queue = None
+        if self._encoder_stop is not None:                     # the stop stays on the record (a gap's too, #479)
+            labels = sorted(set(labels or []) | {self._encoder_stop.reason})
+            dropped = [p for p in self._predictions or [] if p["obs_frame_index"] >= len(self._rows)]
+            if dropped:                                        # predictions for the frame that was not recorded
+                self._predictions = [p for p in self._predictions if p["obs_frame_index"] < len(self._rows)]
+                self._encoder_stop.predictions_dropped = len(dropped)
         if not self._rows:
             self.discard()
             raise RunError("a run with no frames is discarded, never saved")
@@ -731,20 +745,11 @@ class Run:
             self._blocks_logger = False
         return self.quarantine_path
 
-    def _saved_video_frames(self) -> dict[str, int]:
-        """Per camera, the frames LeRobot's record of the episode just saved says its video holds (empty when the
-        videos are encoded later, as with batch encoding, or the record is not available)."""
-        e = getattr(self.dataset.meta, "latest_episode", None)
-        try:
-            if not e or int(adapter._one(e["episode_index"])) != self.episode_index:
-                return {}
-            return adapter.episode_video_frames(e, adapter.dataset_fps(self.dataset))
-        except Exception:
-            return {}
-
     def _save_after_encoder_stop(self) -> None:
         """After an EncoderBacklog in add_frame (direct mode): every frame before the stop reached LeRobot and its
-        video, so the run is sealed as system_error (label encoder_backlog) and saved instead of discarded."""
+        video, so the run is sealed as system_error (label encoder_backlog) and saved instead of discarded. If it
+        cannot be sealed, its frames go to quarantine as a queued run's would; a failed save is kept like any other
+        (save_failed, for validate --repair)."""
         stop = self._encoder_stop
         head = f"controlled stop of run {self.run_id}: {stop.reason} ({stop.detail})"
         stop.frames = len(self._rows)
@@ -754,11 +759,46 @@ class Run:
             return
         try:
             self._seal("system_error", None, [stop.reason], None)
+        except Exception as e:                                 # keep the frames: quarantine them
+            self._quarantine_direct(f"the run could not be sealed ({type(e).__name__}: {e})")
+            return
+        try:
             self._save_and_commit()
         except BaseException as e:
-            stop.args = (f"{head}; saving its {len(self._rows)} frames failed ({type(e).__name__}: {e})",)
+            stop.args = (f"{head}; saving its {len(self._rows)} frames failed ({type(e).__name__}: {e}); the run "
+                         f"is {self.state}",)
             raise
-        stop.args = (f"{head}; its {len(self._rows)} frames were saved as system_error (label {stop.reason})",)
+        extra = (f"; {stop.predictions_dropped} predictions for the frame that was not recorded were left out"
+                 if getattr(stop, "predictions_dropped", 0) else "")
+        stop.args = (f"{head}; its {len(self._rows)} frames were saved as system_error (label {stop.reason}){extra}",)
+
+    def _quarantine_direct(self, why: str) -> None:
+        """The quarantine of a stopped run without a queue: the rows it recorded and their low-dimensional values."""
+        from .frame_queue import _image_keys, write_partial
+        stop = self._encoder_stop
+        rows, observations = list(self._rows), list(self._observations or [])
+        reset_error = None
+        try:
+            adapter.reset_episode_buffer(self.dataset)
+        except Exception as e:
+            reset_error = f"{type(e).__name__}: {e}"
+            self.logger.broken = f"run {self.run_id} stopped and its LeRobot buffer could not be reset ({reset_error})"
+        self._end = {"termination_reason": "system_error", "task_success": None, "failure_mode": None,
+                     "labels": [stop.reason], "rl_ready": all(r["reward_valid"] for r in rows)}
+        self.ended_at = _now_iso()
+        stop.detail = f"{stop.detail}; {why}"
+        info = {"reason": stop.reason, "detail": stop.detail, "frames": len(rows),
+                "frames_written_to_lerobot": len(rows), "frames_queued": 0, "queue_capacity": None,
+                "dropped_features": sorted(_image_keys(self.dataset)), "lerobot_buffer_reset": reset_error is None,
+                "lerobot_buffer_error": reset_error, "stopped_at": self.ended_at}
+        self.state = "quarantined"
+        self._stop = stop
+        if self.run_path.exists():
+            shutil.rmtree(self.run_path)
+        self.quarantine_path = stop.quarantine_path = write_partial(self, rows, observations, info)
+        stop._settle()
+        self._live("controlled_stop", stop)
+        self._live("run_state", "quarantined")
 
     def _abandon_staged(self, reason: str) -> None:
         adapter.reset_episode_buffer(self.dataset)
@@ -904,10 +944,11 @@ class Run:
             self.logger.broken = msg
             self._live("run_state", "save_failed")
             raise RunError(msg)
-        short = {cam: n for cam, n in self._saved_video_frames().items() if n != len(self._rows)}
+        counts = adapter.saved_video_frames(self.dataset, self.episode_index) or {}
+        short = {cam: ("unknown" if n is None else n) for cam, n in counts.items() if n != len(self._rows)}
         if short:                                              # the saved video and the rows differ (#479)
             msg = (f"LeRobot saved episode {self.episode_index} with video frames that differ from its "
-                   f"{len(self._rows)} rows ({_counts(short)}); the run was not committed")
+                   f"{len(self._rows)} rows or cannot be read ({_counts(short)}); the run was not committed")
             store.atomic_write_json(self.run_path / "manifest.json", self._manifest("staged", save_error=msg))
             self.state = "save_failed"
             self.logger.broken = msg
@@ -922,6 +963,10 @@ class Run:
                          asdict(self.policy) if isinstance(self.policy, PolicyInfo) else None)
         except Exception as e:                           # the run is saved; batches place it on the next read
             warnings.warn(f"run {self.run_id} was saved but not added to a batch yet ({e})")
+
+
+def _streams_video(dataset) -> bool:
+    return getattr(getattr(dataset, "writer", None), "_streaming_encoder", None) is not None
 
 
 def _counts(d: dict) -> str:

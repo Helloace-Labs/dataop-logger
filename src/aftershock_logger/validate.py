@@ -361,8 +361,14 @@ def video_frame_problems(em: dict | None) -> list[str]:
     of frames than the episode has rows: the video and the data are misaligned (issue #479)."""
     if not em:
         return []
-    return [f"camera {cam}: its video holds {n} frames, the episode has {em['length']} rows; video and data are "
-            f"misaligned" for cam, n in sorted(em.get("video_frames", {}).items()) if n != em["length"]]
+    out = []
+    for cam, n in sorted(em.get("video_frames", {}).items()):
+        if n is None:
+            out.append(f"camera {cam}: the episode record does not say how many frames its video holds")
+        elif n != em["length"]:
+            out.append(f"camera {cam}: its video holds {n} frames, the episode has {em['length']} rows; video and "
+                       "data are misaligned")
+    return out
 
 
 def integrity_problems(run_path: Path, m: dict) -> list[str]:
@@ -489,6 +495,7 @@ def repair(root: Path, delete_unmatched: bool = False, action_key: str = "action
     """Non-destructive by default: commit exact unique matches, quarantine the rest, never touch unreadable runs."""
     root = Path(root)
     episodes = load_lerobot_episodes(root, action_key)
+    vmeta = adapter.episode_metadata(root) if episodes else {}
     committed = {m["episode_index"] for _, m in store.iter_manifests(root, "committed")}
     report = []
     for run_path, m, problem in list(store.iter_run_dirs(root)):
@@ -506,7 +513,12 @@ def repair(root: Path, delete_unmatched: bool = False, action_key: str = "action
         except Exception as e:
             report.append(f"left untouched {m['run_id']}: {e}")
             continue
-        if len(matches) == 1:
+        video = video_frame_problems(vmeta.get(matches[0])) if len(matches) == 1 else []
+        if video:                                              # never commit a misaligned video (#479)
+            why = f"episode {matches[0]} matches, but {'; '.join(video)}"
+            store.quarantine(root, run_path, why)
+            report.append(f"quarantined {m['run_id']}: {why}")
+        elif len(matches) == 1:
             m.update(status="committed", episode_index=matches[0])
             m.pop("save_error", None)
             store.atomic_write_json(run_path / "manifest.json", m)
