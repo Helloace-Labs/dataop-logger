@@ -25,6 +25,7 @@ import pytest
 
 DATA = Path(__file__).resolve().parent / "data" / "review_format2"
 RUN_ID = json.loads((DATA / "manifest.json").read_text())["run_id"]
+SESSION_ID = json.loads((DATA / "session.json").read_text())["session_id"]   # a Drive session's record (L9)
 
 
 def read(name: str):
@@ -92,6 +93,20 @@ class LoggerImpl:
 
     def check_manifest(self, review, manifest) -> None:
         self.fmt.check_against_manifest(review, manifest)
+
+    def session_record(self, rec: dict):
+        return rec
+
+    def episodes(self, review, record) -> list | None:
+        """The session's effective timeline as [kind, id, start, end, from_runs, confirmed], or None when the review
+        does not fit the session record."""
+        from aftershock_logger import session
+        try:
+            session.check_against_session(review, record)
+            return [[x["kind"], x["id"], x["start"], x["end"], list(x["from_runs"]), x["confirmed"]]
+                    for x in session.effective_timeline(record, review)]
+        except ValueError:
+            return None
 
     def read_run(self, text: str, manifest) -> str | None:
         """The canonical text of a file as the logger reads it for a run, or None when it refuses it."""
@@ -163,6 +178,19 @@ class ContractImpl(LoggerImpl):
 
     def check_manifest(self, review, manifest) -> None:
         self.rv.check_against_manifest(review, manifest)
+
+    def session_record(self, rec: dict):
+        from contracts.schema.drive import SessionRecord
+        return SessionRecord.model_validate(rec)
+
+    def episodes(self, review, record) -> list | None:
+        from contracts.schema import drive
+        try:
+            drive.check_against_session(review, record)
+            return [[x.kind, x.seg_id, x.start, x.end, list(x.from_runs), x.confirmed]
+                    for x in drive.effective_timeline(record, review)]
+        except ValueError:
+            return None
 
     def read_run(self, text: str, manifest) -> str | None:
         try:
@@ -385,6 +413,58 @@ def _cases() -> dict[str, dict]:
         ("undo", dict(step_id="@8")),                                     # the label is back
         ("undo", dict(step_id="@7")),                                     # now allowed
     ]
+    # A Drive session's split review (session.json): gap-0 [0,10), run A [10,40), gap-1 [40,44), gap-2 [44,55) with
+    # a short stop [44,50), run B [55,80), gap-3 [80,85), run C [85,120) whose write failed, gap-4 [120,130). A
+    # person's edit is in effect at once; a splitter or agent edit waits for a person.
+    splitter = dict(source="splitter", by="splitter", job_id="split-1", agent_version="s1", reason="evidence")
+    person = dict(source="human", by="p1")
+    session_split = [
+        ("propose", dict(kind="episode_boundary", payload={"at": 40, "to": 38}, **splitter)),
+        ("accept", dict(edit_id="$0", by="p1")),                          # run A ends at 38: a new id, needs review
+        ("propose", dict(kind="episode_boundary", payload={"at": 85, "to": 85}, **splitter)),
+        ("accept", dict(edit_id="$2", by="p1")),                          # a confirmation changes nothing
+        ("propose", dict(kind="episode_merge", payload={"start": 10, "end": 120}, **person)),   # swallows run C
+        ("retract", dict(edit_id="$4", by="p1")),
+        ("propose", dict(kind="episode_split", payload={"at": 20}, **person)),
+        ("propose", dict(kind="episode_boundary", payload={"at": 44, "to": 46}, **person)),     # between two gaps
+        ("undo", dict(step_id="@7")),
+        ("propose", dict(kind="episode_boundary", payload={"at": 80, "to": 82}, **person)),     # B grows into gap-3
+        ("replace", dict(edit_id="$9", payload={"at": 80, "to": 80}, by="p1")),               # and back: B's id
+        ("propose", dict(kind="episode_merge", payload={"start": 40, "end": 40}, **person)),    # refused: start < end
+        ("propose", dict(kind="episode_boundary", payload={"at": 0, "to": 4}, **person)),       # refused: at >= 1
+        ("propose", dict(kind="episode_split", payload={"at": "20"}, **person)),
+        ("propose", dict(kind="episode_split", payload={"at": 20, "x": 1}, **person)),
+        ("propose", dict(kind="episode_split", payload={"at": True}, **person)),
+        ("propose", dict(kind="episode_boundary", payload={"at": 2.0, "to": 4}, **person)),
+        ("propose", dict(kind="episode_split", payload={"at": 100}, **person)),                 # splits failed run C
+        ("retract", dict(edit_id="$17", by="p1")),
+        ("propose", dict(kind="episode_merge", payload={"start": 20, "end": 120}, **person)),   # swallows run C
+        ("undo", dict(step_id="@19")),
+        ("propose", dict(kind="episode_split", payload={"at": 100}, **_agent())),            # a proposal only
+        ("reject", dict(edit_id="$21", by="p1")),
+        ("propose", dict(kind="episode_split", payload={"at": 131}, **splitter)),            # past the session
+        ("reject", dict(edit_id="$23", by="p1")),                         # still in the review: does not fit
+        ("propose", dict(kind="note", payload={"frame": 3, "text": "a run's kind"}, **person)),
+    ]
+    session_merge = [
+        ("propose", dict(kind="episode_split", payload={"at": 60}, **person)),
+        ("propose", dict(kind="episode_merge", payload={"start": 55, "end": 80}, **person)),    # run B's id again
+        ("propose", dict(kind="episode_boundary", payload={"at": 10, "to": 5}, **person)),      # A takes gap frames
+        ("propose", dict(kind="episode_boundary", payload={"at": 85, "to": 83}, **person)),     # into failed run C
+        ("undo", dict(step_id="@3")),
+        ("propose", dict(kind="episode_boundary", payload={"at": 5, "to": 0}, **person)),       # gap-0 keeps none
+        ("retract", dict(edit_id="$5", by="p1")),
+        ("propose", dict(kind="episode_merge", payload={"start": 5, "end": 40}, **person)),     # one episode
+        ("retract", dict(edit_id="$7", by="p1")),
+        ("propose", dict(kind="episode_merge", payload={"start": 85, "end": 40}, **person)),    # refused
+        ("propose", dict(kind="episode_merge", payload={"start": 0, "end": 80}, **person)),     # gap-0 is no episode
+        ("undo", dict(step_id="@10")),
+        ("propose", dict(kind="episode_merge", payload={"start": 5, "end": 80}, **person)),     # A, the short stop, B
+        ("propose", dict(kind="episode_split", payload={"at": 50}, **person)),
+        ("propose", dict(kind="episode_boundary", payload={"at": 80, "to": 82}, **person)),
+        ("lock", dict(by="owner", reason="pack locked")),
+        ("propose", dict(kind="episode_split", payload={"at": 30}, **person)),                  # locked
+    ]
     cap = [("propose", dict(kind="note", payload={"frame": i % 120, "text": f"note {i}"}, source="human", by="p1"))
            for i in range(205)] + [("undo", dict(step_id="@0")), ("undo", dict(step_id="@204"))]
     big = [("propose", dict(kind="segments", payload={"segments": [
@@ -404,6 +484,8 @@ def _cases() -> dict[str, dict]:
         "migrated_take_back": {"start": "format1_all_kinds.json+task", "ops": migrated_take_back},
         "obsolete_reading": {"start": "empty", "ops": obsolete_reading},
         "obsolete_reading_by_replace_or_undo": {"start": "empty", "ops": obsolete_reading_by_replace_or_undo},
+        "session_split_edits": {"start": "session", "ops": session_split},
+        "session_merge_and_back": {"start": "session", "ops": session_merge},
         "history_cap": {"start": "empty", "ops": cap},
         "large_steps": {"start": "empty", "ops": big},
     }
@@ -416,6 +498,8 @@ def start(impl, spec: str):
     m = impl.manifest(read("manifest.json"))
     if spec == "empty":
         return impl.empty(RUN_ID), m
+    if spec == "session":
+        return impl.empty(SESSION_ID), m
     name, _, task = spec.partition("+")
     return impl.migrate(read(name), m, impl.task(read("task.json")) if task else None), m
 
@@ -461,8 +545,11 @@ def run_case(impl, name: str) -> dict:
                 fits = True
             except impl.errors():
                 fits = False
-            steps.append({"op": op, "error": err, "id": impl.rid(got), "rev": impl.rev(review), "sha": sha(text),
-                          "step": new_steps[-1] if new_steps else None, "fits_run": fits})
+            step = {"op": op, "error": err, "id": impl.rid(got), "rev": impl.rev(review), "sha": sha(text),
+                    "step": new_steps[-1] if new_steps else None, "fits_run": fits}
+            if case["start"] == "session":         # and the session's effective timeline, or None when it does not fit
+                step["episodes"] = impl.episodes(review, impl.session_record(read("session.json")))
+            steps.append(step)
             assert impl.dump(impl.load(text)) == text                  # every result reads back byte for byte
     return {"steps": steps, "final": impl.dump(review)}
 

@@ -116,6 +116,45 @@ def test_to_format1_refuses_what_format1_cannot_say():
         fmt.to_format1(r3)
 
 
+SPLIT_EDITS = {"episode_boundary": {"at": 40, "to": 44}, "episode_merge": {"start": 10, "end": 90},
+               "episode_split": {"at": 20}}
+
+
+@pytest.mark.parametrize("kind", fmt.SESSION_KINDS)
+def test_a_split_edit_belongs_to_a_session_review_only(kind):
+    """Aftershock issue #447: the three split kinds read and write in format 2, a run's review refuses them (also
+    through the logger's own review commands), and format 1 has none of them."""
+    assert kind in fmt.KINDS and kind in fmt.MULTI
+    r, e = fmt.propose(fmt.empty_review(rc.SESSION_ID), kind=kind, payload=SPLIT_EDITS[kind], source="human", by="p",
+                       expect_rev=0, now="2026-11-04T10:00:00Z")
+    text = fmt.dump_review(r)
+    assert fmt.dump_review(fmt.load_review(text)) == text and e["status"] == "accepted"
+    run = fmt.empty_review(MANIFEST["run_id"])
+    run, _ = fmt.propose(run, kind=kind, payload=SPLIT_EDITS[kind], source="human", by="p", expect_rev=0,
+                         now="2026-11-04T10:00:00Z")
+    with pytest.raises(fmt.FormatError, match="belongs to a session review"):
+        fmt.check_against_manifest(run, MANIFEST)
+    with pytest.raises(fmt.FormatError, match="belongs to a session review"):
+        fmt.read(fmt.dump_review(run), MANIFEST)
+    with pytest.raises(rv.ReviewError):
+        rv.check_payload(kind, SPLIT_EDITS[kind], MANIFEST)
+    with pytest.raises(fmt.MigrationError, match="format 1 has no"):
+        fmt._edit_to_format1(dict(e, decided_by=None))
+
+
+@pytest.mark.parametrize("kind,payload", [
+    ("episode_boundary", {"at": 0, "to": 4}), ("episode_boundary", {"at": 4, "to": 0}),
+    ("episode_boundary", {"at": 4}), ("episode_boundary", {"at": 4, "to": 5, "x": 1}),
+    ("episode_boundary", {"at": 4.0, "to": 5}), ("episode_boundary", {"at": True, "to": 5}),
+    ("episode_merge", {"start": -1, "end": 5}), ("episode_merge", {"start": 5, "end": 5}),
+    ("episode_merge", {"start": 6, "end": 5}), ("episode_merge", {"start": 0}),
+    ("episode_split", {"at": 0}), ("episode_split", {"at": "20"}), ("episode_split", {}), ("episode_split", None),
+])
+def test_bad_split_payloads_are_refused(kind, payload):
+    with pytest.raises(fmt.FormatError):
+        fmt.check_payload(kind, payload)
+
+
 def test_effective_of_a_migrated_review_is_what_format1_gave():
     """Batch locks record a digest of effective(); a migrated review must give the same one."""
     want = rc.read("effective_format1.json")
