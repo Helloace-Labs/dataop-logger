@@ -204,7 +204,7 @@ def _detection_problems(f, where: str, out: list) -> None:
     if not (_is_int(n) and n >= 2):
         out.append(f"{where}.distinct_prompts is an int of at least 2")
         return
-    shas = [s.get("sha256") for s in subs if isinstance(s, dict)]
+    shas = [s["sha256"] for s in subs if isinstance(s, dict) and isinstance(s.get("sha256"), str)]
     if len(set(shas)) != len(shas):
         out.append(f"{where}: detected subtasks are distinct")
     if subs and n < len(subs):
@@ -384,6 +384,8 @@ def load(root: Path, run_id: str) -> dict:
     """The run's record; rev 0 with both fields null when it has none. A file that cannot be read or is not a valid
     record raises MetadataError, never reads as empty."""
     p = path(root, run_id)
+    if p.is_symlink():                 # a link (even a dangling one) is never the record, and never reads as none
+        raise MetadataError(f"{FILE} is a link, not the record")
     try:
         raw = p.read_bytes()
     except FileNotFoundError:
@@ -464,10 +466,19 @@ def _committed(root: Path, run_id: str) -> Path:
 
 
 def _save(root: Path, rec: dict) -> None:
+    """Write a valid record whole, through a temp file and a rename. A record larger than readers accept
+    (MAX_FILE) is refused before the old file is touched, so no write ever leaves a file nobody can read."""
     bad = problems(rec, rec["run_id"])
     if bad:                                    # never write a record the cloud model would refuse
         raise MetadataError("refusing to write an invalid record: " + "; ".join(bad[:5]))
-    store.atomic_write_json(path(root, rec["run_id"]), rec)
+    data = (json.dumps(rec, indent=1, sort_keys=True) + "\n").encode()
+    if len(data) > MAX_FILE:
+        raise MetadataError(f"the record would be {len(data)} bytes, more than the {MAX_FILE} a reader accepts; "
+                            "nothing was written")
+    p = path(root, rec["run_id"])
+    if p.is_symlink():
+        raise MetadataError(f"{FILE} is a link, not the record; nothing was written")
+    store.atomic_write_bytes(p, data)
 
 
 def _step(rec: dict, op: str, by: str, source: str, job_id, agent_version, reason, at: str, new: dict) -> dict:
@@ -493,6 +504,7 @@ def _write(root: Path, run_id: str, base_rev, change) -> dict:
         raise MetadataError("base_rev is the record's rev as you read it (0 when it has none)")
     run_path = _committed(root, run_id)
     with B._transaction(root) as d:
+        sync.check_editable(root)                  # again under the lock: a sync may have begun meanwhile
         bid = d["members"].get(run_id)
         b = next((x for x in d["batches"] if x["batch_id"] == bid), None)
         if b is not None and b["status"] == "locked":
@@ -505,7 +517,16 @@ def _write(root: Path, run_id: str, base_rev, change) -> dict:
         if new is None:
             return cur
         _save(root, new)
+        _touch(d, run_id)
     return new
+
+
+def _touch(d: dict, run_id: str) -> None:
+    """Have the batch change re-derive the run's batch (its mixed_policy reads the effective planner), even when
+    the run does not move, for example in a locked batch."""
+    bid = d["members"].get(run_id)
+    if bid is not None:
+        d.setdefault("_derive", set()).add(bid)
 
 
 def propose(root: Path, run_id: str, base_rev: int, *, by: str, source: str = "human", name: str | None = None,
@@ -627,12 +648,13 @@ def write_synced(root: Path, rec: dict) -> dict:
     if bad:
         raise MetadataError("the cloud's record is not valid: " + "; ".join(bad[:5]))
     _committed(root, run_id)
-    with B._transaction(root):
+    with B._transaction(root) as d:
         cur = load_or_none(root, run_id)
         if cur is not None and rec["rev"] < cur["rev"]:
             raise StaleRevError(cur["rev"], rec["rev"])
         if cur != rec:
-            store.atomic_write_json(path(root, run_id), rec)
+            _save(root, rec)
+        _touch(d, run_id)
     return rec
 
 
@@ -642,6 +664,8 @@ def check_run(root: Path, run_path: Path, manifest: dict) -> list[str]:
     """validate's problems with one committed run's metadata record. A run without one has none."""
     rid = manifest["run_id"]
     p = Path(run_path) / FILE
+    if p.is_symlink():
+        return [f"{rid}: {FILE} is a link, not the record"]
     if not p.exists():
         return []
     try:

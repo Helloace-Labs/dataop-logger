@@ -341,6 +341,8 @@ def test_a_run_in_a_locked_batch_stays_until_unlocked(ds):
     assert md.load(ds.root, a) == cloud
     assert batch_of(ds.root, a)["batch_id"] == home["batch_id"]
     assert B.load(ds.root)["members"][a] == home["batch_id"]
+    saved = json.loads((ds.root / "dataop" / "batches" / f"{home['batch_id']}.json").read_text())
+    assert saved["mixed_policy"] is True and saved["status"] == "locked"     # the stored flag follows the record
     res = V.validate(ds.root)
     assert res["ok"], res["errors"]
     assert any("stays in locked batch" in w for w in res["warnings"])
@@ -415,3 +417,83 @@ def test_the_command_line(ds, capsys):
     assert json.loads(capsys.readouterr().out)["rev"] == 2
     assert cli.main(["planner", "propose", str(ds.root), c, "--rev", "0", "--by", "ana"]) == 2
     assert "never changes" in capsys.readouterr().err
+
+
+def test_a_sync_that_begins_while_a_local_write_waits_wins(ds, monkeypatch):
+    """The sync check runs again under the dataset lock, so a marker written meanwhile refuses the local write."""
+    a = ds.ids[0]
+    real = S.check_editable
+    calls = []
+
+    def first_passes_then_marker_appears(root):
+        calls.append(1)
+        if len(calls) == 1:
+            store.atomic_write_json(S.marker_path(root), {"sync_format": 1, "source": "aftershock",
+                                                          "workspace_id": "w", "station_id": "st",
+                                                          "since": "2026-11-09T10:00:00Z"})
+            return None
+        return real(root)
+    monkeypatch.setattr(S, "check_editable", first_passes_then_marker_appears)
+    with pytest.raises(S.SyncedError):
+        md.propose(ds.root, a, 0, by="ana")
+    assert len(calls) == 2 and not md.path(ds.root, a).exists()
+
+
+def test_a_link_is_never_read_as_no_record(ds, tmp_path):
+    a = ds.ids[0]
+    md.propose(ds.root, a, 0, by="ana")
+    md.confirm(ds.root, a, 1, name="their rules", by="ana")
+    real = tmp_path / "elsewhere.json"
+    real.write_bytes(md.path(ds.root, a).read_bytes())
+    md.path(ds.root, a).unlink()
+    md.path(ds.root, a).symlink_to(tmp_path / "missing.json")           # a dangling link
+    with pytest.raises(md.MetadataError, match="link"):
+        md.load(ds.root, a)
+    res = V.validate(ds.root)
+    assert not res["ok"] and any("is a link" in e for e in res["errors"])
+    with pytest.raises(md.MetadataError, match="link"):
+        md.remove(ds.root, a, 2, by="ana")
+    bid = batch_of(ds.root, a)["batch_id"]
+    with pytest.raises(X.ExportError, match="link"):
+        X.export([(str(ds.root), bid)], "filtered", str(tmp_path / "out"), allow_unlocked=True, dry_run=True)
+    assert md.path(ds.root, a).is_symlink()                             # nothing replaced it
+
+
+def test_a_record_too_large_to_read_is_never_written(ds, monkeypatch):
+    a = ds.ids[0]
+    md.propose(ds.root, a, 0, by="ana")
+    old = md.path(ds.root, a).read_bytes()
+    monkeypatch.setattr(md, "MAX_FILE", len(old) + 10)                  # the next step would cross the limit
+    with pytest.raises(md.MetadataError, match="nothing was written"):
+        md.confirm(ds.root, a, 1, name="their rules", by="ana")
+    assert md.path(ds.root, a).read_bytes() == old
+    store.atomic_write_json(S.marker_path(ds.root), {"sync_format": 1, "source": "aftershock", "workspace_id": "w",
+                                                     "station_id": "st", "since": "2026-11-09T10:00:00Z"})
+    monkeypatch.setattr(md, "MAX_FILE", len(old) - 1)
+    with pytest.raises(md.MetadataError, match="nothing was written"):
+        md.write_synced(ds.root, json.loads(old))
+    monkeypatch.undo()
+    assert md.path(ds.root, a).read_bytes() == old and md.load(ds.root, a)["rev"] == 1
+
+
+@pytest.mark.parametrize("value", [["a"], {"a": 1}, 7])
+def test_a_malformed_hash_is_a_normal_validation_error(ds, value):
+    a, b = ds.ids[0], ds.ids[1]
+    md.propose(ds.root, a, 0, by="ana")
+    rec = json.loads(md.path(ds.root, a).read_text())
+    rec["planner_detected"]["found"]["subtasks"][0]["sha256"] = value
+    assert any("sha256" in p for p in md.problems(rec, a))
+    md.path(ds.root, a).write_text(json.dumps(rec))
+    md.path(ds.root, b).write_text("not json")                           # the other run is still checked
+    errs = V.validate(ds.root)["errors"]
+    assert any(e.startswith(f"{a}:") and "sha256" in e for e in errs)
+    assert any(e.startswith(f"{b}:") and "not valid JSON" in e for e in errs)
+
+
+def test_a_proposal_without_a_name_on_a_decided_detection_changes_nothing(ds):
+    a = ds.ids[0]
+    md.propose(ds.root, a, 0, by="ana")
+    rec = md.remove(ds.root, a, 1, by="ana")
+    assert md.propose(ds.root, a, 2, by="x", source="rule") == rec        # removed: unchanged, no new step
+    named = md.propose(ds.root, a, 2, by="bob", name="maybe rules")       # a name is still a suggestion
+    assert named["rev"] == 3 and named["planner_detected"]["status"] == "removed"

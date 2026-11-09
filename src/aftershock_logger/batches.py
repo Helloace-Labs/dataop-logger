@@ -392,7 +392,7 @@ def _follow(root: Path, d: dict) -> bool:
         if b is None or b["status"] == "locked" or b.get("identity") is None:
             continue
         run_path = store.runs_dir(Path(root)) / rid
-        if not (run_path / md.FILE).exists():
+        if not os.path.lexists(run_path / md.FILE):
             continue
         rec = md.load_or_none(Path(root), rid)
         if not md.decided(rec):
@@ -521,6 +521,7 @@ def _transaction(root: Path, expect_rev: int | None = None, place: bool = True):
         _follow(root, d)
         moved = {b["batch_id"] for b in d["batches"]
                  if b["batch_id"] not in before or _record(d, b)["runs"] != before[b["batch_id"]]["runs"]}
+        moved |= d.pop("_derive", set())        # batches whose runs' metadata changed (run metadata, L4)
         _derive(root, d, moved)
         _commit(root, d, before, legacy)
 
