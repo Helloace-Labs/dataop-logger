@@ -13,6 +13,7 @@ import pyarrow.parquet as pq
 
 from . import events as ev
 from . import lists as ls
+from . import metadata as md
 from . import review as rv
 from . import store
 
@@ -48,6 +49,7 @@ def runs_json(root: Path, run_id: str | None = None) -> dict:
         s = lambda f: round(f / rate, 3)
         out.append({
             "run_id": m["run_id"], "episode_index": m["episode_index"], "task": m["task"], "fps": rate,
+            **md.planner_summary(root, m),
             "frames": m["length"], "duration_s": s(m["length"]), "outcome": eff["termination_reason"],
             "failure": None if not fail else {
                 "at_s": s(fail["frame"]), "frame": fail["frame"], "estimated": fail.get("estimated", False),

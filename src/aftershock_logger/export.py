@@ -60,8 +60,10 @@ from . import batches as B
 from . import events as ev
 from . import hook_sandbox as HS
 from . import lists as ls
+from . import metadata as md
 from . import review as rv
 from . import store
+from .schema import manifest_fields
 
 RECIPES = ("teleop", "dagger", "lora", "filtered", "residual")
 PROMPTS = ("task", "task+subtasks")
@@ -432,7 +434,11 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
                 lk = b["locked"]["runs"].get(rid)
                 if lk is None or lk["review_digest"] != B.review_digest(m, s["review"]):
                     raise ExportError(f"run {rid} changed after batch {b['name']!r} was locked; run validate")
-            plan_runs.append((root, src, lists, b, p, m, s))
+            try:
+                meta = md.load(root, rid)
+            except md.MetadataError as e:
+                raise ExportError(f"run {rid}: {e}; run validate") from None
+            plan_runs.append((root, src, lists, b, p, m, s, meta))
         src_records.append({"root": str(root), "batch_id": b["batch_id"], "batch": b["name"], "status": b["status"],
                             "locked": b["locked"] and {"at": b["locked"]["at"], "by": b["locked"]["by"],
                                                        "forced": b["locked"].get("forced", False)},
@@ -451,7 +457,7 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
 
     # 2. decide frames per run
     runs_out, hook_results = [], []
-    for root, src, lists, b, p, m, s in plan_runs:
+    for root, src, lists, b, p, m, s, meta in plan_runs:
         keep, action, why = select(s, recipe, opts, lists)
         if hook_obj is not None:
             res = HS.run_hook(hook_obj, {"manifest": m, "effective": s["effective"], "ticks": {k: s[k] for k in (
@@ -491,6 +497,9 @@ def export(sources: list[tuple[str, str]], recipe: str, into: str, *, with_succe
             extra = {"subtask_spans": [list(x) for x in stretches], "prompts": per,
                      "subtask_digest": subtask_digest(m, s["review"]),
                      "written": sum(x["frames"] for x in per), "_stretches": stretches, "_texts": by_id}
+        if meta["rev"]:             # only then, so a run without a metadata record exports exactly as before
+            extra["planner"] = md.effective_planner(manifest_fields(m)["planner"], meta)
+            extra["metadata_rev"] = meta["rev"]
         runs_out.append({"root": str(root), "batch": b["name"], "batch_id": b["batch_id"], "run_id": m["run_id"], "episode": m["episode_index"],
                          "as": ("dagger" if np.isin(s["mode"], ("base", "blend")).any() else "teleop") if recipe == "lora" else recipe,
                          "outcome": "rejected" if s["effective"]["rejected"] else s["effective"]["termination_reason"],

@@ -14,6 +14,7 @@ import pyarrow.dataset as pads
 import pyarrow.types as pa_types
 import pyarrow.parquet as pq
 
+from . import metadata as md
 from . import adapter, store
 from .fingerprint import fingerprint
 from .schema import (CONTROL_MODES, OBS_TIMESTAMP_KINDS, PLANNED_TICK_COLUMNS, TERMINAL_FLAG, TERMINATION_REASONS,
@@ -309,6 +310,7 @@ def validate(root: Path, action_key: str = "action") -> dict:
             _check_run(run_path, m, episodes, errors)
         except Exception as e:                                  # report, keep checking the other runs
             errors.append(f"{m['run_id']}: could not be checked ({type(e).__name__}: {e})")
+        errors += md.check_run(root, run_path, m)
     for e, ids in bound.items():
         if len(ids) > 1:
             errors.append(f"episode {e} is bound to several runs: {ids}")
@@ -320,6 +322,7 @@ def validate(root: Path, action_key: str = "action") -> dict:
     from . import batches
     if batches.has_batches(root):
         errors += batches.check(root)
+        warnings += batches.waiting_moves(root)
     q = store.quarantine_dir(root)
     quarantined = sorted(p.name for p in q.iterdir() if not p.name.startswith(".")) if q.exists() else []
     run_ids = {p.name for p, _, _ in store.iter_run_dirs(root)}
@@ -520,8 +523,15 @@ def inspect(root: Path) -> dict:
     from . import review as rv
     eff_outcomes, eff_modes, pending, rejected, labels, cut_frames = defaultdict(int), defaultdict(int), 0, 0, 0, 0
     other_pending = 0
+    planners: dict[str, dict] = {}
     for run_path, m in store.iter_manifests(root, "committed"):
         runs += 1
+        ps = md.planner_summary(root, m)
+        key = json.dumps(ps["planner"], sort_keys=True)
+        x = planners.setdefault(key, {"planner": ps["planner"], "runs": 0, "confirmed": 0, "detected_open": 0})
+        x["runs"] += 1
+        x["confirmed"] += ps["planner_confirmed"]
+        x["detected_open"] += ps["planner_detected"] == "open"
         outcomes[m["termination_reason"]] += 1
         takeovers += len(m.get("takeovers", []))
         if m.get("failure_mode"):
@@ -553,7 +563,8 @@ def inspect(root: Path) -> dict:
             "after_review": {"outcomes": dict(eff_outcomes), "failure_modes": dict(eff_modes), "rejected_runs": rejected,
                              "labels": labels, "cut_frames": cut_frames, "open_cut_suggestions": pending,
                              "other_open_proposals": other_pending},
-            "minutes_by_control_mode": {k: round(v, 2) for k, v in minutes.items()}}
+            "minutes_by_control_mode": {k: round(v, 2) for k, v in minutes.items()},
+            "planners": [planners[k] for k in sorted(planners)]}
 
 
 def remap(old_root: Path, new_root: Path, action_key: str = "action", repo_id: str | None = None,

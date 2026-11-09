@@ -1,5 +1,5 @@
 """aftershock-logger (or the old name dataop-logger) validate | repair | inspect | remap | view | labels | interpret | migrate-reviews | events | note | find-idle | suggest-cut |
-batches"""
+batches | planner"""
 from __future__ import annotations
 
 import argparse
@@ -12,10 +12,12 @@ from . import validate as V
 def main(argv=None) -> int:
     from .batches import BatchError
     from .lists import ListError
+    from .metadata import MetadataError
     from .review import ReviewError
+    from .sync import SyncedError
     try:
         return _main(argv)
-    except (ReviewError, ListError, BatchError) as e:
+    except (ReviewError, ListError, BatchError, MetadataError, SyncedError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
@@ -138,6 +140,34 @@ def _main(argv=None) -> int:
     b1.add_argument("--model", help="source or source@revision of the model trained from this batch's export")
     for x in bs.choices.values():
         x.add_argument("--by", default="human", help="who is making the change (a person's or an agent's name)")
+    pp = sub.add_parser("planner", help="a planner found later from a changing prompt: detect, propose, confirm, remove "
+                        "(the run's metadata record; the manifest never changes)")
+    ps = pp.add_subparsers(dest="op", required=True)
+    p1 = ps.add_parser("detect", help="what the detection rule finds in each run's prompts, and each run's record (JSON)")
+    p1.add_argument("root")
+    p1.add_argument("--run", default=None, help="only this run id")
+    p1 = ps.add_parser("show", help="one run's metadata record (JSON); rev 0 when it has none")
+    p1.add_argument("root")
+    p1.add_argument("run_id")
+    for op, hlp in (("propose", "propose that a planner ran (computed from the run's prompts), or suggest a name"),
+                    ("confirm", "a person confirms and names the run's planner (again with another name: a rename)"),
+                    ("remove", "a person removes the detected planner; the manifest's planner applies again")):
+        p1 = ps.add_parser(op, help=hlp)
+        p1.add_argument("root")
+        p1.add_argument("run_id")
+        p1.add_argument("--rev", type=int, required=True, help="the record's rev as you read it (0 when it has none)")
+        p1.add_argument("--by", required=op != "propose", default=None,
+                        help="who: the person, or the agent's name")
+        p1.add_argument("--reason", default=None)
+        if op == "propose":
+            p1.add_argument("--source", choices=["rule", "agent", "human"], default="human")
+            p1.add_argument("--name", default=None, help="a suggested name for the planner")
+            p1.add_argument("--job-id", default=None)
+            p1.add_argument("--agent-version", default=None)
+        if op == "confirm":
+            p1.add_argument("--name", required=True, help="the planner's name")
+            p1.add_argument("--planner-id", default=None,
+                            help="a planner's id (default: ext-<name>, a planner in your own code)")
     ip = sub.add_parser("import", help="bind runs to an existing LeRobot v3.0 dataset (local folder or Hub repo id)")
     ip.add_argument("source", help="dataset folder, or a Hugging Face Hub repo id (needs --into)")
     ip.add_argument("--into", help="copy the dataset here first and import into the copy")
@@ -252,6 +282,39 @@ def _main(argv=None) -> int:
         print(f"{b['name']} ({b['batch_id']}): {b['status']}")
         return 0
 
+    if a.cmd == "planner":
+        from . import metadata as md
+        from . import store
+        root = Path(a.root)
+        if a.op == "detect":
+            out = []
+            for run_path, m in store.iter_manifests(root, "committed"):
+                if a.run and m["run_id"] != a.run:
+                    continue
+                out.append({"run_id": m["run_id"], "episode_index": m["episode_index"], "found": md.detect(run_path),
+                            **md.planner_summary(root, m)})
+            if a.run and not out:
+                print(f"no committed run {a.run}", file=sys.stderr)
+                return 1
+            print(V.to_json(out))
+            return 0
+        if a.op == "show":
+            md._committed(root, a.run_id)
+            print(V.to_json(md.load(root, a.run_id)))
+            return 0
+        if a.op == "propose":
+            if a.source != "rule" and not a.by:
+                raise md.MetadataError("--by is required unless --source rule")
+            rec = md.propose(root, a.run_id, a.rev, by=a.by or md.DETECTION_RULE, source=a.source, name=a.name,
+                             job_id=a.job_id, agent_version=a.agent_version, reason=a.reason)
+        elif a.op == "confirm":
+            rec = md.confirm(root, a.run_id, a.rev, name=a.name, by=a.by, planner_id=a.planner_id, reason=a.reason)
+        else:
+            rec = md.remove(root, a.run_id, a.rev, by=a.by, reason=a.reason)
+        d = rec["planner_detected"]
+        print(f"{a.run_id}: rev {rec['rev']}, " + (f"planner {d['status']}" if d else "no planner detected")
+              + (f" as {rec['planner_confirmed']['name']!r}" if rec["planner_confirmed"] else ""))
+        return 0
     if a.cmd == "validate":
         if a.repair:
             for line in V.repair(a.root, delete_unmatched=a.delete_unmatched):

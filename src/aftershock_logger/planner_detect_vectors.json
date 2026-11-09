@@ -1,0 +1,419 @@
+{
+ "vectors_format": 1,
+ "rule": "planner-detect",
+ "about": "Inputs and answers of the planner detection rule. The logger (metadata.detect_planner) and Aftershock's server rule must give exactly these answers.",
+ "cases": [
+  {
+   "name": "two prompts",
+   "prompts": [
+    "reach the tube",
+    "reach the tube",
+    "grasp the cap"
+   ],
+   "expect": {
+    "subtasks": [
+     {
+      "text": "reach the tube",
+      "sha256": "94fca2e11b7658f2f722c2c1cb645ea39e869d8b7924500c90fa1338b916afba",
+      "cut": false
+     },
+     {
+      "text": "grasp the cap",
+      "sha256": "682c105e93388221aa6e71c5a34c1d60f115ed17fabc2863d9e499e61840b768",
+      "cut": false
+     }
+    ],
+    "first_seen_frame": 2,
+    "distinct_prompts": 2
+   }
+  },
+  {
+   "name": "one prompt",
+   "prompts": [
+    "reach the tube",
+    "reach the tube",
+    "reach the tube",
+    "reach the tube"
+   ],
+   "expect": null
+  },
+  {
+   "name": "only unknown",
+   "prompts": [
+    "unknown",
+    "unknown"
+   ],
+   "expect": null
+  },
+  {
+   "name": "empty run",
+   "prompts": [],
+   "expect": null
+  },
+  {
+   "name": "one known prompt among unknown, empty and missing",
+   "prompts": [
+    null,
+    "",
+    "unknown",
+    "a",
+    "unknown",
+    "a",
+    null
+   ],
+   "expect": null
+  },
+  {
+   "name": "unknown, empty and missing are not counted",
+   "prompts": [
+    null,
+    "",
+    "unknown",
+    "a",
+    "unknown",
+    "b",
+    "a",
+    "c",
+    ""
+   ],
+   "expect": {
+    "subtasks": [
+     {
+      "text": "a",
+      "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+      "cut": false
+     },
+     {
+      "text": "b",
+      "sha256": "3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d",
+      "cut": false
+     },
+     {
+      "text": "c",
+      "sha256": "2e7d2c03a9507ae265ecf5b5356885a53393a2029d241394997265a1a25aefc6",
+      "cut": false
+     }
+    ],
+    "first_seen_frame": 5,
+    "distinct_prompts": 3
+   }
+  },
+  {
+   "name": "back to an earlier prompt",
+   "prompts": [
+    "a",
+    "b",
+    "a",
+    "b"
+   ],
+   "expect": {
+    "subtasks": [
+     {
+      "text": "a",
+      "sha256": "ca978112ca1bbdcafac231b39a23dc4da786eff8147c4e72b9807785afee48bb",
+      "cut": false
+     },
+     {
+      "text": "b",
+      "sha256": "3e23e8160039594a33894f6564e1b1348bbd7a0088d42c4acb73eeaed59c009d",
+      "cut": false
+     }
+    ],
+    "first_seen_frame": 1,
+    "distinct_prompts": 2
+   }
+  },
+  {
+   "name": "capped at 32",
+   "prompts": [
+    "p0",
+    "p1",
+    "p2",
+    "p3",
+    "p4",
+    "p5",
+    "p6",
+    "p7",
+    "p8",
+    "p9",
+    "p10",
+    "p11",
+    "p12",
+    "p13",
+    "p14",
+    "p15",
+    "p16",
+    "p17",
+    "p18",
+    "p19",
+    "p20",
+    "p21",
+    "p22",
+    "p23",
+    "p24",
+    "p25",
+    "p26",
+    "p27",
+    "p28",
+    "p29",
+    "p30",
+    "p31",
+    "p32",
+    "p33",
+    "p34",
+    "p35",
+    "p36",
+    "p37",
+    "p38",
+    "p39"
+   ],
+   "expect": {
+    "subtasks": [
+     {
+      "text": "p0",
+      "sha256": "169b5b823c62b64ca7e5f8456a13c8d5d06f4ece522a58bc2b8a784dcf3609b0",
+      "cut": false
+     },
+     {
+      "text": "p1",
+      "sha256": "f64551fcd6f07823cb87971cfb91446425da18286b3ab1ef935e0cbd7a69f68a",
+      "cut": false
+     },
+     {
+      "text": "p2",
+      "sha256": "3946ca64ff78d93ca61090a437cbb6b3d2ca0d488f5f9ccf3059608368b27693",
+      "cut": false
+     },
+     {
+      "text": "p3",
+      "sha256": "43bb00d0ce7790a53b91256b370c887b24791a5539a6fbfb70c5870e8c91ae5d",
+      "cut": false
+     },
+     {
+      "text": "p4",
+      "sha256": "ab71fc4c8a1c4d62b9202b36ee7c07dd398a0907a37037bd8c3959d6af573608",
+      "cut": false
+     },
+     {
+      "text": "p5",
+      "sha256": "536c351ae15e5f5e3dc37bcc5dea8ab641e70fc0431a088a1d684aef2ebf3e5b",
+      "cut": false
+     },
+     {
+      "text": "p6",
+      "sha256": "7d087a2e212c110e851c7b6fdc2853a41e7db1690beef7a9c11b3a26ee77e853",
+      "cut": false
+     },
+     {
+      "text": "p7",
+      "sha256": "03fbd36c05856bca596b0bcb4466f4f30f0119a41be2b9fcebfa71d68178b116",
+      "cut": false
+     },
+     {
+      "text": "p8",
+      "sha256": "9b85c0828dcfbc883726fc200c987baa9826da6ba6a358643a69a52d8698d72e",
+      "cut": false
+     },
+     {
+      "text": "p9",
+      "sha256": "26148c43a19c95f0115e594c688e9f6e92d0bcdbdb6a75187b732fc593875e7e",
+      "cut": false
+     },
+     {
+      "text": "p10",
+      "sha256": "8860646b40f17b10cfcb90a2c717a4df6c5976b9bd38201d2cd231d5a6d30e83",
+      "cut": false
+     },
+     {
+      "text": "p11",
+      "sha256": "274c9ccdd7cc9ac3308242b83d561a72542058757f2943fc03a8575c736a5d52",
+      "cut": false
+     },
+     {
+      "text": "p12",
+      "sha256": "bdcfc6ac707b82e80835a09d425b5e4bc6cfc96d97e12e3d70286066a0afe491",
+      "cut": false
+     },
+     {
+      "text": "p13",
+      "sha256": "dc9251edd5241fd47e9ee44441d5860fe579536a51596744ca4df76f89e13eba",
+      "cut": false
+     },
+     {
+      "text": "p14",
+      "sha256": "b11e9a1a5e0b8e5337cb811eebf06f53697da186f85f4b862056d0b8ba88ae70",
+      "cut": false
+     },
+     {
+      "text": "p15",
+      "sha256": "839dcfec1c9ef8996da83aae57997c1d21e7464afd8280338a0ee8dcc99aa2e4",
+      "cut": false
+     },
+     {
+      "text": "p16",
+      "sha256": "63d6b15848b22a70a7aaa05c5702ac065c65ce71b41fe91a4fb72a1973fbeae0",
+      "cut": false
+     },
+     {
+      "text": "p17",
+      "sha256": "105f9853bcaf06ecc1c11fe1e8533399547a52ffd7f1cf9937faedc127bb5ef4",
+      "cut": false
+     },
+     {
+      "text": "p18",
+      "sha256": "f58f9349cec93ac8f0c239992e21b1d6ef06b65d35519c970aef6e6fddfaf3da",
+      "cut": false
+     },
+     {
+      "text": "p19",
+      "sha256": "a331387e771578fb33893475ddee1da9d609faa5cf49049f47f7cc14550c0fc5",
+      "cut": false
+     },
+     {
+      "text": "p20",
+      "sha256": "c1e2cf4aaa4b3565abc34ba4f2990a58588fe0198bf3cc3dd8e63ec4bc846710",
+      "cut": false
+     },
+     {
+      "text": "p21",
+      "sha256": "689771c7fe3352ffd549e7ccd105408db5b25575370f6c534810460881e693d3",
+      "cut": false
+     },
+     {
+      "text": "p22",
+      "sha256": "e4e81fe70854bfeea0ca76e3651f4d4def7eba9554f910898cc3fb9a0eed8749",
+      "cut": false
+     },
+     {
+      "text": "p23",
+      "sha256": "3be1c6007b673f2174bbd21980ca12087ac3312614497a01ae80d8e26f6694a1",
+      "cut": false
+     },
+     {
+      "text": "p24",
+      "sha256": "d841fc3d554f5465d8a93738d68604c2e0d9d033efd049f5fa0793427623819b",
+      "cut": false
+     },
+     {
+      "text": "p25",
+      "sha256": "666d9c694fba4946f6891b3330512660bd0c4601c32f2bff55f2a29418a1ed5c",
+      "cut": false
+     },
+     {
+      "text": "p26",
+      "sha256": "925f2764b49772a0b3c8c1becf027310a7821654908f49dd2ab49261da1671bf",
+      "cut": false
+     },
+     {
+      "text": "p27",
+      "sha256": "bf72ebe163453b3ae5c46794ac14e77265edf567e109f08c780a91db9b9d61f4",
+      "cut": false
+     },
+     {
+      "text": "p28",
+      "sha256": "2a97ed0770313b86c2dbcd883fc481a46f7a1f91c02ae0f98e94794df83bf4a7",
+      "cut": false
+     },
+     {
+      "text": "p29",
+      "sha256": "b136c7591ff4ce4395c6e32058f8fdd8680935dd933a22e76f10afbafbe46afd",
+      "cut": false
+     },
+     {
+      "text": "p30",
+      "sha256": "e9266ccd10a1aeb5c92fa19ee74155b21c32bb6d17c20830c702a0ed0bc04902",
+      "cut": false
+     },
+     {
+      "text": "p31",
+      "sha256": "57b8361ff5051fb43910564c505852cd5ee21105b07ac006ab313ebb16327b51",
+      "cut": false
+     }
+    ],
+    "first_seen_frame": 1,
+    "distinct_prompts": 40
+   }
+  },
+  {
+   "name": "long prompts are cut and stay apart",
+   "prompts": [
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxyyyyyyyyyy",
+    "short"
+   ],
+   "expect": {
+    "subtasks": [
+     {
+      "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "sha256": "63939713c3d57421ab73577dd6d5cb07699deae2ee98de3ada79a5197aa6b915",
+      "cut": true
+     },
+     {
+      "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+      "sha256": "c26cbcb8e1d89ba664430677c85edd2ca5ee62ad4bea20aa43bef24e93cf76a3",
+      "cut": true
+     },
+     {
+      "text": "short",
+      "sha256": "f9b0078b5df596d2ea19010c001bbd009e651de2c57e8fb7e355f31eb9d3f739",
+      "cut": false
+     }
+    ],
+    "first_seen_frame": 1,
+    "distinct_prompts": 3
+   }
+  },
+  {
+   "name": "unicode",
+   "prompts": [
+    "grasp the cap ✓",
+    "réach"
+   ],
+   "expect": {
+    "subtasks": [
+     {
+      "text": "grasp the cap ✓",
+      "sha256": "0dd063031187a67863e6b28ab750552ffb0ff71ea57558f8640a29e73fe4a834",
+      "cut": false
+     },
+     {
+      "text": "réach",
+      "sha256": "56e5ec131db3533118d57bed31a8e0e025fe36629c9f10fc0604aed5c0a7b1f3",
+      "cut": false
+     }
+    ],
+    "first_seen_frame": 1,
+    "distinct_prompts": 2
+   }
+  },
+  {
+   "name": "case and spaces count",
+   "prompts": [
+    "Reach",
+    "reach",
+    "reach "
+   ],
+   "expect": {
+    "subtasks": [
+     {
+      "text": "Reach",
+      "sha256": "2068b81b75d4b2b1dba07f5d37f972b989b5d265f5469bd0a12d087db49f200b",
+      "cut": false
+     },
+     {
+      "text": "reach",
+      "sha256": "ed4561f685f133532832f705209e693c573c85ed7f93865ffe6dfea3653bd8a6",
+      "cut": false
+     },
+     {
+      "text": "reach ",
+      "sha256": "6a065b96951b1676a33546b5eb471270ae3624de55c74944f19eab10901315fe",
+      "cut": false
+     }
+    ],
+    "first_seen_frame": 1,
+    "distinct_prompts": 3
+   }
+  }
+ ]
+}
