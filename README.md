@@ -141,6 +141,8 @@ with log.run(task=task, policy=policy, task_id="tube-pick", task_rev=3) as run:
 
 `prompt` is the text the policy received, `prompt_rev` counts prompt changes, `subtask_cmd` is the subtask id the planner commanded, and `control_gen` is your loop's command generation counter. Leave out what you do not know: it is stored as `unknown`, which is different from `None` (known to be none, for example no planner ran). The same holds for `policy`: leave it out and it is `unknown`; pass `policy=None` only for runs no policy drove, such as teleop demos. On disk the two counters are int64 columns with -1 for unknown. Runs written before these fields existed read as `unknown` too.
 
+If your stack does not name its planner but the prompt changes during a run, `aftershock-logger planner detect <dataset>` shows what the detection rule finds. `planner propose`, then `planner confirm --name ...` by a person, records it in the run's `metadata.json`; the run then joins the batch of its confirmed planner. Details in [SPEC.md](SPEC.md).
+
 ## Rewards for RL
 
 Pass `reward=` on `add_frame`, or, if your reward arrives one loop late, attach it to the previous tick:
@@ -466,6 +468,7 @@ Every per-tick field is also available as `item["dataop.<field>"]`. `missing="ex
   runs/<run_id>/manifest.json       # outcome, takeovers, events, policy, task, planner, environment, action schema, checksums
   runs/<run_id>/ticks.parquet       # one row per frame
   runs/<run_id>/predictions.parquet # only with log_predictions=True
+  runs/<run_id>/metadata.json       # only once a planner is proposed: detection and confirmation, versioned (the manifest never changes)
   index.jsonl                       # summary of committed runs
   quarantine/                       # runs repair could not match, and runs stopped through the queue, kept for inspection
   live/                             # only with RunLogger(live=True): live status for a local reader, not part of the dataset

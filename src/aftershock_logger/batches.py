@@ -38,6 +38,7 @@ from collections import Counter
 from contextlib import contextmanager
 from pathlib import Path
 
+from . import metadata as md
 from . import store
 from .schema import UNKNOWN, manifest_fields
 
@@ -89,18 +90,27 @@ def _policy_name(policy: dict | str | None) -> str:
     return f"{policy.get('source') or policy.get('family') or 'policy'}" + (f" @ {rev[:12]}" if rev else "")
 
 
-def run_identity(manifest: dict) -> dict:
+def run_identity(manifest: dict, metadata: dict | None = None) -> dict:
     """What a run's batch should share: station, task, policy and planner. Null (known to be none) and "unknown"
     (not recorded) stay apart. The logger records no station yet, so it is "unknown" unless the manifest names one.
-    The task is the Aftershock task id; the planner is its id, since a changed planner gets a new id."""
+    The task is the Aftershock task id; the planner is its id, since a changed planner gets a new id. The planner is
+    the run's effective planner: the one a person confirmed in its metadata record (logger L4), else the manifest's."""
     f = manifest_fields(manifest)
     st = manifest.get("station")
     pol = f["policy"]
-    plan = f["planner"]
+    plan = md.effective_planner(f["planner"], metadata)
     return {"station": st if isinstance(st, str) and st else UNKNOWN,
             "task": f["task_id"] if isinstance(f["task_id"], str) else UNKNOWN,
             "policy": _policy_key(pol) if isinstance(pol, dict) else (None if pol is None else UNKNOWN),
             "planner": plan.get("id") if isinstance(plan, dict) else (None if plan is None else UNKNOWN)}
+
+
+def _identity(root: Path, manifest: dict) -> dict:
+    """run_identity with the run's metadata record read from disk. A broken record counts as none here (validate
+    reports it), so it never moves a run."""
+    rid = manifest.get("run_id")
+    rec = md.load_or_none(Path(root), rid) if isinstance(rid, str) and rid else None
+    return run_identity(manifest, rec)
 
 
 def _set_identity(b: dict, identity: dict | None) -> None:
@@ -312,7 +322,7 @@ def _derive(root: Path, d: dict, only: set | None = None) -> None:
         ids = []
         for rid in _members_of(d, b["batch_id"]):
             try:
-                ids.append(run_identity(store.read_manifest(store.runs_dir(Path(root)) / rid)))
+                ids.append(_identity(root, store.read_manifest(store.runs_dir(Path(root)) / rid)))
             except Exception:                             # a missing run is reported by check, not here
                 continue
         if not ids:
@@ -336,7 +346,7 @@ def _place(root: Path, d: dict) -> bool:
     for m in sorted(todo, key=lambda m: (m.get("episode_index") if isinstance(m.get("episode_index"), int) else -1,
                                          m["run_id"])):
         rid = m["run_id"]
-        ident = run_identity(m)
+        ident = _identity(root, m)
         hint = m.get("batch")
         name = hint.get("name") if isinstance(hint, dict) and isinstance(hint.get("name"), str) else None
         b = None
@@ -365,6 +375,49 @@ def _place(root: Path, d: dict) -> bool:
                 b = _add(d, _new(_unique_name(d, _policy_name(m.get("policy"))), "reviewing", m.get("policy"),
                                  by="dataop (existing runs)", identity=ident))
         d["members"][rid] = b["batch_id"]
+        changed = True
+    return changed
+
+
+def _follow(root: Path, d: dict) -> bool:
+    """Runs whose planner a person confirmed (or later removed) in their metadata record follow their effective
+    identity (logger L4): a member of an unlocked batch whose identity is another moves to an unlocked batch with
+    its identity (the collecting one first), or to a new batch opened for review. A run in a locked batch stays
+    until the batch is unlocked; the unlock's own change moves it. Training sets made from the batch it leaves are
+    marked out of date. Runs nobody confirmed are never moved here. Returns True if anything moved."""
+    changed = False
+    by_id = {b["batch_id"]: b for b in d["batches"]}
+    for rid, bid in sorted(d["members"].items()):
+        b = by_id.get(bid)
+        if b is None or b["status"] == "locked" or b.get("identity") is None:
+            continue
+        run_path = store.runs_dir(Path(root)) / rid
+        if not os.path.lexists(run_path / md.FILE):
+            continue
+        rec = md.load_or_none(Path(root), rid)
+        if not md.decided(rec):
+            continue
+        try:
+            m = store.read_manifest(run_path)
+        except Exception:                                 # a missing run is reported by check, not here
+            continue
+        ident = run_identity(m, rec)
+        if b["identity"] == ident:
+            continue
+        like = [x for x in d["batches"] if x.get("identity") == ident and x["status"] != "locked"]
+        dest = next((x for x in like if x["status"] == "collecting"), None) or (like[0] if like else None)
+        conf = rec["planner_confirmed"]
+        if dest is None:
+            base = _policy_name(m.get("policy")) + (f", planner {conf['name']}" if conf else "")
+            dest = _add(d, _new(_unique_name(d, base[:80]), "reviewing", m.get("policy"),
+                                by="dataop (planner confirmed)", identity=ident))
+            by_id[dest["batch_id"]] = dest
+        d["members"][rid] = dest["batch_id"]
+        for e in b["exports"]:
+            e["stale"] = True
+        what = f"planner confirmed as {conf['name']!r}" if conf else "planner confirmation removed"
+        _log(b, "dataop", f"run {rid} moved out to {dest['name']!r}: {what}")
+        _log(dest, "dataop", f"run {rid} moved in: {what}")
         changed = True
     return changed
 
@@ -465,8 +518,10 @@ def _transaction(root: Path, expect_rev: int | None = None, place: bool = True):
         if place:                               # callers adding runs themselves place them first
             _place(root, d)
         yield d
+        _follow(root, d)
         moved = {b["batch_id"] for b in d["batches"]
                  if b["batch_id"] not in before or _record(d, b)["runs"] != before[b["batch_id"]]["runs"]}
+        moved |= d.pop("_derive", set())        # batches whose runs' metadata changed (run metadata, L4)
         _derive(root, d, moved)
         _commit(root, d, before, legacy)
 
@@ -476,7 +531,8 @@ def load(root: Path) -> dict:
     per-batch files) the first time it is needed."""
     d, legacy = _read_full(root)
     probe = copy.deepcopy(d)
-    if _place(root, probe) or legacy:
+    placed = _place(root, probe)
+    if _follow(root, probe) or placed or legacy:
         _derive(root, probe)
         try:
             with _transaction(root):
@@ -566,7 +622,7 @@ def join(root: Path, run_id: str, name: str | None, policy: dict | None, identit
     policy. A run added to a named batch with another identity is kept there and flags the batch mixed_policy."""
     if identity is None:
         try:
-            identity = run_identity(store.read_manifest(store.runs_dir(Path(root)) / run_id))
+            identity = _identity(root, store.read_manifest(store.runs_dir(Path(root)) / run_id))
         except Exception:
             identity = None
     with _transaction(root, place=False) as d:
@@ -627,6 +683,12 @@ def move(root: Path, run_ids: list[str], ref: str, by: str = "human", expect_rev
             src = find(d, d["members"][rid])
             if src["status"] == "locked":
                 raise _frozen(src, f"run {rid} cannot move out of it")
+            rec = md.load_or_none(Path(root), rid)
+            if src is not dest and md.decided(rec) and dest.get("identity") is not None:
+                ident = run_identity(store.read_manifest(store.runs_dir(Path(root)) / rid), rec)
+                if dest["identity"] != ident:
+                    raise BatchError(f"run {rid}'s planner was confirmed in its metadata, so it stays with batches "
+                                     f"of its station, task, policy and planner; {dest['name']!r} has another")
             if src is not dest:
                 sources.setdefault(src["batch_id"], (src, []))[1].append(rid)
         for src, rids in sources.values():
@@ -804,6 +866,31 @@ def check(root: Path) -> list[str]:
     return errs
 
 
+def waiting_moves(root: Path) -> list[str]:
+    """Warnings for validate: runs whose confirmed planner gives them another identity than their locked batch's.
+    They stay frozen in it and move when it is unlocked (logger L4)."""
+    try:
+        d, _, _ = _load(root, strict=False, derive=False)
+    except (BatchError, AttributeError, TypeError, KeyError):
+        return []                                     # check reports a broken registry
+    out = []
+    for b in d["batches"]:
+        if b["status"] != "locked" or b.get("identity") is None:
+            continue
+        for rid in _members_of(d, b["batch_id"]):
+            rec = md.load_or_none(Path(root), rid)
+            if not md.decided(rec):
+                continue
+            try:
+                ident = run_identity(store.read_manifest(store.runs_dir(Path(root)) / rid), rec)
+            except Exception:
+                continue
+            if ident != b["identity"]:
+                out.append(f"run {rid}'s confirmed planner belongs to another batch; it stays in locked batch "
+                           f"{b['name']!r} until that batch is unlocked")
+    return out
+
+
 def copy_to(src: Path, dst: Path) -> str | None:
     """Copy a dataset's batches to another root (remap). Keeps the destination's own batches if it has different
     ones. Returns a line for the report, or None when the source has no batches."""
@@ -834,7 +921,7 @@ def summary(root: Path) -> list[dict]:
         s = stats[bid]
         s["runs"] += 1
         runs[bid].append(m["run_id"])
-        s["ids"].add(json.dumps(run_identity(m), sort_keys=True))
+        s["ids"].add(json.dumps(_identity(root, m), sort_keys=True))
         try:
             r = rv.load(p)
             eff = rv.effective(m, r)

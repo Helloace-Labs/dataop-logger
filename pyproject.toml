@@ -28,4 +28,4 @@ dataop-logger = "dataop_logger.cli:main"     # old name, kept so existing script
 where = ["src"]
 
 [tool.setuptools.package-data]
-aftershock_logger = ["viewer.html", "viewer.js"]
+aftershock_logger = ["viewer.html", "viewer.js", "planner_detect_vectors.json"]
