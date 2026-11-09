@@ -19,6 +19,7 @@ the active gap, so session frames cannot drift. See SPEC.md, Drive sessions.
 from __future__ import annotations
 
 import datetime as _dt
+import hashlib
 import json
 import re
 import warnings
@@ -809,10 +810,142 @@ def _check_one_session(root: Path, sdir: Path, errors: list, warnings: list, lis
         err(f"evidence.parquet is missing or unreadable ({type(e).__name__}: {e})")
     try:
         rv = review_format.load_review((sdir / "review.json").read_text())
-        if rv["run_id"] != sid:
-            err("review.json belongs to another id")
     except Exception as e:
         err(f"review.json is missing or unreadable ({type(e).__name__}: {e})")
+        return
+    try:
+        # The split edits in effect replay only on an ended session that covers every frame; an open session's
+        # review is checked for its id, its kinds and its frames.
+        whole = ended and not coverage_problems(run_ranges, gap_ranges, rec["session_frames"]) \
+            and len(run_ranges) == len(runs) and len(gap_ranges) == len(gaps)
+        check_against_session(rv, rec, replay=whole)
+    except (ValueError, KeyError, TypeError) as e:
+        err(f"review.json: {e}")
+
+
+# ---------------------------------------------------------------- the session review (Aftershock issue #447)
+#
+# A session's review (review.json) is review format 2 keyed by the session id in run_id. It holds only the three split
+# edits (review_format.SESSION_KINDS), whose frames are session frames. The split edits in effect apply one after
+# another in acceptance order to the recorded timeline (each run an episode, each gap a gap). This is the same rule
+# as the Aftershock cloud's session store, so a review the logger accepts the cloud accepts too.
+
+
+def episode_id_for(session_id: str, edit_id: str, start: int, end: int) -> str:
+    """The id of an episode a split edit made: uuid4 shaped, derived from the session, the edit and the episode's
+    session frames [start, end), so replaying the same edits gives the same ids."""
+    h = hashlib.sha256(f"aftershock.episode:{session_id}:{edit_id}:{start}:{end}".encode()).hexdigest()
+    return f"{h[:8]}-{h[8:12]}-4{h[13:16]}-{'89ab'[int(h[16], 16) & 3]}{h[17:20]}-{h[20:32]}"
+
+
+def _sources(rec: dict) -> dict[str, tuple[int, int]]:
+    """The recorded sources: every run by its id, and every short stop kept in a gap as `short_stop:<gap_id>`."""
+    out = {r["run_id"]: (r["range"]["start"], r["range"]["end"]) for r in rec["runs"]}
+    out.update({f"short_stop:{g['gap_id']}": (g["short_stop"]["start"], g["short_stop"]["end"])
+                for g in rec["gaps"] if g["short_stop"] is not None})
+    return out
+
+
+def _seg(kind: str, seg_id, start: int, end: int, src: dict, confirmed: bool) -> dict:
+    runs = () if kind == "gap" else tuple(k for k, (s, e) in sorted(src.items(), key=lambda kv: kv[1])
+                                          if s < end and start < e)
+    return {"kind": kind, "id": seg_id, "start": start, "end": end, "from_runs": list(runs),
+            "confirmed": True if kind == "gap" else confirmed}
+
+
+def recorded_timeline(rec: dict) -> list[dict]:
+    """The timeline before any split edit, in session frame order: each run an episode with the run's id
+    (confirmed), each gap a gap. The record must cover every session frame once."""
+    problems = coverage_problems([(r["range"]["start"], r["range"]["end"]) for r in rec["runs"]],
+                                 [(g["range"]["start"], g["range"]["end"]) for g in rec["gaps"]], rec["session_frames"])
+    if problems:
+        raise ValueError("; ".join(problems))
+    src = _sources(rec)
+    segs = [_seg("episode", r["run_id"], r["range"]["start"], r["range"]["end"], src, True) for r in rec["runs"]]
+    segs += [_seg("gap", g["gap_id"], g["range"]["start"], g["range"]["end"], src, True) for g in rec["gaps"]]
+    return sorted(segs, key=lambda x: x["start"])
+
+
+def apply_split_edit(segs: list[dict], kind: str, p: dict, session_id: str, edit_id: str, src: dict) -> list[dict]:
+    """One accepted split edit on the timeline so far. ValueError when it does not fit (no boundary at `at`, no
+    episode starting at `start` and a later one ending at `end`, no episode holding `at`). Every episode the edit
+    changes needs review and gets `episode_id_for(session_id, edit_id, start, end)`; a gap keeps its id."""
+    def new(kind_, old_id, a, b):
+        return _seg(kind_, old_id if kind_ == "gap" else episode_id_for(session_id, edit_id, a, b), a, b, src, False)
+
+    if kind == "episode_boundary":
+        i = next((k for k in range(len(segs) - 1) if segs[k]["end"] == p["at"]), None)
+        if i is None:
+            raise ValueError(f"no boundary at session frame {p['at']}")
+        a, b = segs[i], segs[i + 1]
+        if a["kind"] == "gap" and b["kind"] == "gap":
+            raise ValueError(f"the boundary at session frame {p['at']} is between two gaps")
+        if p["to"] == p["at"]:
+            return list(segs)
+        if not a["start"] < p["to"] < b["end"]:
+            raise ValueError("a moved boundary leaves both segments at least one frame")
+        return segs[:i] + [new(a["kind"], a["id"], a["start"], p["to"]),
+                           new(b["kind"], b["id"], p["to"], b["end"])] + segs[i + 2:]
+    if kind == "episode_merge":
+        i = next((k for k, x in enumerate(segs) if x["start"] == p["start"] and x["kind"] == "episode"), None)
+        j = next((k for k, x in enumerate(segs) if x["end"] == p["end"] and x["kind"] == "episode"), None)
+        if i is None or j is None or not i < j:
+            raise ValueError(f"no two episodes start at {p['start']} and end at {p['end']}")
+        return segs[:i] + [new("episode", None, segs[i]["start"], segs[j]["end"])] + segs[j + 1:]
+    if kind == "episode_split":
+        i = next((k for k, x in enumerate(segs) if x["start"] < p["at"] < x["end"]), None)
+        if i is None or segs[i]["kind"] != "episode":
+            raise ValueError(f"no episode holds session frame {p['at']} with frames on both sides")
+        e = segs[i]
+        return segs[:i] + [new("episode", None, e["start"], p["at"]), new("episode", None, p["at"], e["end"])] \
+            + segs[i + 1:]
+    raise ValueError(f"{kind} is not a split edit")
+
+
+def effective_timeline(rec: dict, review: dict) -> list[dict]:
+    """The session timeline after the review's split edits in effect, applied in acceptance order: segments
+    `{kind (episode or gap), id, start, end, from_runs, confirmed}`. An episode that again matches a committed run
+    exactly takes the run's id (its outcome still needs review). ValueError when an edit does not fit, or when an
+    edit changes the frames of a run whose write failed: those frames stay one episode of their own."""
+    src = _sources(rec)
+    failed = {(r["run_id"], r["range"]["start"], r["range"]["end"]) for r in rec["runs"]
+              if r["write_status"] == "failed"}
+    segs = recorded_timeline(rec)
+    for e in review_format.active_edits(review):
+        if e["kind"] not in review_format.SESSION_KINDS:
+            raise ValueError(f"edit {e['edit_id']} ({e['kind']}): a session review takes only split edits")
+        try:
+            segs = apply_split_edit(segs, e["kind"], e["payload"], rec["session_id"], e["edit_id"], src)
+        except ValueError as err:
+            raise ValueError(f"edit {e['edit_id']} ({e['kind']}): {err}") from None
+        kept = {(x["id"], x["start"], x["end"]) for x in segs if x["kind"] == "episode"}
+        for run_id, _, _ in sorted(failed - kept):
+            raise ValueError(f"edit {e['edit_id']} ({e['kind']}): run {run_id} failed to write; no split edit may "
+                             "change its frames")
+    committed = {(r["range"]["start"], r["range"]["end"]): r["run_id"] for r in rec["runs"]
+                 if r["write_status"] == "committed"}
+    for x in segs:
+        if x["kind"] == "episode" and (x["start"], x["end"]) in committed:
+            x["id"] = committed[(x["start"], x["end"])]
+    return segs
+
+
+def check_against_session(review: dict, rec: dict, replay: bool = True) -> None:
+    """A session review fits its session record: it names the session, every edit and every history version is a
+    split edit inside the session's frames, and (with `replay`, which needs a record that covers every frame) the
+    edits in effect apply. ValueError otherwise (fail closed), as review_format.check_against_manifest is for a run."""
+    if review["run_id"] != rec["session_id"]:
+        raise ValueError("the review is for another session")
+    n = rec["session_frames"]
+    for e in review_format.all_edit_versions(review):
+        if e["kind"] not in review_format.SESSION_KINDS:
+            raise ValueError(f"edit {e['edit_id']} ({e['kind']}): a session review takes only split edits")
+        for name in ("at", "to", "start", "end"):
+            v = e["payload"].get(name)
+            if v is not None and v > n:
+                raise ValueError(f"edit {e['edit_id']} ({e['kind']}): {name} {v} is past the session's {n} frames")
+    if replay:
+        effective_timeline(rec, review)
 
 
 def session_problems(root) -> tuple[list[str], list[str], int]:

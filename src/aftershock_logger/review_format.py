@@ -37,8 +37,13 @@ UNKNOWN = "unknown"
 SOURCES = ("human", "agent", "check", "splitter")
 STATUSES = ("proposed", "accepted", "rejected")
 KINDS = ("outcome", "failure_start", "failure_type", "exclude", "segments", "step_boundary", "segment_edge",
-         "drive_boundary", "reject_run", "note", "event_note", "label", "reading", "name")
-MULTI = ("exclude", "note", "label")   # every accepted edit of these kinds applies; the other kinds have one slot
+         "drive_boundary", "reject_run", "note", "event_note", "label", "reading", "name",
+         "episode_boundary", "episode_merge", "episode_split")
+# The split edits of a Drive session's review (`session.py`, keyed by the session id in run_id). Only a session review
+# takes them, and a session review takes nothing else. Their frames are session frames, and every accepted one
+# applies, one after another in acceptance order (`session.effective_timeline`).
+SESSION_KINDS = ("episode_boundary", "episode_merge", "episode_split")
+MULTI = ("exclude", "note", "label") + SESSION_KINDS   # every accepted edit of these kinds applies; others: one slot
 TERMINATION_REASONS = ("success", "failure", "timeout", "operator_abort", "system_error", "unknown")
 TRAIN_USE = ("keep", "exclude")
 
@@ -242,6 +247,16 @@ def check_payload(kind: str, p) -> dict:
     elif kind == "name":
         _keys(p, ("text",), "a name payload")
         _str(p["text"], "a name", 1, 200)
+    elif kind == "episode_boundary":           # moves the boundary at session frame `at` to `to`; to == at keeps it
+        _keys(p, ("at", "to"), "an episode_boundary payload")
+        _int(p["at"], "at", 1), _int(p["to"], "to", 1)
+    elif kind == "episode_merge":              # merges the episode starting at `start` with the one ending at `end`
+        _keys(p, ("start", "end"), "an episode_merge payload")
+        _int(p["start"], "start"), _int(p["end"], "end", 1)
+        _range(p, "a merge")
+    elif kind == "episode_split":              # splits the episode holding session frame `at` in two
+        _keys(p, ("at",), "an episode_split payload")
+        _int(p["at"], "at", 1)
     return p
 
 
@@ -469,6 +484,10 @@ def check_against_manifest(review: dict, manifest: dict) -> None:
     step names that match and share a boundary. FormatError otherwise (fail closed)."""
     if review["run_id"] != manifest["run_id"]:
         raise FormatError("the review is for another run")
+    for e in all_edit_versions(review):
+        if e["kind"] in SESSION_KINDS:
+            raise FormatError(f"edit {e['edit_id']} ({e['kind']}): a split edit belongs to a session review, not a "
+                              "run's")
     n = manifest["length"]
     steps = manifest.get("subgoals") or []
     for e in all_edit_versions(review):
@@ -1276,7 +1295,7 @@ def _edit_to_format1(e: dict) -> dict:
     if e["decided_by"] is not None or e["corrects"] is not None or e["retracted_by"] is not None:
         raise MigrationError(f"{where}: format 1 cannot keep decided_by, corrects or a take back's retracted_by")
     kind, p = e["kind"], e["payload"]
-    if kind in ("failure_type", "name", "reading"):
+    if kind in ("failure_type", "name", "reading") + SESSION_KINDS:
         raise MigrationError(f"{where}: format 1 has no {kind} kind")
     if kind == "outcome":
         if p["termination_reason"] is None:

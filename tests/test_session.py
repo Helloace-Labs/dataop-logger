@@ -420,6 +420,108 @@ def test_validate_finds_broken_session_records(tmp_path):
     assert V.validate(ds.root)["ok"]
 
 
+def _split_review(sid, *edits):
+    """A session review with each (kind, payload) as a person's edit, in effect at once."""
+    from dataop_logger import review_format as fmt
+    r = fmt.empty_review(sid)
+    for i, (kind, payload) in enumerate(edits):
+        r, _ = fmt.propose(r, kind=kind, payload=payload, source="human", by="p1", expect_rev=r["rev"],
+                           now=f"2026-11-07T10:00:{i:02d}Z")
+    return r
+
+
+def test_the_session_review_takes_split_edits_that_fit_the_session(tmp_path):
+    """Aftershock issue #447: review.json holds only episode_boundary, episode_merge and episode_split, inside the
+    session's frames, and the edits in effect apply to the recorded timeline as the cloud applies them."""
+    from dataop_logger import review_format as fmt
+    ds, sess, rec = run_full_session(tmp_path)
+    path, sid = sess.dir / "review.json", sess.session_id
+
+    def check(review, want=None):
+        path.write_text(fmt.dump_review(review))
+        res = V.validate(ds.root)
+        if want is None:
+            assert res["ok"], res["errors"]
+        else:
+            assert not res["ok"] and any("review.json" in e and want in e for e in res["errors"]), res["errors"]
+
+    # runs [40,100), [135,205), [245,295); gaps [0,40), [100,135), [205,245), [295,335), [335,365) (a short stop)
+    good = _split_review(sid, ("episode_split", {"at": 70}), ("episode_boundary", {"at": 100, "to": 104}),
+                         ("episode_merge", {"start": 70, "end": 205}), ("episode_boundary", {"at": 295, "to": 295}))
+    check(good)
+    tl = S.effective_timeline(rec, good)
+    eps = [(x["start"], x["end"], x["from_runs"], x["confirmed"]) for x in tl if x["kind"] == "episode"]
+    r1, r2, r3 = (r["run_id"] for r in rec["runs"])
+    assert eps == [(40, 70, [r1], False), (70, 205, [r1, r2], False), (245, 295, [r3], True)]
+    assert [x["id"] for x in tl if x["kind"] == "episode"][2] == r3          # untouched: still run 3
+    assert [x["id"] for x in tl if x["kind"] == "gap"] == [g["gap_id"] for i, g in enumerate(rec["gaps"]) if i != 1]
+    # a boundary moved away and back gives the run's id again, still waiting for review of its outcome
+    back = S.effective_timeline(rec, _split_review(sid, ("episode_boundary", {"at": 100, "to": 90}),
+                                                   ("episode_boundary", {"at": 90, "to": 100})))
+    assert [(x["id"], x["confirmed"]) for x in back if x["kind"] == "episode"][0] == (r1, False)
+
+    check(_split_review(sid, ("note", {"frame": 3, "text": "x"})), "takes only split edits")
+    check(_split_review(sid, ("episode_split", {"at": 366})), "past the session")
+    check(_split_review(sid, ("episode_boundary", {"at": 335, "to": 340})), "between two gaps")
+    check(_split_review(sid, ("episode_boundary", {"at": 41, "to": 44})), "no boundary at session frame 41")
+    check(_split_review(sid, ("episode_boundary", {"at": 40, "to": 100})), "at least one frame")
+    check(_split_review(sid, ("episode_merge", {"start": 0, "end": 100})), "no two episodes")
+    check(_split_review(sid, ("episode_merge", {"start": 40, "end": 100})), "no two episodes")
+    check(_split_review(sid, ("episode_split", {"at": 20})), "no episode holds session frame 20")
+    check(_split_review(sid, ("episode_split", {"at": 40})), "no episode holds session frame 40")
+    check(fmt.empty_review(str(uuid.uuid4())), "another session")
+    # a proposal does not apply until a person accepts it, but its frames must still be inside the session
+    r, _ = fmt.propose(fmt.empty_review(sid), kind="episode_merge", payload={"start": 0, "end": 100},
+                       source="splitter", by="splitter", job_id="split-1", agent_version="s1", reason="evidence",
+                       expect_rev=0, now="2026-11-07T10:00:00Z")
+    check(r)
+    check(good)
+
+
+def test_no_split_edit_changes_a_failed_run(tmp_path, monkeypatch):
+    ds, sess, rec, failed_id = run_failed_session(tmp_path, monkeypatch)
+    path, sid = sess.dir / "review.json", sess.session_id
+    from dataop_logger import review_format as fmt
+    # runs [35,75), [110,150), [185,230) whose write failed; gaps [0,35), [75,110), [150,185), [230,240)
+    for edits in ([("episode_split", {"at": 200})], [("episode_boundary", {"at": 185, "to": 180})],
+                  [("episode_merge", {"start": 110, "end": 230})], [("episode_boundary", {"at": 230, "to": 231})]):
+        path.write_text(fmt.dump_review(_split_review(sid, *edits)))
+        res = V.validate(ds.root)
+        assert not res["ok"] and any(f"run {failed_id} failed to write" in e for e in res["errors"]), \
+            (edits, res["errors"])
+    path.write_text(fmt.dump_review(_split_review(sid, ("episode_merge", {"start": 35, "end": 150}),
+                                                  ("episode_boundary", {"at": 185, "to": 185}))))
+    assert V.validate(ds.root)["ok"]
+
+
+def test_an_open_session_review_is_checked_for_its_id_kinds_and_frames(tmp_path):
+    from dataop_logger import review_format as fmt
+    ds = make_ds(tmp_path)
+    with RunLogger(ds, SCHEMA, planner=None) as log:
+        sess = open_session(log)
+        s = Script(sess)
+        s.hold(10)
+        sess.start_episode(moved_by="person")
+        s.policy(30)
+        sess.seal_episode("success")
+        assert sess.write_pending() == "committed"
+        s.hold(5)
+        path = sess.dir / "review.json"
+        # the dataset is not finalized while the session records, so the session folder is checked on its own;
+        # the record on disk counts the 40 frames up to its last boundary (the write)
+        path.write_text(fmt.dump_review(_split_review(sess.session_id, ("episode_split", {"at": 20}))))
+        errors, warns, _ = S.session_problems(ds.root)
+        assert not [e for e in errors if "review.json" in e], errors
+        assert any("is open" in w for w in warns)
+        path.write_text(fmt.dump_review(_split_review(sess.session_id, ("label", {
+            "start": 1, "end": 2, "text": "x", "driver": None, "segment": None}))))
+        assert any("takes only split edits" in e for e in S.session_problems(ds.root)[0])
+        path.write_text(fmt.dump_review(_split_review(sess.session_id, ("episode_split", {"at": 41}))))
+        assert any("past the session's 40 frames" in e for e in S.session_problems(ds.root)[0])
+        path.write_text(fmt.dump_review(_split_review(sess.session_id)))
+        sess.finalize("user_stop")
+
+
 def test_failed_run_needs_its_quarantined_record(tmp_path, monkeypatch):
     ds, sess, rec, failed_id = run_failed_session(tmp_path, monkeypatch)
     q = store.quarantine_dir(ds.root) / failed_id
