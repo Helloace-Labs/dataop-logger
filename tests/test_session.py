@@ -592,6 +592,14 @@ def test_close_keeps_an_open_episode_and_the_active_gap(tmp_path):
     res = V.validate(ds.root)
     assert res["ok"], res["errors"]
     assert sum("is open" in w for w in res["warnings"]) == 2
+    # a closed session's timeline is whole, so its review's split edits replay although it never ended
+    from dataop_logger import review_format as fmt
+    path = sess2.dir / "review.json"
+    path.write_text(fmt.dump_review(_split_review(sess2.session_id, ("episode_split", {"at": 10}))))
+    res = V.validate(ds.root)
+    assert not res["ok"] and any("no episode holds session frame 10" in e for e in res["errors"]), res["errors"]
+    path.write_text(fmt.dump_review(_split_review(sess2.session_id, ("episode_split", {"at": 40}))))
+    assert V.validate(ds.root)["ok"]
 
 
 def test_short_stop_moves_ticks_as_recorded(tmp_path):

@@ -814,9 +814,10 @@ def _check_one_session(root: Path, sdir: Path, errors: list, warnings: list, lis
         err(f"review.json is missing or unreadable ({type(e).__name__}: {e})")
         return
     try:
-        # The split edits in effect replay only on an ended session that covers every frame; an open session's
-        # review is checked for its id, its kinds and its frames.
-        whole = ended and not coverage_problems(run_ranges, gap_ranges, rec["session_frames"]) \
+        # The split edits in effect replay on every record that covers each session frame once, ended or not (a
+        # session closed without finalize keeps a whole timeline); a record still recording, or a broken one, is
+        # checked for the review's id, kinds and frames only.
+        whole = not coverage_problems(run_ranges, gap_ranges, rec["session_frames"]) \
             and len(run_ranges) == len(runs) and len(gap_ranges) == len(gaps)
         check_against_session(rv, rec, replay=whole)
     except (ValueError, KeyError, TypeError) as e:
