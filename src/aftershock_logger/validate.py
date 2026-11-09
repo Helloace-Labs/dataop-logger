@@ -340,6 +340,13 @@ def validate(root: Path, action_key: str = "action") -> dict:
     unbound = sorted(set(episodes) - set(bound))
     if unbound:
         warnings.append(f"{len(unbound)} LeRobot episodes have no dataop run: {unbound[:20]}")
+    vmeta = adapter.episode_metadata(root)
+    for e, ids in sorted(bound.items()):                       # a video shorter or longer than its rows (#479)
+        for p in video_frame_problems(vmeta.get(e)):
+            errors.append(f"{ids[0]}: episode {e} {p}")
+    for e in unbound:
+        for p in video_frame_problems(vmeta.get(e)):
+            warnings.append(f"episode {e} (no dataop run) {p}")
     from .session import session_problems
     s_errors, s_warnings, sessions = session_problems(root)
     errors += s_errors
@@ -347,6 +354,21 @@ def validate(root: Path, action_key: str = "action") -> dict:
     return {"ok": not errors, "errors": errors, "warnings": warnings, "runs": sum(map(len, bound.values())),
             "episodes_on_disk": len(episodes), "unbound_episodes": unbound, "quarantined": quarantined,
             "sessions": sessions}
+
+
+def video_frame_problems(em: dict | None) -> list[str]:
+    """Each camera whose video, by LeRobot's own episode record (its from and to timestamps), holds a different number
+    of frames than the episode has rows: the video and the data are misaligned (issue #479)."""
+    if not em:
+        return []
+    out = []
+    for cam, n in sorted(em.get("video_frames", {}).items()):
+        if n is None:
+            out.append(f"camera {cam}: the episode record does not say how many frames its video holds")
+        elif n != em["length"]:
+            out.append(f"camera {cam}: its video holds {n} frames, the episode has {em['length']} rows; video and "
+                       "data are misaligned")
+    return out
 
 
 def integrity_problems(run_path: Path, m: dict) -> list[str]:
@@ -473,6 +495,7 @@ def repair(root: Path, delete_unmatched: bool = False, action_key: str = "action
     """Non-destructive by default: commit exact unique matches, quarantine the rest, never touch unreadable runs."""
     root = Path(root)
     episodes = load_lerobot_episodes(root, action_key)
+    vmeta = adapter.episode_metadata(root)
     committed = {m["episode_index"] for _, m in store.iter_manifests(root, "committed")}
     report = []
     for run_path, m, problem in list(store.iter_run_dirs(root)):
@@ -490,7 +513,12 @@ def repair(root: Path, delete_unmatched: bool = False, action_key: str = "action
         except Exception as e:
             report.append(f"left untouched {m['run_id']}: {e}")
             continue
-        if len(matches) == 1:
+        video = video_frame_problems(vmeta.get(matches[0])) if len(matches) == 1 else []
+        if video:                                              # never commit a misaligned video (#479)
+            why = f"episode {matches[0]} matches, but {'; '.join(video)}"
+            store.quarantine(root, run_path, why)
+            report.append(f"quarantined {m['run_id']}: {why}")
+        elif len(matches) == 1:
             m.update(status="committed", episode_index=matches[0])
             m.pop("save_error", None)
             store.atomic_write_json(run_path / "manifest.json", m)

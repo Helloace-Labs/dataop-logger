@@ -26,6 +26,7 @@ from .logger import PRED_SCHEMA, RunError
 
 QUEUE_FULL = "queue_full"
 WRITE_FAILED = "write_failed"
+ENCODER_BACKLOG = "encoder_backlog"   # LeRobot's video encoder fell behind for longer than the frame budget (#479)
 STALL_TIMEOUT_S = 10.0           # run.end() waits this long without any frame finishing before it calls the writer hung
 STOP_TIMEOUT_S = 10.0            # a stop or discard waits this long for the frame LeRobot is writing
 
@@ -33,7 +34,9 @@ STOP_TIMEOUT_S = 10.0            # a stop or discard waits this long for the fra
 class ControlledStop(RunError):
     """The logger cannot keep up or cannot write: hold the robot and end the run.
 
-    reason is "queue_full" or "write_failed"; detail says what happened. After the run block exits, frames counts
+    reason is "queue_full", "write_failed" or "encoder_backlog" (LeRobot's video encoder had no room for a frame
+    within the frame budget, so the frame was not handed over rather than lost from the video); detail says what
+    happened. After the run block exits, frames counts
     every frame the logger accepted, and quarantine_path says where they were written, or quarantine_error says why
     they could not be (they are then kept in memory for run.retry_quarantine())."""
 
@@ -66,6 +69,14 @@ class ControlledStop(RunError):
         self.args = ("; ".join(parts),)
 
 
+class EncoderBacklog(ControlledStop):
+    """LeRobot's streaming video encoder had no room for the next frame within the frame budget (issue #479). The
+    frame was not handed to LeRobot, so the video and the dataset rows stay aligned up to the last frame written."""
+
+    def __init__(self, detail: str, run_id: str):
+        super().__init__(ENCODER_BACKLOG, detail, run_id)
+
+
 def _copy_frame(frame: dict) -> dict:
     """The caller may reuse its values on the next tick, so the queue keeps its own copies. Tensors are copied to
     the CPU so queued frames never hold GPU memory."""
@@ -85,6 +96,20 @@ def _copy_frame(frame: dict) -> dict:
 def _image_keys(dataset) -> set[str]:
     feats = getattr(dataset, "features", None) or {}
     return {k for k, f in feats.items() if isinstance(f, dict) and f.get("dtype") in ("image", "video")}
+
+
+def observation_values(frame: dict, image_keys: set[str]) -> dict:
+    """A frame's numeric low-dimensional values (frames.parquet of a quarantined run); images are not kept."""
+    out = {}
+    for k, v in frame.items():
+        if k in image_keys or k == "task":
+            continue
+        if hasattr(v, "detach") and hasattr(v, "cpu"):
+            v = v.detach().cpu().numpy()
+        a = np.asarray(v)
+        if a.dtype.kind in "biuf":
+            out[k] = a.reshape(-1).tolist()
+    return out
 
 
 class FrameQueue:
@@ -120,6 +145,7 @@ class FrameQueue:
         self._closing = False
         self._abandoned = False
         self.max_depth = 0                                         # the most frames ever waiting at once
+        self._encoder_behind: str | None = None                    # the writer waits for LeRobot's video encoder
         self._thread = threading.Thread(target=self._loop, name=f"frame-writer-{run.run_id[:8]}", daemon=True)
         self._thread.start()
 
@@ -173,8 +199,12 @@ class FrameQueue:
             self._items.append((frame, row, observation))
             self.max_depth = max(self.max_depth, len(self._items))
             if full:
-                self._stop = ControlledStop(QUEUE_FULL, f"{self.capacity} frames were waiting to be written",
-                                            self.run.run_id)
+                behind = self._encoder_behind
+                self._stop = (EncoderBacklog(f"{self.capacity} frames were waiting to be written while LeRobot's "
+                                             f"video encoder had no room ({behind})", self.run.run_id)
+                              if behind else
+                              ControlledStop(QUEUE_FULL, f"{self.capacity} frames were waiting to be written",
+                                             self.run.run_id))
             self._cv.notify_all()
         if full:
             raise self._tell()
@@ -228,16 +258,11 @@ class FrameQueue:
     # ── writer thread ────────────────────────────────────────────────────────
 
     def _observation(self, frame: dict) -> dict:
-        out = {}
-        for k, v in frame.items():
-            if k in self._image_keys or k == "task":
-                continue
-            if hasattr(v, "detach") and hasattr(v, "cpu"):
-                v = v.detach().cpu().numpy()
-            a = np.asarray(v)
-            if a.dtype.kind in "biuf":
-                out[k] = a.reshape(-1).tolist()
-        return out
+        return observation_values(frame, self._image_keys)
+
+    def _set_behind(self, what: str | None) -> None:
+        with self._cv:
+            self._encoder_behind = what
 
     def _loop(self) -> None:
         while True:
@@ -250,12 +275,22 @@ class FrameQueue:
                 self._inflight = item
                 self._busy = True
             try:
+                # Backpressure (#479): wait for room in LeRobot's video encoder within the frame budget, so no frame
+                # is dropped from a video; the control loop meanwhile fills this queue, which stops when it is full.
+                self.run._wait_encoder(abort=lambda: self._abandoned or self._stop is not None,
+                                       waiting=self._set_behind, frame=item[1]["frame_index"])
+                with self._cv:
+                    if self._abandoned or self._stop is not None:
+                        self._busy = False
+                        self._cv.notify_all()
+                        return
                 self.run._write_frame(item[0], item[1])
             except BaseException as e:                              # noqa: BLE001 (reported to the control thread)
                 self._busy = False
                 with self._cv:
                     if self._stop is None:
-                        self._stop = ControlledStop(WRITE_FAILED, f"{type(e).__name__}: {e}", self.run.run_id)
+                        self._stop = e if isinstance(e, ControlledStop) else \
+                            ControlledStop(WRITE_FAILED, f"{type(e).__name__}: {e}", self.run.run_id)
                     self._cv.notify_all()
                 return
             self._busy = False                                      # finished; close() may wait for the append
